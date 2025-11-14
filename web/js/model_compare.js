@@ -60,17 +60,25 @@ function registerExtension(app) {
                     console.log("[ModelCompare] onNodeCreated called for ModelCompareLoaders instance");
                     
                     try {
+                        const self = this;
+                        
                         // Function to update visibility based on num_* values
                         const updateWidgetVisibility = () => {
+                            console.log("[ModelCompare] updateWidgetVisibility called");
+                            
                             // Get the num_* values from the node's widgets
-                            const num_checkpoints = this.widgets.find(w => w.name === "num_checkpoints")?.value || 0;
-                            const num_diffusion_models = this.widgets.find(w => w.name === "num_diffusion_models")?.value || 0;
-                            const num_vaes = this.widgets.find(w => w.name === "num_vaes")?.value || 0;
-                            const num_text_encoders = this.widgets.find(w => w.name === "num_text_encoders")?.value || 0;
-                            const num_loras = this.widgets.find(w => w.name === "num_loras")?.value || 0;
+                            const num_checkpoints = self.widgets.find(w => w.name === "num_checkpoints")?.value || 0;
+                            const num_diffusion_models = self.widgets.find(w => w.name === "num_diffusion_models")?.value || 0;
+                            const num_vaes = self.widgets.find(w => w.name === "num_vaes")?.value || 0;
+                            const num_text_encoders = self.widgets.find(w => w.name === "num_text_encoders")?.value || 0;
+                            const num_loras = self.widgets.find(w => w.name === "num_loras")?.value || 0;
+                            
+                            console.log(`[ModelCompare] Current values: checkpoints=${num_checkpoints}, diffusion=${num_diffusion_models}, vaes=${num_vaes}, encoders=${num_text_encoders}, loras=${num_loras}`);
+                            
+                            let visibleCount = 0;
                             
                             // Hide/show widgets based on num_* values
-                            this.widgets.forEach((widget) => {
+                            self.widgets.forEach((widget) => {
                                 let shouldShow = false;
                                 
                                 // Show checkpoint widgets up to num_checkpoints
@@ -109,8 +117,11 @@ function registerExtension(app) {
                                 // Set widget visibility
                                 if (widget.element) {
                                     widget.element.style.display = shouldShow ? "" : "none";
+                                    if (shouldShow) visibleCount++;
                                 }
                             });
+                            
+                            console.log(`[ModelCompare] Showing ${visibleCount} widgets`);
                         };
                         
                         // Add button widget
@@ -128,23 +139,12 @@ function registerExtension(app) {
                         // On initial creation, hide all but first of each type
                         // This happens after a small delay to ensure widgets are initialized
                         setTimeout(() => {
-                            // Set all num_* to 1 by default (only first of each type visible)
-                            const num_checkpoints = this.widgets.find(w => w.name === "num_checkpoints");
-                            const num_diffusion_models = this.widgets.find(w => w.name === "num_diffusion_models");
-                            const num_vaes = this.widgets.find(w => w.name === "num_vaes");
-                            const num_text_encoders = this.widgets.find(w => w.name === "num_text_encoders");
-                            const num_loras = this.widgets.find(w => w.name === "num_loras");
-                            
-                            // Initialize to show only first of each (value = 1 means show first 1)
-                            if (!num_checkpoints || num_checkpoints.value === undefined) {
-                                // Keep default values from INPUT_TYPES
-                            }
-                            
+                            console.log("[ModelCompare] Initializing widget visibility");
                             updateWidgetVisibility();
                         }, 100);
                         
                     } catch (e) {
-                        console.error("[ModelCompare] Error adding button:", e);
+                        console.error("[ModelCompare] Error in onNodeCreated:", e);
                     }
                 });
             }
