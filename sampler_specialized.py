@@ -9,6 +9,7 @@ from typing import Dict, List, Tuple, Any
 import folder_paths
 import comfy.sd
 import comfy.model_management
+import comfy.utils
 from comfy.utils import ProgressBar
 from comfy.samplers import SAMPLER_NAMES
 
@@ -60,12 +61,41 @@ class SamplerCompareCheckpoint:
             
             print(f"[SamplerCompareCheckpoint] Processing {len(combinations)} combinations")
             
-            # For now, return placeholder output
-            batch_size = min(len(combinations), 4)
-            output = torch.randn((batch_size, 512, 512, 3)) * 0.1 + 0.5
-            labels = f"Sampled {batch_size} checkpoints with {sampler_name} sampler"
+            # Collect latents for all combinations - for now use the provided latent
+            sampled_latents = []
+            labels_list = []
             
-            return (output, labels)
+            for i, combo in enumerate(combinations[:4]):  # Limit to 4 for now
+                print(f"[SamplerCompareCheckpoint] Processing combination {i+1}/{min(len(combinations), 4)}")
+                print(f"  Model: {combo['model']}, VAE: {combo['vae']}, LoRAs: {combo['lora_names']}")
+                
+                # Use the input latent (would be actual sampling in real implementation)
+                sampled_latents.append(latent["samples"])
+                labels_list.append(f"Combo {i+1}: {combo['model']}")
+            
+            # Stack all sampled latents
+            if sampled_latents:
+                stacked_latents = torch.cat(sampled_latents, dim=0)
+                print(f"[SamplerCompareCheckpoint] Stacked latent shape: {stacked_latents.shape}")
+                
+                # Decode latents with VAE
+                print(f"[SamplerCompareCheckpoint] Decoding {stacked_latents.shape[0]} latents with VAE")
+                decoded = vae.decode_tiled(stacked_latents) if hasattr(vae, 'decode_tiled') else vae.decode(stacked_latents)
+                
+                # Ensure output is in correct format (B, H, W, C) with values in [0, 1]
+                if decoded.shape[-1] == 3:
+                    output = decoded
+                else:
+                    # If it's (B, C, H, W), transpose to (B, H, W, C)
+                    output = decoded.permute(0, 2, 3, 1)
+                
+                # Clamp to [0, 1]
+                output = torch.clamp(output, 0.0, 1.0)
+                
+                labels = "; ".join(labels_list)
+                return (output, labels)
+            else:
+                return (torch.zeros((1, 512, 512, 3)), "Error: No latents generated")
         
         except Exception as e:
             print(f"[SamplerCompareCheckpoint] Error during sampling: {e}")
@@ -128,12 +158,56 @@ class SamplerCompareQwenEdit:
             
             print(f"[SamplerCompareQwenEdit] Processing {len(combinations)} combinations")
             
-            # For now, return placeholder output
-            batch_size = min(len(combinations), 4)
-            output = torch.randn((batch_size, 512, 512, 3)) * 0.1 + 0.5
-            labels = f"Sampled {batch_size} Qwen Edit models with {aura_flow_mode} mode"
+            # Get VAE from the config path or from optional input
+            if vae is None:
+                vae_name = combinations[0].get("vae", "")
+                if vae_name:
+                    print(f"[SamplerCompareQwenEdit] Loading VAE: {vae_name}")
+                    vae_path = folder_paths.get_full_path_or_raise("vae", vae_name)
+                    vae_sd = comfy.utils.load_torch_file(vae_path)
+                    vae = comfy.sd.VAE(sd=vae_sd)
+                    vae.throw_exception_if_invalid()
             
-            return (output, labels)
+            if vae is None:
+                print("[SamplerCompareQwenEdit] Error: No VAE available for decoding")
+                return (torch.zeros((1, 512, 512, 3)), "Error: No VAE")
+            
+            # Collect latents for all combinations - for now use the provided latent
+            # In a real implementation, this would sample from each model variant
+            sampled_latents = []
+            labels_list = []
+            
+            for i, combo in enumerate(combinations[:4]):  # Limit to 4 for now
+                print(f"[SamplerCompareQwenEdit] Processing combination {i+1}/{min(len(combinations), 4)}")
+                print(f"  Model: {combo['model']}, VAE: {combo['vae']}, LoRAs: {combo['lora_names']}")
+                
+                # Use the input latent (would be actual sampling in real implementation)
+                sampled_latents.append(latent["samples"])
+                labels_list.append(f"Combo {i+1}: {combo['model']}")
+            
+            # Stack all sampled latents
+            if sampled_latents:
+                stacked_latents = torch.cat(sampled_latents, dim=0)
+                print(f"[SamplerCompareQwenEdit] Stacked latent shape: {stacked_latents.shape}")
+                
+                # Decode latents with VAE
+                print(f"[SamplerCompareQwenEdit] Decoding {stacked_latents.shape[0]} latents with VAE")
+                decoded = vae.decode_tiled(stacked_latents) if hasattr(vae, 'decode_tiled') else vae.decode(stacked_latents)
+                
+                # Ensure output is in correct format (B, H, W, C) with values in [0, 1]
+                if decoded.shape[-1] == 3:
+                    output = decoded
+                else:
+                    # If it's (B, C, H, W), transpose to (B, H, W, C)
+                    output = decoded.permute(0, 2, 3, 1)
+                
+                # Clamp to [0, 1]
+                output = torch.clamp(output, 0.0, 1.0)
+                
+                labels = "; ".join(labels_list)
+                return (output, labels)
+            else:
+                return (torch.zeros((1, 512, 512, 3)), "Error: No latents generated")
         
         except Exception as e:
             print(f"[SamplerCompareQwenEdit] Error during sampling: {e}")
@@ -185,12 +259,41 @@ class SamplerCompareDiffusion:
             
             print(f"[SamplerCompareDiffusion] Processing {len(combinations)} combinations")
             
-            # For now, return placeholder output
-            batch_size = min(len(combinations), 4)
-            output = torch.randn((batch_size, 512, 512, 3)) * 0.1 + 0.5
-            labels = f"Sampled {batch_size} diffusion models with {sampler_name} sampler"
+            # Collect latents for all combinations - for now use the provided latent
+            sampled_latents = []
+            labels_list = []
             
-            return (output, labels)
+            for i, combo in enumerate(combinations[:4]):  # Limit to 4 for now
+                print(f"[SamplerCompareDiffusion] Processing combination {i+1}/{min(len(combinations), 4)}")
+                print(f"  Model: {combo['model']}, VAE: {combo['vae']}, LoRAs: {combo['lora_names']}")
+                
+                # Use the input latent (would be actual sampling in real implementation)
+                sampled_latents.append(latent["samples"])
+                labels_list.append(f"Combo {i+1}: {combo['model']}")
+            
+            # Stack all sampled latents
+            if sampled_latents:
+                stacked_latents = torch.cat(sampled_latents, dim=0)
+                print(f"[SamplerCompareDiffusion] Stacked latent shape: {stacked_latents.shape}")
+                
+                # Decode latents with VAE
+                print(f"[SamplerCompareDiffusion] Decoding {stacked_latents.shape[0]} latents with VAE")
+                decoded = vae.decode_tiled(stacked_latents) if hasattr(vae, 'decode_tiled') else vae.decode(stacked_latents)
+                
+                # Ensure output is in correct format (B, H, W, C) with values in [0, 1]
+                if decoded.shape[-1] == 3:
+                    output = decoded
+                else:
+                    # If it's (B, C, H, W), transpose to (B, H, W, C)
+                    output = decoded.permute(0, 2, 3, 1)
+                
+                # Clamp to [0, 1]
+                output = torch.clamp(output, 0.0, 1.0)
+                
+                labels = "; ".join(labels_list)
+                return (output, labels)
+            else:
+                return (torch.zeros((1, 512, 512, 3)), "Error: No latents generated")
         
         except Exception as e:
             print(f"[SamplerCompareDiffusion] Error during sampling: {e}")
