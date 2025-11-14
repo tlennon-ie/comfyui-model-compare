@@ -2,6 +2,13 @@
 Model Compare Loaders Node
 Allows users to configure multiple checkpoints, VAEs, text encoders, and LoRAs
 for comparison sampling.
+
+Supports different model types:
+- Checkpoints: Full SD/SDXL models
+- Diffusion Models: Standalone U-Net/diffusion model files
+- VAEs: Separate VAE models
+- Text Encoders: CLIP or other text encoders
+- LoRAs: Low-rank adaptation models with configurable strengths
 """
 
 import os

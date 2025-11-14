@@ -2,6 +2,7 @@
 Sampler Compare Node
 Performs sampling across all model combinations from ModelCompareLoaders.
 Outputs all generated images for grid comparison.
+Supports different model types and pipelines (Checkpoint, Diffusion Model, etc.)
 """
 
 import os
@@ -12,6 +13,7 @@ import folder_paths
 import comfy.sd
 import comfy.model_management
 from comfy.utils import ProgressBar
+from .model_pipeline import PipelineFactory, ModelType
 
 
 class SamplerCompare:
@@ -88,6 +90,8 @@ class SamplerCompare:
                 "model": ("MODEL",),
                 "clip": ("CLIP",),
                 "vae": ("VAE",),
+                "model_sampling": ("MODEL_SAMPLING",),  # For specialized models like AuraFlow
+                "cfg_norm": ("CFG_NORM",),               # For specialized models
             },
         }
 
@@ -111,6 +115,8 @@ class SamplerCompare:
         model=None,
         clip=None,
         vae=None,
+        model_sampling=None,
+        cfg_norm=None,
     ) -> Tuple[torch.Tensor, str]:
         """
         Sample across all combinations of models defined in config.
@@ -132,7 +138,7 @@ class SamplerCompare:
 
         for idx, combination in enumerate(combinations):
             try:
-                # Load models for this combination
+                # Load models for this combination using pipeline system
                 ckpt_name = combination.get("checkpoint")
                 ckpt_type = combination.get("checkpoint_type")
                 vae_name = combination.get("vae")
@@ -140,15 +146,20 @@ class SamplerCompare:
                 lora_strengths = combination.get("lora_strengths")
                 lora_names = combination.get("lora_names", [])
 
-                # Load checkpoint/diffusion model if specified
+                # Get appropriate pipeline for this model
                 if ckpt_name:
-                    if ckpt_type == "diffusion_model":
-                        print(f"[SamplerCompare] Loading diffusion model: {ckpt_name}")
-                        model, clip, vae_loaded = self._load_diffusion_model(ckpt_name)
-                    else:
-                        print(f"[SamplerCompare] Loading checkpoint: {ckpt_name}")
-                        model, clip, vae_loaded = self._load_checkpoint(ckpt_name)
-                    if vae_name:
+                    pipeline = PipelineFactory.get_pipeline(ckpt_name, ckpt_type or "checkpoint")
+                    print(f"[SamplerCompare] Using {pipeline.__class__.__name__} for {ckpt_name}")
+                    
+                    # Load models through pipeline
+                    model, clip, vae_loaded = pipeline.load_models(
+                        clip=clip,
+                        vae=vae,
+                        model_sampling=model_sampling,
+                        cfg_norm=cfg_norm
+                    )
+                    
+                    if vae_name or vae_loaded:
                         vae = vae_loaded
                 else:
                     if not model or not clip:
@@ -227,30 +238,6 @@ class SamplerCompare:
             embedding_directory=folder_paths.get_folder_names("embeddings"),
         )
         return out[0], out[1], out[2]  # model, clip, vae
-
-    @staticmethod
-    def _load_diffusion_model(model_name: str) -> Tuple[Any, Any, Any]:
-        """Load a diffusion model (unet) and return model, clip, and vae."""
-        import comfy.sd
-        import comfy.model_management
-        import torch
-        
-        # Get path from diffusion_models folder (includes unet and diffusion_models folders)
-        model_path = folder_paths.get_full_path("diffusion_models", model_name)
-        
-        # Load the raw model state dict
-        model_patcher = comfy.model_management.load_model_gpu_state_dict(model_path)
-        
-        # For diffusion models, we need to wrap them appropriately
-        # This creates a model object compatible with the sampling pipeline
-        model = comfy.sd.load_diffusion_model(model_path)
-        
-        # Diffusion models don't have built-in CLIP, so we return None
-        # The user should provide CLIP separately or use with a checkpoint that has CLIP
-        clip = None
-        vae = None
-        
-        return model, clip, vae
 
     @staticmethod
     def _load_vae(vae_name: str) -> Any:

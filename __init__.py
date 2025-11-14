@@ -4,6 +4,8 @@ A comprehensive custom node for comparing different model configurations side-by
 
 Features:
 - Load and configure multiple checkpoints, VAEs, text encoders, and LoRAs
+- Support for diffusion models (standalone U-Net files)
+- Model-specific pipelines for specialized architectures
 - Generate all combinations of model configurations
 - Sample and compare different configurations in a single workflow
 - Create customizable comparison grids with labels and styling
@@ -38,5 +40,5 @@ NODE_DISPLAY_NAME_MAPPINGS = {
 __all__ = ['NODE_CLASS_MAPPINGS', 'NODE_DISPLAY_NAME_MAPPINGS']
 
 # Version and metadata for ComfyUI Manager
-__version__ = "1.0.0"
-WEB_DIRECTORY = None  # No web components needed for now
+__version__ = "2.0.0"
+WEB_DIRECTORY = "web"  # Web components for dynamic UI updates
