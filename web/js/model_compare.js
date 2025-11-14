@@ -66,30 +66,18 @@ function registerExtension(app) {
                             
                             console.log(`[ModelCompare] Updating: checkpoints=${num_checkpoints}, diffusion=${num_diffusion_models}, vaes=${num_vaes}, encoders=${num_text_encoders}, loras=${num_loras}`);
                             
-                            // Find the node's input container in the DOM
-                            const nodeElement = self.element;
-                            if (!nodeElement) {
-                                console.log("[ModelCompare] Node element not found");
-                                return;
-                            }
-                            
-                            // Get all input container divs (ComfyUI structure)
-                            const inputContainers = nodeElement.querySelectorAll(".comfy-node-inputs > div");
-                            console.log(`[ModelCompare] Found ${inputContainers.length} input containers`);
-                            
                             let hiddenCount = 0;
                             let visibleCount = 0;
                             
-                            inputContainers.forEach((container, idx) => {
-                                // Find the widget by matching text content or data attributes
-                                const widget = self.widgets[idx];
-                                if (!widget || !widget.name) return;
+                            // Iterate through all input widgets (not sliders, not button)
+                            self.widgets.forEach((widget, widgetIdx) => {
+                                if (!widget.name || widget.name.startsWith("num_") || widget.type === "button") {
+                                    return;
+                                }
                                 
                                 let shouldShow = false;
                                 
-                                if (widget.name.startsWith("num_") || widget.type === "button") {
-                                    shouldShow = true;
-                                } else if (widget.name.startsWith("checkpoint_")) {
+                                if (widget.name.startsWith("checkpoint_")) {
                                     const num = parseInt(widget.name.split("_")[1]);
                                     shouldShow = num < num_checkpoints;
                                 } else if (widget.name.startsWith("diffusion_model_")) {
@@ -106,11 +94,17 @@ function registerExtension(app) {
                                     shouldShow = num < num_loras;
                                 }
                                 
+                                // Try to hide via widget.hidden property (works in some cases)
+                                widget.hidden = !shouldShow;
+                                
+                                // Also try to hide the DOM element if it exists
+                                if (widget.element) {
+                                    widget.element.style.display = shouldShow ? "" : "none";
+                                }
+                                
                                 if (shouldShow) {
-                                    container.style.display = "";
                                     visibleCount++;
                                 } else {
-                                    container.style.display = "none";
                                     hiddenCount++;
                                 }
                             });
@@ -134,20 +128,14 @@ function registerExtension(app) {
                         setTimeout(() => {
                             console.log("[ModelCompare] Initial visibility setup");
                             
-                            const nodeElement = self.element;
-                            if (!nodeElement) return;
-                            
-                            const inputContainers = nodeElement.querySelectorAll(".comfy-node-inputs > div");
-                            
-                            inputContainers.forEach((container, idx) => {
-                                const widget = self.widgets[idx];
-                                if (!widget || !widget.name) return;
+                            self.widgets.forEach((widget) => {
+                                if (!widget.name || widget.name.startsWith("num_") || widget.type === "button") {
+                                    return;
+                                }
                                 
-                                let hide = false;
+                                let hide = true;
                                 
-                                if (widget.name.startsWith("num_") || widget.type === "button") {
-                                    hide = false;
-                                } else if (widget.name.startsWith("checkpoint_")) {
+                                if (widget.name.startsWith("checkpoint_")) {
                                     hide = !widget.name.includes("checkpoint_0");
                                 } else if (widget.name.startsWith("diffusion_model_")) {
                                     hide = !widget.name.includes("diffusion_model_0");
@@ -159,13 +147,16 @@ function registerExtension(app) {
                                     hide = !widget.name.includes("lora_0");
                                 }
                                 
-                                container.style.display = hide ? "none" : "";
+                                widget.hidden = hide;
+                                if (widget.element) {
+                                    widget.element.style.display = hide ? "none" : "";
+                                }
                             });
                             
                             if (appRef && appRef.canvas) {
                                 appRef.canvas.requestDraw();
                             }
-                        }, 100);
+                        }, 50);
                         
                     } catch (e) {
                         console.error("[ModelCompare] Error in onNodeCreated:", e);
