@@ -3,17 +3,32 @@
 
 console.log("[ModelCompare] model_compare.js loaded");
 
-// Wait for app to be available
-async function setupModelCompareExtension() {
-    console.log("[ModelCompare] Waiting for app object...");
-    
-    // The app object should be available from the parent scope
-    if (typeof app === "undefined") {
-        console.error("[ModelCompare] App object not available!");
+// Wait for app to be available by checking the global scope
+function setupModelCompareExtension() {
+    // Check if app is available globally
+    if (typeof globalThis.app !== "undefined") {
+        console.log("[ModelCompare] App object found in globalThis");
+        registerExtension();
         return;
     }
     
-    console.log("[ModelCompare] App object found, registering extension");
+    // If not available, wait a bit and try again
+    console.log("[ModelCompare] App not ready yet, waiting...");
+    setTimeout(() => {
+        if (typeof globalThis.app !== "undefined") {
+            console.log("[ModelCompare] App object became available");
+            registerExtension();
+        } else {
+            console.log("[ModelCompare] Still waiting for app object...");
+            setupModelCompareExtension(); // Try again
+        }
+    }, 100);
+}
+
+function registerExtension() {
+    const app = globalThis.app;
+    
+    console.log("[ModelCompare] Registering extension with app object");
     
     // Register the extension with ComfyUI
     app.registerExtension({
@@ -119,5 +134,5 @@ async function setupModelCompareExtension() {
     console.log("[ModelCompare] Extension registered successfully");
 }
 
-// Call setup immediately (app should be available)
+// Call setup immediately (will wait for app if needed)
 setupModelCompareExtension();
