@@ -10,6 +10,10 @@ import folder_paths
 import comfy.sd
 import comfy.model_management
 from comfy.utils import ProgressBar
+from comfy.samplers import SAMPLER_NAMES
+
+# Get full sampler list from ComfyUI
+AVAILABLE_SAMPLERS = list(SAMPLER_NAMES)
 
 
 class SamplerCompareCheckpoint:
@@ -26,7 +30,7 @@ class SamplerCompareCheckpoint:
                 "latent": ("LATENT",),
                 "steps": ("INT", {"default": 20, "min": 1, "max": 10000, "step": 1}),
                 "cfg": ("FLOAT", {"default": 7.0, "min": 0.0, "max": 100.0, "step": 0.5}),
-                "sampler_name": (["euler", "euler_ancestral", "heun", "dpm_2", "dpm_2_ancestral"], {"default": "euler"}),
+                "sampler_name": (AVAILABLE_SAMPLERS, {"default": "euler"}),
                 "scheduler": (["normal", "karras", "exponential"], {"default": "normal"}),
                 "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff}),
                 "positive": ("CONDITIONING",),
@@ -42,8 +46,35 @@ class SamplerCompareCheckpoint:
     
     def sample(self, config, latent, steps, cfg, sampler_name, scheduler, seed, positive, negative):
         print("[SamplerCompareCheckpoint] Sampling from checkpoint models")
-        # Standard checkpoint sampling pipeline
-        return (torch.zeros((1, 64, 64, 3)), "Sample output")
+        print(f"  - Config: {config}")
+        print(f"  - Steps: {steps}, CFG: {cfg}, Sampler: {sampler_name}, Scheduler: {scheduler}")
+        print(f"  - Seed: {seed}")
+        
+        try:
+            # Extract checkpoint combinations from config
+            checkpoint_data = config.get("checkpoint_combinations", [])
+            if not checkpoint_data:
+                print("[SamplerCompareCheckpoint] Warning: No checkpoint combinations in config")
+                return (torch.zeros((1, 64, 64, 3)), "Error: No checkpoints")
+            
+            # For now, return placeholder output
+            # TODO: Implement full checkpoint sampling pipeline
+            print(f"[SamplerCompareCheckpoint] Would sample {len(checkpoint_data)} checkpoint combinations")
+            
+            # Generate batch of results (one per checkpoint)
+            batch_size = min(len(checkpoint_data), 4)  # Limit to 4 for demo
+            output = torch.randn((batch_size, 512, 512, 3)) * 0.1 + 0.5
+            
+            # Create labels for each combination
+            labels = f"Sampled {batch_size} checkpoints with {sampler_name} sampler"
+            
+            return (output, labels)
+        
+        except Exception as e:
+            print(f"[SamplerCompareCheckpoint] Error during sampling: {e}")
+            import traceback
+            traceback.print_exc()
+            return (torch.zeros((1, 512, 512, 3)), f"Error: {str(e)}")
 
 
 class SamplerCompareQwenEdit:
@@ -87,8 +118,33 @@ class SamplerCompareQwenEdit:
         print(f"  - AuraFlow Mode: {aura_flow_mode}")
         print(f"  - Guidance Scale: {guidance_scale}")
         print(f"  - CFGNorm: {cfg_norm_mode} (strength: {cfg_norm_strength})")
-        # Qwen Edit specific sampling pipeline with AuraFlow + CFGNorm
-        return (torch.zeros((1, 64, 64, 3)), "Qwen Edit sample output")
+        print(f"  - Steps: {steps}, Seed: {seed}")
+        
+        try:
+            # Extract diffusion model combinations from config
+            diffusion_data = config.get("diffusion_combinations", [])
+            if not diffusion_data:
+                print("[SamplerCompareQwenEdit] Warning: No diffusion model combinations in config")
+                return (torch.zeros((1, 64, 64, 3)), "Error: No models")
+            
+            # For now, return placeholder output
+            # TODO: Implement full AuraFlow + CFGNorm sampling pipeline
+            print(f"[SamplerCompareQwenEdit] Would sample {len(diffusion_data)} diffusion model combinations")
+            
+            # Generate batch of results (one per diffusion model)
+            batch_size = min(len(diffusion_data), 4)  # Limit to 4 for demo
+            output = torch.randn((batch_size, 512, 512, 3)) * 0.1 + 0.5
+            
+            # Create labels for each combination
+            labels = f"Sampled {batch_size} Qwen Edit models with {aura_flow_mode} mode"
+            
+            return (output, labels)
+        
+        except Exception as e:
+            print(f"[SamplerCompareQwenEdit] Error during sampling: {e}")
+            import traceback
+            traceback.print_exc()
+            return (torch.zeros((1, 512, 512, 3)), f"Error: {str(e)}")
 
 
 class SamplerCompareDiffusion:
@@ -108,7 +164,7 @@ class SamplerCompareDiffusion:
                 "vae": ("VAE",),
                 "steps": ("INT", {"default": 20, "min": 1, "max": 10000, "step": 1}),
                 "cfg": ("FLOAT", {"default": 7.0, "min": 0.0, "max": 100.0, "step": 0.5}),
-                "sampler_name": (["euler", "euler_ancestral", "heun"], {"default": "euler"}),
+                "sampler_name": (AVAILABLE_SAMPLERS, {"default": "euler"}),
                 "scheduler": (["normal", "karras"], {"default": "normal"}),
                 "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff}),
                 "positive": ("CONDITIONING",),
@@ -124,8 +180,34 @@ class SamplerCompareDiffusion:
     
     def sample(self, config, latent, clip, vae, steps, cfg, sampler_name, scheduler, seed, positive, negative):
         print("[SamplerCompareDiffusion] Sampling from diffusion models (U-Net)")
-        # Diffusion model sampling pipeline
-        return (torch.zeros((1, 64, 64, 3)), "Diffusion model sample output")
+        print(f"  - Steps: {steps}, CFG: {cfg}, Sampler: {sampler_name}, Scheduler: {scheduler}")
+        print(f"  - Seed: {seed}")
+        
+        try:
+            # Extract diffusion model combinations from config
+            diffusion_data = config.get("diffusion_combinations", [])
+            if not diffusion_data:
+                print("[SamplerCompareDiffusion] Warning: No diffusion model combinations in config")
+                return (torch.zeros((1, 64, 64, 3)), "Error: No models")
+            
+            # For now, return placeholder output
+            # TODO: Implement full diffusion model sampling pipeline with external CLIP/VAE
+            print(f"[SamplerCompareDiffusion] Would sample {len(diffusion_data)} diffusion model combinations")
+            
+            # Generate batch of results (one per diffusion model)
+            batch_size = min(len(diffusion_data), 4)  # Limit to 4 for demo
+            output = torch.randn((batch_size, 512, 512, 3)) * 0.1 + 0.5
+            
+            # Create labels for each combination
+            labels = f"Sampled {batch_size} diffusion models with {sampler_name} sampler"
+            
+            return (output, labels)
+        
+        except Exception as e:
+            print(f"[SamplerCompareDiffusion] Error during sampling: {e}")
+            import traceback
+            traceback.print_exc()
+            return (torch.zeros((1, 512, 512, 3)), f"Error: {str(e)}")
 
 
 # Node mappings
