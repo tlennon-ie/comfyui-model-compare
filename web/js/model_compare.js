@@ -81,32 +81,37 @@ function registerExtension(app) {
                             self.widgets.forEach((widget) => {
                                 let shouldShow = false;
                                 
+                                // Skip sliders and button - always show
+                                if (!widget.name || widget.type === "button" || widget.name.startsWith("num_")) {
+                                    shouldShow = true;
+                                }
+                                
                                 // Show checkpoint widgets up to num_checkpoints
-                                if (widget.name && widget.name.startsWith("checkpoint_")) {
+                                else if (widget.name.startsWith("checkpoint_")) {
                                     const checkpointNum = parseInt(widget.name.split("_")[1]);
                                     shouldShow = checkpointNum < num_checkpoints;
                                 }
                                 
                                 // Show diffusion_model widgets up to num_diffusion_models
-                                else if (widget.name && widget.name.startsWith("diffusion_model_")) {
+                                else if (widget.name.startsWith("diffusion_model_")) {
                                     const diffusionNum = parseInt(widget.name.split("_")[2]);
                                     shouldShow = diffusionNum < num_diffusion_models;
                                 }
                                 
                                 // Show vae widgets up to num_vaes
-                                else if (widget.name && widget.name.startsWith("vae_")) {
+                                else if (widget.name.startsWith("vae_")) {
                                     const vaeNum = parseInt(widget.name.split("_")[1]);
                                     shouldShow = vaeNum < num_vaes;
                                 }
                                 
                                 // Show text_encoder widgets up to num_text_encoders
-                                else if (widget.name && widget.name.startsWith("text_encoder_")) {
+                                else if (widget.name.startsWith("text_encoder_")) {
                                     const encNum = parseInt(widget.name.split("_")[2]);
                                     shouldShow = encNum < num_text_encoders;
                                 }
                                 
                                 // Show lora and lora_*_strengths widgets up to num_loras
-                                else if (widget.name && widget.name.startsWith("lora_")) {
+                                else if (widget.name.startsWith("lora_")) {
                                     const loraMatch = widget.name.match(/^lora_(\d+)/);
                                     if (loraMatch) {
                                         const loraNum = parseInt(loraMatch[1]);
@@ -114,22 +119,23 @@ function registerExtension(app) {
                                     }
                                 }
                                 
-                                // Set widget visibility
-                                if (widget.element) {
-                                    widget.element.style.display = shouldShow ? "" : "none";
-                                    if (shouldShow) visibleCount++;
-                                }
+                                // Use ComfyUI's widget.hidden property
+                                widget.hidden = !shouldShow;
+                                if (shouldShow) visibleCount++;
                             });
                             
-                            console.log(`[ModelCompare] Showing ${visibleCount} widgets`);
+                            console.log(`[ModelCompare] Updated visibility - ${visibleCount} widgets visible`);
+                            
+                            // Request canvas redraw
+                            if (app && app.canvas) {
+                                app.canvas.requestDraw();
+                            }
                         };
                         
                         // Add button widget
                         const buttonCallback = () => {
                             console.log("[ModelCompare] Update Inputs button clicked!");
                             updateWidgetVisibility();
-                            // Trigger graph change to refresh the UI
-                            app.graph.change();
                         };
                         
                         // Add the button widget
@@ -140,8 +146,25 @@ function registerExtension(app) {
                         // This happens after a small delay to ensure widgets are initialized
                         setTimeout(() => {
                             console.log("[ModelCompare] Initializing widget visibility");
-                            updateWidgetVisibility();
-                        }, 100);
+                            self.widgets.forEach((widget) => {
+                                if (!widget.name || widget.type === "button" || widget.name.startsWith("num_")) {
+                                    widget.hidden = false;
+                                } else if (widget.name.startsWith("checkpoint_")) {
+                                    widget.hidden = !widget.name.includes("checkpoint_0");
+                                } else if (widget.name.startsWith("diffusion_model_")) {
+                                    widget.hidden = !widget.name.includes("diffusion_model_0");
+                                } else if (widget.name.startsWith("vae_")) {
+                                    widget.hidden = !widget.name.includes("vae_0");
+                                } else if (widget.name.startsWith("text_encoder_")) {
+                                    widget.hidden = !widget.name.includes("text_encoder_0");
+                                } else if (widget.name.startsWith("lora_")) {
+                                    widget.hidden = !widget.name.includes("lora_0");
+                                }
+                            });
+                            if (app && app.canvas) {
+                                app.canvas.requestDraw();
+                            }
+                        }, 50);
                         
                     } catch (e) {
                         console.error("[ModelCompare] Error in onNodeCreated:", e);
