@@ -73,7 +73,48 @@ function registerExtension(app) {
                             
                             console.log(`[ModelCompare] Values: checkpoints=${num_checkpoints}, diffusion=${num_diffusion_models}, vaes=${num_vaes}, encoders=${num_text_encoders}, loras=${num_loras}`);
                             
-                            alert(`Model Comparison Configuration:\n\n✓ Checkpoints: ${num_checkpoints}\n✓ Diffusion Models: ${num_diffusion_models}\n✓ VAEs: ${num_vaes}\n✓ Text Encoders: ${num_text_encoders}\n✓ LoRAs: ${num_loras}`);
+                            // Hide/show widgets based on num_* values
+                            this.widgets.forEach((widget, idx) => {
+                                let shouldShow = true;
+                                
+                                // Hide checkpoint widgets beyond num_checkpoints
+                                if (widget.name && widget.name.startsWith("checkpoint_")) {
+                                    const checkpointNum = parseInt(widget.name.split("_")[1]);
+                                    shouldShow = checkpointNum < num_checkpoints;
+                                }
+                                
+                                // Hide diffusion_model widgets beyond num_diffusion_models
+                                if (widget.name && widget.name.startsWith("diffusion_model_")) {
+                                    const diffusionNum = parseInt(widget.name.split("_")[2]);
+                                    shouldShow = diffusionNum < num_diffusion_models;
+                                }
+                                
+                                // Hide vae widgets beyond num_vaes
+                                if (widget.name && widget.name.startsWith("vae_")) {
+                                    const vaeNum = parseInt(widget.name.split("_")[1]);
+                                    shouldShow = vaeNum < num_vaes;
+                                }
+                                
+                                // Hide text_encoder widgets beyond num_text_encoders
+                                if (widget.name && widget.name.startsWith("text_encoder_")) {
+                                    const encNum = parseInt(widget.name.split("_")[2]);
+                                    shouldShow = encNum < num_text_encoders;
+                                }
+                                
+                                // Hide lora widgets beyond num_loras
+                                if (widget.name && widget.name.startsWith("lora_")) {
+                                    const loraNum = parseInt(widget.name.split("_")[1]);
+                                    shouldShow = loraNum < num_loras;
+                                }
+                                
+                                // Set widget visibility
+                                if (widget.element) {
+                                    widget.element.style.display = shouldShow ? "" : "none";
+                                }
+                            });
+                            
+                            // Trigger graph change to refresh the UI
+                            app.graph.change();
                         };
                         
                         // Add widget using addWidget method with button type
