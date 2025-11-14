@@ -20,6 +20,8 @@ from .model_compare_loaders import NODE_CLASS_MAPPINGS as LOADER_MAPPINGS
 from .model_compare_loaders import NODE_DISPLAY_NAME_MAPPINGS as LOADER_DISPLAYS
 from .sampler_compare import NODE_CLASS_MAPPINGS as SAMPLER_MAPPINGS
 from .sampler_compare import NODE_DISPLAY_NAME_MAPPINGS as SAMPLER_DISPLAYS
+from .sampler_specialized import NODE_CLASS_MAPPINGS as SPECIALIZED_MAPPINGS
+from .sampler_specialized import NODE_DISPLAY_NAME_MAPPINGS as SPECIALIZED_DISPLAYS
 from .grid_compare import NODE_CLASS_MAPPINGS as GRID_MAPPINGS
 from .grid_compare import NODE_DISPLAY_NAME_MAPPINGS as GRID_DISPLAYS
 
@@ -27,12 +29,14 @@ from .grid_compare import NODE_DISPLAY_NAME_MAPPINGS as GRID_DISPLAYS
 NODE_CLASS_MAPPINGS = {
     **LOADER_MAPPINGS,
     **SAMPLER_MAPPINGS,
+    **SPECIALIZED_MAPPINGS,
     **GRID_MAPPINGS,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     **LOADER_DISPLAYS,
     **SAMPLER_DISPLAYS,
+    **SPECIALIZED_DISPLAYS,
     **GRID_DISPLAYS,
 }
 
