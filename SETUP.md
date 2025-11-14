@@ -6,7 +6,7 @@
 
 ```bash
 cd ComfyUI/custom_nodes
-git clone https://github.com/yourusername/comfyui-model-compare.git
+git clone https://github.com/tlennon-ie/comfyui-model-compare.git
 cd comfyui-model-compare
 pip install -r requirements.txt
 ```
@@ -36,7 +36,7 @@ pip install -r requirements.txt
    git add .
    git commit -m "Initial commit: ComfyUI Model Compare nodes"
    git branch -M main
-   git remote add origin https://github.com/yourusername/comfyui-model-compare.git
+   git remote add origin https://github.com/tlennon-ie/comfyui-model-compare.git
    git push -u origin main
    ```
 
@@ -223,8 +223,8 @@ Example config structure:
 ## Support & Contributing
 
 For bugs, features, or questions:
-- GitHub Issues: [yourusername/comfyui-model-compare/issues](https://github.com/yourusername/comfyui-model-compare/issues)
-- Pull Requests: [yourusername/comfyui-model-compare/pulls](https://github.com/yourusername/comfyui-model-compare/pulls)
+- GitHub Issues: [yourusername/comfyui-model-compare/issues](https://github.com/tlennon-ie/comfyui-model-compare/issues)
+- Pull Requests: [yourusername/comfyui-model-compare/pulls](https://github.com/tlennon-ie/comfyui-model-compare/pulls)
 
 ## License
 
