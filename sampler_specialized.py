@@ -65,13 +65,25 @@ class SamplerCompareCheckpoint:
             sampled_latents = []
             labels_list = []
             
+            progress_bar = ProgressBar(min(len(combinations), 4))
+            
             for i, combo in enumerate(combinations[:4]):  # Limit to 4 for now
+                progress_bar.update(i)
                 print(f"[SamplerCompareCheckpoint] Processing combination {i+1}/{min(len(combinations), 4)}")
                 print(f"  Model: {combo['model']}, VAE: {combo['vae']}, LoRAs: {combo['lora_names']}")
+                print(f"  LoRA Strengths: {combo['lora_strengths']}")
                 
                 # Use the input latent (would be actual sampling in real implementation)
                 sampled_latents.append(latent["samples"])
-                labels_list.append(f"Combo {i+1}: {combo['model']}")
+                
+                # Build detailed label for this combination
+                label_parts = [combo['model'].split('\\')[-1]]  # Just the filename
+                if combo['lora_names']:
+                    for lora_name, strength in zip(combo['lora_names'], combo['lora_strengths'] or []):
+                        label_parts.append(f"{lora_name.split(chr(92))[-1]}({strength:.2f})")  # Strength in parentheses
+                labels_list.append(" + ".join(label_parts))
+            
+            progress_bar.update(min(len(combinations), 4))
             
             # Stack all sampled latents
             if sampled_latents:
@@ -219,13 +231,25 @@ class SamplerCompareQwenEdit:
             sampled_latents = []
             labels_list = []
             
+            progress_bar = ProgressBar(min(len(combinations), 4))
+            
             for i, combo in enumerate(combinations[:4]):  # Limit to 4 for now
+                progress_bar.update(i)
                 print(f"[SamplerCompareQwenEdit] Processing combination {i+1}/{min(len(combinations), 4)}")
                 print(f"  Model: {combo['model']}, VAE: {combo['vae']}, LoRAs: {combo['lora_names']}")
+                print(f"  LoRA Strengths: {combo['lora_strengths']}")
                 
                 # Use the input latent (would be actual sampling in real implementation)
                 sampled_latents.append(latent["samples"])
-                labels_list.append(f"Combo {i+1}: {combo['model']}")
+                
+                # Build detailed label for this combination
+                label_parts = [combo['model'].split('\\')[-1]]  # Just the filename
+                if combo['lora_names']:
+                    for lora_name, strength in zip(combo['lora_names'], combo['lora_strengths'] or []):
+                        label_parts.append(f"{lora_name.split(chr(92))[-1]}({strength:.2f})")  # Strength in parentheses
+                labels_list.append(" + ".join(label_parts))
+            
+            progress_bar.update(min(len(combinations), 4))
             
             # Stack all sampled latents
             if sampled_latents:
@@ -347,13 +371,25 @@ class SamplerCompareDiffusion:
             sampled_latents = []
             labels_list = []
             
+            progress_bar = ProgressBar(min(len(combinations), 4))
+            
             for i, combo in enumerate(combinations[:4]):  # Limit to 4 for now
+                progress_bar.update(i)
                 print(f"[SamplerCompareDiffusion] Processing combination {i+1}/{min(len(combinations), 4)}")
                 print(f"  Model: {combo['model']}, VAE: {combo['vae']}, LoRAs: {combo['lora_names']}")
+                print(f"  LoRA Strengths: {combo['lora_strengths']}")
                 
                 # Use the input latent (would be actual sampling in real implementation)
                 sampled_latents.append(latent["samples"])
-                labels_list.append(f"Combo {i+1}: {combo['model']}")
+                
+                # Build detailed label for this combination
+                label_parts = [combo['model'].split('\\')[-1]]  # Just the filename
+                if combo['lora_names']:
+                    for lora_name, strength in zip(combo['lora_names'], combo['lora_strengths'] or []):
+                        label_parts.append(f"{lora_name.split(chr(92))[-1]}({strength:.2f})")  # Strength in parentheses
+                labels_list.append(" + ".join(label_parts))
+            
+            progress_bar.update(min(len(combinations), 4))
             
             # Stack all sampled latents
             if sampled_latents:

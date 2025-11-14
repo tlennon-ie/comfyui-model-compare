@@ -115,36 +115,40 @@ class GridCompare:
         font_size: int,
         font_name: str,
         save_individuals: bool,
-        x_label: str = "Checkpoint",
+        x_label: str = "LoRA Strength",
         y_label: str = "LoRA Configuration",
         z_label: str = "Index",
     ) -> Tuple[torch.Tensor, str]:
         """
         Create a comparison grid from images and labels.
+        Arranges by LoRA strength (columns) and LoRA names (rows).
         """
         print(f"[GridCompare] Creating comparison grid...")
         print(f"  Images shape: {images.shape}")
-        print(f"  Number of labels: {len(labels.split(chr(10)))}")
-        print(f"  Grid title: {grid_title}")
-
-        # Parse labels
-        label_list = [l.strip() for l in labels.split("\n") if l.strip()]
+        print(f"  Labels input: {repr(labels)}")
+        
+        # Parse labels - they come as semicolon-separated from sampler
+        label_list = [l.strip() for l in labels.split(";") if l.strip()]
+        print(f"  Parsed {len(label_list)} labels")
         
         # Convert images to PIL
         pil_images = self._tensor_to_pil_list(images)
+        print(f"  Converted {len(pil_images)} images to PIL")
 
         if len(pil_images) != len(label_list):
             print(f"[GridCompare] Warning: Image count ({len(pil_images)}) != label count ({len(label_list)})")
+            # Pad labels if needed
+            while len(label_list) < len(pil_images):
+                label_list.append(f"Image {len(label_list)}")
 
-        # Determine grid layout based on config
-        num_checkpoints = max(1, len(config.get("checkpoints", []) or [None]))
-        num_loras = max(1, len(config.get("loras", []) or []))
-        
-        # Calculate grid dimensions
-        cols = num_checkpoints
-        rows = max(1, len(pil_images) // cols) if cols > 0 else len(pil_images)
+        # Determine grid layout based on image count
+        # For LoRA strength variations: arrange as columns
+        # Assume roughly square grid for multiple LoRAs
+        num_images = len(pil_images)
+        cols = max(1, int(num_images ** 0.5))  # Try square-ish layout
+        rows = (num_images + cols - 1) // cols  # Round up
 
-        print(f"[GridCompare] Grid layout: {rows} rows x {cols} columns")
+        print(f"[GridCompare] Grid layout: {rows} rows x {cols} columns ({num_images} images)")
 
         # Create grid
         grid_image = self._create_grid_image(
@@ -320,16 +324,29 @@ class GridCompare:
             # Paste image
             grid_img.paste(pil_img, (x, y))
 
-            # Draw label
+            # Draw label below image
             if idx < len(labels):
                 label_text = labels[idx]
-                draw.text(
-                    (x, y - label_height // 2),
-                    label_text,
-                    fill=text_rgb,
-                    font=label_font,
-                    anchor="lm",
-                )
+                # Wrap long text
+                max_width = img_width
+                wrapped_lines = []
+                for line in label_text.split('\n'):
+                    while line:
+                        # Try to fit as much as possible
+                        wrapped_lines.append(line[:30])  # Limit to 30 chars per line
+                        line = line[30:]
+                
+                # Draw each line of the label
+                for line_idx, line in enumerate(wrapped_lines[:2]):  # Limit to 2 lines
+                    label_y = y + img_height + gap_size // 2 + line_idx * (font_size // 2)
+                    draw.text(
+                        (x + img_width // 2, label_y),
+                        line,
+                        fill=text_rgb,
+                        font=label_font,
+                        anchor="mm",
+                    )
+                print(f"[GridCompare] Drew label for image {idx}: {label_text[:50]}")
 
         return grid_img
 
