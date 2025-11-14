@@ -20,18 +20,15 @@ function chainCallback(object, property, callback) {
     }
 }
 
-// Wait for app to be injected into window.comfyAPI
 let registerAttempts = 0;
 const maxAttempts = 100;
 
 function tryRegisterExtension() {
     registerAttempts++;
     
-    // The actual app is at window.comfyAPI.app.app
     if (window.comfyAPI && window.comfyAPI.app && window.comfyAPI.app.app) {
         const app = window.comfyAPI.app.app;
         console.log("[ModelCompare] Found ComfyApp at window.comfyAPI.app.app");
-        console.log("[ModelCompare] app.registerExtension exists?", typeof app.registerExtension);
         registerExtension(app);
         return;
     }
@@ -50,119 +47,100 @@ function registerExtension(app) {
         name: "comfyui-model-compare",
         
         async beforeRegisterNodeDef(nodeType, nodeData, app) {
-            console.log(`[ModelCompare] beforeRegisterNodeDef called for: ${nodeData.name}`);
-            
             if (nodeData.name === "ModelCompareLoaders") {
                 console.log("[ModelCompare] Setting up ModelCompareLoaders");
                 
-                // Chain the onNodeCreated callback
                 chainCallback(nodeType.prototype, "onNodeCreated", function () {
-                    console.log("[ModelCompare] onNodeCreated called for ModelCompareLoaders instance");
+                    console.log("[ModelCompare] onNodeCreated called for ModelCompareLoaders");
                     
                     try {
                         const self = this;
+                        const appRef = app;
                         
-                        // Function to update visibility based on num_* values
-                        const updateWidgetVisibility = () => {
-                            console.log("[ModelCompare] updateWidgetVisibility called");
-                            
-                            // Get the num_* values from the node's widgets
+                        // Store original widgets list and create index map
+                        const allWidgets = [...self.widgets];
+                        const widgetMap = {};
+                        allWidgets.forEach((w, idx) => {
+                            if (w.name) widgetMap[w.name] = { widget: w, index: idx };
+                        });
+                        
+                        const updateVisibility = () => {
                             const num_checkpoints = self.widgets.find(w => w.name === "num_checkpoints")?.value || 0;
                             const num_diffusion_models = self.widgets.find(w => w.name === "num_diffusion_models")?.value || 0;
                             const num_vaes = self.widgets.find(w => w.name === "num_vaes")?.value || 0;
                             const num_text_encoders = self.widgets.find(w => w.name === "num_text_encoders")?.value || 0;
                             const num_loras = self.widgets.find(w => w.name === "num_loras")?.value || 0;
                             
-                            console.log(`[ModelCompare] Current values: checkpoints=${num_checkpoints}, diffusion=${num_diffusion_models}, vaes=${num_vaes}, encoders=${num_text_encoders}, loras=${num_loras}`);
+                            console.log(`[ModelCompare] Updating: checkpoints=${num_checkpoints}, diffusion=${num_diffusion_models}, vaes=${num_vaes}, encoders=${num_text_encoders}, loras=${num_loras}`);
                             
-                            let visibleCount = 0;
-                            
-                            // Hide/show widgets based on num_* values
-                            self.widgets.forEach((widget) => {
+                            allWidgets.forEach((widget) => {
+                                if (!widget.name) return;
+                                
                                 let shouldShow = false;
                                 
-                                // Skip sliders and button - always show
-                                if (!widget.name || widget.type === "button" || widget.name.startsWith("num_")) {
+                                if (widget.name.startsWith("num_") || widget.type === "button") {
                                     shouldShow = true;
+                                } else if (widget.name.startsWith("checkpoint_")) {
+                                    const num = parseInt(widget.name.split("_")[1]);
+                                    shouldShow = num < num_checkpoints;
+                                } else if (widget.name.startsWith("diffusion_model_")) {
+                                    const num = parseInt(widget.name.split("_")[2]);
+                                    shouldShow = num < num_diffusion_models;
+                                } else if (widget.name.startsWith("vae_")) {
+                                    const num = parseInt(widget.name.split("_")[1]);
+                                    shouldShow = num < num_vaes;
+                                } else if (widget.name.startsWith("text_encoder_")) {
+                                    const num = parseInt(widget.name.split("_")[2]);
+                                    shouldShow = num < num_text_encoders;
+                                } else if (widget.name.startsWith("lora_")) {
+                                    const num = parseInt(widget.name.split("_")[1]);
+                                    shouldShow = num < num_loras;
                                 }
                                 
-                                // Show checkpoint widgets up to num_checkpoints
-                                else if (widget.name.startsWith("checkpoint_")) {
-                                    const checkpointNum = parseInt(widget.name.split("_")[1]);
-                                    shouldShow = checkpointNum < num_checkpoints;
-                                }
-                                
-                                // Show diffusion_model widgets up to num_diffusion_models
-                                else if (widget.name.startsWith("diffusion_model_")) {
-                                    const diffusionNum = parseInt(widget.name.split("_")[2]);
-                                    shouldShow = diffusionNum < num_diffusion_models;
-                                }
-                                
-                                // Show vae widgets up to num_vaes
-                                else if (widget.name.startsWith("vae_")) {
-                                    const vaeNum = parseInt(widget.name.split("_")[1]);
-                                    shouldShow = vaeNum < num_vaes;
-                                }
-                                
-                                // Show text_encoder widgets up to num_text_encoders
-                                else if (widget.name.startsWith("text_encoder_")) {
-                                    const encNum = parseInt(widget.name.split("_")[2]);
-                                    shouldShow = encNum < num_text_encoders;
-                                }
-                                
-                                // Show lora and lora_*_strengths widgets up to num_loras
-                                else if (widget.name.startsWith("lora_")) {
-                                    const loraMatch = widget.name.match(/^lora_(\d+)/);
-                                    if (loraMatch) {
-                                        const loraNum = parseInt(loraMatch[1]);
-                                        shouldShow = loraNum < num_loras;
+                                // Remove from DOM if hidden, keep in widgets array
+                                if (!shouldShow) {
+                                    if (widget.element && widget.element.parentNode) {
+                                        widget.element.style.display = "none";
+                                    }
+                                } else {
+                                    if (widget.element) {
+                                        widget.element.style.display = "";
                                     }
                                 }
-                                
-                                // Use ComfyUI's widget.hidden property
-                                widget.hidden = !shouldShow;
-                                if (shouldShow) visibleCount++;
                             });
                             
-                            console.log(`[ModelCompare] Updated visibility - ${visibleCount} widgets visible`);
-                            
-                            // Request canvas redraw
-                            if (app && app.canvas) {
-                                app.canvas.requestDraw();
+                            if (appRef && appRef.canvas) {
+                                appRef.canvas.requestDraw();
                             }
                         };
                         
-                        // Add button widget
                         const buttonCallback = () => {
-                            console.log("[ModelCompare] Update Inputs button clicked!");
-                            updateWidgetVisibility();
+                            console.log("[ModelCompare] Update Inputs button clicked");
+                            updateVisibility();
                         };
                         
-                        // Add the button widget
                         this.addWidget("button", "Update Inputs", null, buttonCallback);
-                        console.log("[ModelCompare] Update Inputs button added successfully via addWidget");
                         
-                        // On initial creation, hide all but first of each type
-                        // This happens after a small delay to ensure widgets are initialized
                         setTimeout(() => {
-                            console.log("[ModelCompare] Initializing widget visibility");
-                            self.widgets.forEach((widget) => {
-                                if (!widget.name || widget.type === "button" || widget.name.startsWith("num_")) {
-                                    widget.hidden = false;
-                                } else if (widget.name.startsWith("checkpoint_")) {
-                                    widget.hidden = !widget.name.includes("checkpoint_0");
-                                } else if (widget.name.startsWith("diffusion_model_")) {
-                                    widget.hidden = !widget.name.includes("diffusion_model_0");
-                                } else if (widget.name.startsWith("vae_")) {
-                                    widget.hidden = !widget.name.includes("vae_0");
-                                } else if (widget.name.startsWith("text_encoder_")) {
-                                    widget.hidden = !widget.name.includes("text_encoder_0");
-                                } else if (widget.name.startsWith("lora_")) {
-                                    widget.hidden = !widget.name.includes("lora_0");
+                            console.log("[ModelCompare] Initial visibility setup");
+                            allWidgets.forEach((widget) => {
+                                if (!widget.name || widget.name.startsWith("num_") || widget.type === "button") {
+                                    return;
+                                }
+                                
+                                let hide = true;
+                                if (widget.name.startsWith("checkpoint_") && widget.name.includes("checkpoint_0")) hide = false;
+                                else if (widget.name.startsWith("diffusion_model_") && widget.name.includes("diffusion_model_0")) hide = false;
+                                else if (widget.name.startsWith("vae_") && widget.name.includes("vae_0")) hide = false;
+                                else if (widget.name.startsWith("text_encoder_") && widget.name.includes("text_encoder_0")) hide = false;
+                                else if (widget.name.startsWith("lora_") && widget.name.includes("lora_0")) hide = false;
+                                
+                                if (widget.element) {
+                                    widget.element.style.display = hide ? "none" : "";
                                 }
                             });
-                            if (app && app.canvas) {
-                                app.canvas.requestDraw();
+                            if (appRef && appRef.canvas) {
+                                appRef.canvas.requestDraw();
                             }
                         }, 50);
                         
@@ -177,5 +155,4 @@ function registerExtension(app) {
     console.log("[ModelCompare] Extension registered successfully");
 }
 
-// Start trying to register the extension
 tryRegisterExtension();

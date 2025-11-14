@@ -90,6 +90,7 @@ class SamplerCompareQwenEdit:
                 "config": ("MODEL_COMPARE_CONFIG",),
                 "latent": ("LATENT",),
                 "steps": ("INT", {"default": 20, "min": 1, "max": 10000, "step": 1}),
+                "sampler_name": (AVAILABLE_SAMPLERS, {"default": "euler"}),
                 "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff}),
                 "positive": ("CONDITIONING",),
                 "negative": ("CONDITIONING",),
