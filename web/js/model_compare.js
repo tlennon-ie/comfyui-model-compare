@@ -37,114 +37,62 @@ function registerExtension() {
         async nodeCreated(node, app) {
             console.log(`[ModelCompare] nodeCreated called for: ${node.type}`);
             
-            // Handle ModelCompareLoaders - add update button
+            // Only add button to ModelCompareLoaders node
             if (node.type === "ModelCompareLoaders") {
-                console.log("[ModelCompare] Adding button to ModelCompareLoaders instance");
+                console.log("[ModelCompare] Adding Update Inputs button to ModelCompareLoaders");
                 
-                // Add update button using proper widget construction
-                const self = node;
-                const widget = {
-                    name: "update_inputs_button",
-                    type: "button",
-                    draw: function(ctx, node, widgetWidth, y, widgetHeight) {
-                        const show = this.value !== false;
-                        const sz = show ? widgetHeight - 4 : 0;
-                        const x = 6;
-                        ctx.fillStyle = this.bgColor || "#222";
-                        ctx.fillRect(0, y, widgetWidth, widgetHeight);
-                        ctx.fillStyle = "#fff";
-                        ctx.font = "16px Arial";
-                        ctx.textAlign = "left";
-                        ctx.fillText("Update Inputs", 15, y + 20);
+                // Create custom button widget
+                const buttonWidget = {
+                    name: "update_inputs_btn",
+                    type: "custom",
+                    value: "",
+                    draw: function(ctx, node, widgetWidth, y, height) {
+                        // Draw button background
+                        const bgColor = "#1e1e1e";
+                        const textColor = "#ffffff";
+                        const hoverColor = "#333333";
+                        
+                        ctx.fillStyle = this.hovered ? hoverColor : bgColor;
+                        ctx.fillRect(0, y, widgetWidth, height);
+                        
+                        // Draw button border
+                        ctx.strokeStyle = "#444444";
+                        ctx.lineWidth = 1;
+                        ctx.strokeRect(0, y, widgetWidth, height);
+                        
+                        // Draw button text
+                        ctx.fillStyle = textColor;
+                        ctx.font = "14px monospace";
+                        ctx.textAlign = "center";
+                        ctx.textBaseline = "middle";
+                        ctx.fillText("Update Inputs", widgetWidth / 2, y + height / 2);
                     },
                     mouse: function(event, pos, node) {
                         if (event.type === "pointerdown") {
-                            console.log("[ModelCompare] Update Inputs button clicked");
+                            console.log("[ModelCompare] Update Inputs button clicked!");
                             
-                            const num_checkpoints = self.widgets.find(w => w.name === "num_checkpoints")?.value || 0;
-                            const num_diffusion_models = self.widgets.find(w => w.name === "num_diffusion_models")?.value || 0;
-                            const num_vaes = self.widgets.find(w => w.name === "num_vaes")?.value || 0;
-                            const num_text_encoders = self.widgets.find(w => w.name === "num_text_encoders")?.value || 0;
-                            const num_loras = self.widgets.find(w => w.name === "num_loras")?.value || 0;
-
+                            // Get the num_* values from the node's widgets
+                            const num_checkpoints = node.widgets.find(w => w.name === "num_checkpoints")?.value || 0;
+                            const num_diffusion_models = node.widgets.find(w => w.name === "num_diffusion_models")?.value || 0;
+                            const num_vaes = node.widgets.find(w => w.name === "num_vaes")?.value || 0;
+                            const num_text_encoders = node.widgets.find(w => w.name === "num_text_encoders")?.value || 0;
+                            const num_loras = node.widgets.find(w => w.name === "num_loras")?.value || 0;
+                            
                             console.log(`[ModelCompare] Values: checkpoints=${num_checkpoints}, diffusion=${num_diffusion_models}, vaes=${num_vaes}, encoders=${num_text_encoders}, loras=${num_loras}`);
-                            alert(`Loaders configured for:\n- ${num_checkpoints} Checkpoints\n- ${num_diffusion_models} Diffusion Models\n- ${num_vaes} VAEs\n- ${num_text_encoders} Text Encoders\n- ${num_loras} LoRAs`);
                             
+                            // Show message to user
+                            alert(`Model Comparison Configuration:\n\n✓ Checkpoints: ${num_checkpoints}\n✓ Diffusion Models: ${num_diffusion_models}\n✓ VAEs: ${num_vaes}\n✓ Text Encoders: ${num_text_encoders}\n✓ LoRAs: ${num_loras}`);
+                            
+                            // Trigger graph update to refresh node UI
                             app.graph.change();
                             return true;
                         }
                     },
-                    value: true
+                    hovered: false,
                 };
                 
-                node.widgets.push(widget);
-                console.log("[ModelCompare] Update Inputs button added to ModelCompareLoaders");
-            }
-
-            // Handle ModelCompareLoadersAdvanced - add update button
-            if (node.type === "ModelCompareLoadersAdvanced") {
-                console.log("[ModelCompare] Adding button to ModelCompareLoadersAdvanced instance");
-                
-                // Add update button using proper widget construction
-                const self = node;
-                const widget = {
-                    name: "update_inputs_button",
-                    type: "button",
-                    draw: function(ctx, node, widgetWidth, y, widgetHeight) {
-                        const show = this.value !== false;
-                        const sz = show ? widgetHeight - 4 : 0;
-                        const x = 6;
-                        ctx.fillStyle = this.bgColor || "#222";
-                        ctx.fillRect(0, y, widgetWidth, widgetHeight);
-                        ctx.fillStyle = "#fff";
-                        ctx.font = "16px Arial";
-                        ctx.textAlign = "left";
-                        ctx.fillText("Update Inputs", 15, y + 20);
-                    },
-                    mouse: function(event, pos, node) {
-                        if (event.type === "pointerdown") {
-                            console.log("[ModelCompare] Update Inputs button clicked on Advanced loader");
-                            
-                            if (!self.inputs || self.inputs.length === 0) {
-                                console.warn("[ModelCompare] No inputs found");
-                                return;
-                            }
-
-                            // Try to find connected config node
-                            const configInput = self.inputs.find(input => input.name === "config");
-                            if (configInput && configInput.link !== undefined && configInput.link !== null) {
-                                try {
-                                    const sourceLink = app.graph.links[configInput.link];
-                                    if (sourceLink) {
-                                        const sourceNode = app.graph.getNodeById(sourceLink.origin_id);
-                                        if (sourceNode) {
-                                            const num_checkpoints = sourceNode.widgets.find(w => w.name === "num_checkpoints")?.value || 0;
-                                            const num_diffusion_models = sourceNode.widgets.find(w => w.name === "num_diffusion_models")?.value || 0;
-                                            const num_vaes = sourceNode.widgets.find(w => w.name === "num_vaes")?.value || 0;
-                                            const num_text_encoders = sourceNode.widgets.find(w => w.name === "num_text_encoders")?.value || 0;
-                                            const num_loras = sourceNode.widgets.find(w => w.name === "num_loras")?.value || 0;
-
-                                            console.log(`[ModelCompare] Connected values: checkpoints=${num_checkpoints}, diffusion=${num_diffusion_models}, vaes=${num_vaes}, encoders=${num_text_encoders}, loras=${num_loras}`);
-                                            
-                                            alert(`Connected to ModelCompareLoaders:\n\n- Checkpoints: ${num_checkpoints}\n- Diffusion Models: ${num_diffusion_models}\n- VAEs: ${num_vaes}\n- Text Encoders: ${num_text_encoders}\n- LoRAs: ${num_loras}`);
-                                            return true;
-                                        }
-                                    }
-                                } catch (e) {
-                                    console.error("[ModelCompare] Error reading config:", e);
-                                }
-                            } else {
-                                console.warn("[ModelCompare] Config not connected");
-                                alert("Please connect the config output from ModelCompareLoaders");
-                                return true;
-                            }
-                        }
-                    },
-                    value: true
-                };
-                
-                node.widgets.push(widget);
-                console.log("[ModelCompare] Update Inputs button added to ModelCompareLoadersAdvanced");
+                node.widgets.push(buttonWidget);
+                console.log("[ModelCompare] Update Inputs button added successfully");
             }
         }
     });
