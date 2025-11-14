@@ -1,0 +1,190 @@
+{
+  "last_number_order": 0,
+  "last_widget_conf": {},
+  "group_structure": {},
+  "data": {
+    "1": {
+      "inputs": {
+        "ckpt_name": "model.safetensors"
+      },
+      "class_type": "CheckpointLoaderSimple",
+      "pos": [
+        0,
+        0
+      ]
+    },
+    "2": {
+      "inputs": {
+        "vae_name": "vae-ft-mse-840000-ema-pruned.safetensors"
+      },
+      "class_type": "VAELoader",
+      "pos": [
+        300,
+        0
+      ]
+    },
+    "3": {
+      "inputs": {
+        "clip_name": "clip-vit-large-patch14.bin"
+      },
+      "class_type": "CLIPLoader",
+      "pos": [
+        600,
+        0
+      ]
+    },
+    "4": {
+      "inputs": {
+        "num_checkpoints": 2,
+        "num_vaes": 1,
+        "num_text_encoders": 0,
+        "num_loras": 1
+      },
+      "class_type": "ModelCompareLoaders",
+      "pos": [
+        0,
+        200
+      ]
+    },
+    "5": {
+      "inputs": {
+        "config": [
+          4,
+          0
+        ],
+        "checkpoint_0": "model_v1.safetensors",
+        "checkpoint_1": "model_v2.safetensors",
+        "vae_0": "vae-ft-mse-840000-ema-pruned.safetensors",
+        "lora_0": "add_detail.safetensors",
+        "lora_0_strengths": "0.5, 1.0"
+      },
+      "class_type": "ModelCompareLoadersAdvanced",
+      "pos": [
+        0,
+        350
+      ]
+    },
+    "6": {
+      "inputs": {
+        "text": "a beautiful landscape with mountains and sunset, highly detailed, 4k"
+      },
+      "class_type": "CLIPTextEncode",
+      "pos": [
+        300,
+        300
+      ]
+    },
+    "7": {
+      "inputs": {
+        "text": "blurry, low quality, watermark, distorted"
+      },
+      "class_type": "CLIPTextEncode",
+      "pos": [
+        300,
+        400
+      ]
+    },
+    "8": {
+      "inputs": {
+        "width": 512,
+        "height": 512,
+        "length": 1,
+        "batch_size": 1
+      },
+      "class_type": "EmptyLatentImage",
+      "pos": [
+        600,
+        300
+      ]
+    },
+    "9": {
+      "inputs": {
+        "config": [
+          5,
+          0
+        ],
+        "latent": [
+          8,
+          0
+        ],
+        "steps": 25,
+        "cfg": 7.0,
+        "sampler_name": "dpmpp_2m_sde",
+        "scheduler": "karras",
+        "seed": 12345,
+        "positive": [
+          6,
+          0
+        ],
+        "negative": [
+          7,
+          0
+        ],
+        "model": [
+          1,
+          0
+        ],
+        "clip": [
+          3,
+          0
+        ],
+        "vae": [
+          2,
+          0
+        ]
+      },
+      "class_type": "SamplerCompare",
+      "pos": [
+        600,
+        500
+      ]
+    },
+    "10": {
+      "inputs": {
+        "images": [
+          9,
+          0
+        ],
+        "labels": [
+          9,
+          1
+        ],
+        "config": [
+          5,
+          0
+        ],
+        "save_location": "model-compare/example",
+        "grid_title": "Model & LoRA Strength Comparison",
+        "gap_size": 10,
+        "border_color": "#000000",
+        "border_width": 2,
+        "text_color": "#FFFFFF",
+        "font_size": 14,
+        "font_name": "default",
+        "save_individuals": true,
+        "x_label": "Checkpoint Version",
+        "y_label": "LoRA Strength",
+        "z_label": "Combination Index"
+      },
+      "class_type": "GridCompare",
+      "pos": [
+        900,
+        500
+      ]
+    },
+    "11": {
+      "inputs": {
+        "images": [
+          10,
+          0
+        ],
+        "filename_prefix": "model_compare_grid"
+      },
+      "class_type": "SaveImage",
+      "pos": [
+        1200,
+        500
+      ]
+    }
+  }
+}

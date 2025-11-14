@@ -1,0 +1,21 @@
+{
+    "name": "ComfyUI Model Compare",
+    "description": "Compare multiple model configurations side-by-side. Configure checkpoints, VAEs, text encoders, and LoRAs, then generate all combinations and create customizable comparison grids with labels and styling.",
+    "version": "1.0.0",
+    "author": "Your Name",
+    "license": "MIT",
+    "repository": "https://github.com/yourusername/comfyui-model-compare",
+    "install_type": "git-clone",
+    "reference": "https://github.com/yourusername/comfyui-model-compare",
+    "files": [
+        "https://github.com/yourusername/comfyui-model-compare"
+    ],
+    "pip": [],
+    "nodename_pattern": "ModelCompare|SamplerCompare|GridCompare",
+    "title_aux": "Model Compare",
+    "category": "model",
+    "tags": ["model", "comparison", "grid", "checkpoint", "vae", "lora", "sampler", "batch", "compare"],
+    "preemptions": [],
+    "apt": [],
+    "js_path": null
+}

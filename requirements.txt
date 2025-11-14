@@ -1,0 +1,6 @@
+# ComfyUI Model Compare Requirements
+# Core dependencies are already in ComfyUI
+# These are optional packages for enhanced functionality
+
+Pillow>=9.0.0
+numpy>=1.21.0
