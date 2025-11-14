@@ -57,6 +57,13 @@ function registerExtension(app) {
                         const self = this;
                         const appRef = app;
                         
+                        // Store original computeSize for each widget ONCE, on first access
+                        self.widgets.forEach((w) => {
+                            if (!w.origComputeSize) {
+                                w.origComputeSize = w.computeSize;
+                            }
+                        });
+                        
                         const updateVisibility = () => {
                             const num_checkpoints = self.widgets.find(w => w.name === "num_checkpoints")?.value || 0;
                             const num_diffusion_models = self.widgets.find(w => w.name === "num_diffusion_models")?.value || 0;
@@ -69,9 +76,12 @@ function registerExtension(app) {
                             let hiddenCount = 0;
                             let visibleCount = 0;
                             
-                            // Iterate through all input widgets (not sliders, not button)
-                            self.widgets.forEach((widget, widgetIdx) => {
+                            // Update computeSize for all widgets based on visibility
+                            self.widgets.forEach((widget) => {
                                 if (!widget.name || widget.name.startsWith("num_") || widget.type === "button") {
+                                    // Always show control widgets
+                                    widget.computeSize = widget.origComputeSize;
+                                    visibleCount++;
                                     return;
                                 }
                                 
@@ -94,22 +104,23 @@ function registerExtension(app) {
                                     shouldShow = num < num_loras;
                                 }
                                 
-                                // Try to hide via widget.hidden property (works in some cases)
-                                widget.hidden = !shouldShow;
-                                
-                                // Also try to hide the DOM element if it exists
-                                if (widget.element) {
-                                    widget.element.style.display = shouldShow ? "" : "none";
-                                }
-                                
                                 if (shouldShow) {
+                                    // Show: restore original computeSize
+                                    widget.computeSize = widget.origComputeSize;
                                     visibleCount++;
                                 } else {
+                                    // Hide: return [0, -4] to collapse the space
+                                    widget.computeSize = () => [0, -4];
                                     hiddenCount++;
                                 }
                             });
                             
                             console.log(`[ModelCompare] Visibility updated: ${visibleCount} visible, ${hiddenCount} hidden`);
+                            
+                            // Recalculate the node's size based on the new widget sizes
+                            if (self.size) {
+                                self.setSize(self.computeSize());
+                            }
                             
                             if (appRef && appRef.canvas) {
                                 appRef.canvas.requestDraw();
@@ -130,6 +141,7 @@ function registerExtension(app) {
                             
                             self.widgets.forEach((widget) => {
                                 if (!widget.name || widget.name.startsWith("num_") || widget.type === "button") {
+                                    widget.computeSize = widget.origComputeSize;
                                     return;
                                 }
                                 
@@ -147,11 +159,17 @@ function registerExtension(app) {
                                     hide = !widget.name.includes("lora_0");
                                 }
                                 
-                                widget.hidden = hide;
-                                if (widget.element) {
-                                    widget.element.style.display = hide ? "none" : "";
+                                if (hide) {
+                                    widget.computeSize = () => [0, -4];
+                                } else {
+                                    widget.computeSize = widget.origComputeSize;
                                 }
                             });
+                            
+                            // Recalculate node size based on widget sizes
+                            if (self.size) {
+                                self.setSize(self.computeSize());
+                            }
                             
                             if (appRef && appRef.canvas) {
                                 appRef.canvas.requestDraw();
