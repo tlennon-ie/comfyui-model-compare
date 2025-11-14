@@ -57,13 +57,6 @@ function registerExtension(app) {
                         const self = this;
                         const appRef = app;
                         
-                        // Store original widgets list and create index map
-                        const allWidgets = [...self.widgets];
-                        const widgetMap = {};
-                        allWidgets.forEach((w, idx) => {
-                            if (w.name) widgetMap[w.name] = { widget: w, index: idx };
-                        });
-                        
                         const updateVisibility = () => {
                             const num_checkpoints = self.widgets.find(w => w.name === "num_checkpoints")?.value || 0;
                             const num_diffusion_models = self.widgets.find(w => w.name === "num_diffusion_models")?.value || 0;
@@ -73,8 +66,24 @@ function registerExtension(app) {
                             
                             console.log(`[ModelCompare] Updating: checkpoints=${num_checkpoints}, diffusion=${num_diffusion_models}, vaes=${num_vaes}, encoders=${num_text_encoders}, loras=${num_loras}`);
                             
-                            allWidgets.forEach((widget) => {
-                                if (!widget.name) return;
+                            // Find the node's input container in the DOM
+                            const nodeElement = self.element;
+                            if (!nodeElement) {
+                                console.log("[ModelCompare] Node element not found");
+                                return;
+                            }
+                            
+                            // Get all input container divs (ComfyUI structure)
+                            const inputContainers = nodeElement.querySelectorAll(".comfy-node-inputs > div");
+                            console.log(`[ModelCompare] Found ${inputContainers.length} input containers`);
+                            
+                            let hiddenCount = 0;
+                            let visibleCount = 0;
+                            
+                            inputContainers.forEach((container, idx) => {
+                                // Find the widget by matching text content or data attributes
+                                const widget = self.widgets[idx];
+                                if (!widget || !widget.name) return;
                                 
                                 let shouldShow = false;
                                 
@@ -97,17 +106,16 @@ function registerExtension(app) {
                                     shouldShow = num < num_loras;
                                 }
                                 
-                                // Remove from DOM if hidden, keep in widgets array
-                                if (!shouldShow) {
-                                    if (widget.element && widget.element.parentNode) {
-                                        widget.element.style.display = "none";
-                                    }
+                                if (shouldShow) {
+                                    container.style.display = "";
+                                    visibleCount++;
                                 } else {
-                                    if (widget.element) {
-                                        widget.element.style.display = "";
-                                    }
+                                    container.style.display = "none";
+                                    hiddenCount++;
                                 }
                             });
+                            
+                            console.log(`[ModelCompare] Visibility updated: ${visibleCount} visible, ${hiddenCount} hidden`);
                             
                             if (appRef && appRef.canvas) {
                                 appRef.canvas.requestDraw();
@@ -120,32 +128,48 @@ function registerExtension(app) {
                         };
                         
                         this.addWidget("button", "Update Inputs", null, buttonCallback);
+                        console.log("[ModelCompare] Update Inputs button added");
                         
+                        // Initial setup - hide all but first of each type
                         setTimeout(() => {
                             console.log("[ModelCompare] Initial visibility setup");
-                            allWidgets.forEach((widget) => {
-                                if (!widget.name || widget.name.startsWith("num_") || widget.type === "button") {
-                                    return;
+                            
+                            const nodeElement = self.element;
+                            if (!nodeElement) return;
+                            
+                            const inputContainers = nodeElement.querySelectorAll(".comfy-node-inputs > div");
+                            
+                            inputContainers.forEach((container, idx) => {
+                                const widget = self.widgets[idx];
+                                if (!widget || !widget.name) return;
+                                
+                                let hide = false;
+                                
+                                if (widget.name.startsWith("num_") || widget.type === "button") {
+                                    hide = false;
+                                } else if (widget.name.startsWith("checkpoint_")) {
+                                    hide = !widget.name.includes("checkpoint_0");
+                                } else if (widget.name.startsWith("diffusion_model_")) {
+                                    hide = !widget.name.includes("diffusion_model_0");
+                                } else if (widget.name.startsWith("vae_")) {
+                                    hide = !widget.name.includes("vae_0");
+                                } else if (widget.name.startsWith("text_encoder_")) {
+                                    hide = !widget.name.includes("text_encoder_0");
+                                } else if (widget.name.startsWith("lora_")) {
+                                    hide = !widget.name.includes("lora_0");
                                 }
                                 
-                                let hide = true;
-                                if (widget.name.startsWith("checkpoint_") && widget.name.includes("checkpoint_0")) hide = false;
-                                else if (widget.name.startsWith("diffusion_model_") && widget.name.includes("diffusion_model_0")) hide = false;
-                                else if (widget.name.startsWith("vae_") && widget.name.includes("vae_0")) hide = false;
-                                else if (widget.name.startsWith("text_encoder_") && widget.name.includes("text_encoder_0")) hide = false;
-                                else if (widget.name.startsWith("lora_") && widget.name.includes("lora_0")) hide = false;
-                                
-                                if (widget.element) {
-                                    widget.element.style.display = hide ? "none" : "";
-                                }
+                                container.style.display = hide ? "none" : "";
                             });
+                            
                             if (appRef && appRef.canvas) {
                                 appRef.canvas.requestDraw();
                             }
-                        }, 50);
+                        }, 100);
                         
                     } catch (e) {
                         console.error("[ModelCompare] Error in onNodeCreated:", e);
+                        console.error(e.stack);
                     }
                 });
             }
