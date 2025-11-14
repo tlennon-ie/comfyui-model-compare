@@ -134,15 +134,20 @@ class SamplerCompare:
             try:
                 # Load models for this combination
                 ckpt_name = combination.get("checkpoint")
+                ckpt_type = combination.get("checkpoint_type")
                 vae_name = combination.get("vae")
                 text_enc_name = combination.get("text_encoder")
                 lora_strengths = combination.get("lora_strengths")
                 lora_names = combination.get("lora_names", [])
 
-                # Load checkpoint if specified
+                # Load checkpoint/diffusion model if specified
                 if ckpt_name:
-                    print(f"[SamplerCompare] Loading checkpoint: {ckpt_name}")
-                    model, clip, vae_loaded = self._load_checkpoint(ckpt_name)
+                    if ckpt_type == "diffusion_model":
+                        print(f"[SamplerCompare] Loading diffusion model: {ckpt_name}")
+                        model, clip, vae_loaded = self._load_diffusion_model(ckpt_name)
+                    else:
+                        print(f"[SamplerCompare] Loading checkpoint: {ckpt_name}")
+                        model, clip, vae_loaded = self._load_checkpoint(ckpt_name)
                     if vae_name:
                         vae = vae_loaded
                 else:
@@ -222,6 +227,30 @@ class SamplerCompare:
             embedding_directory=folder_paths.get_folder_names("embeddings"),
         )
         return out[0], out[1], out[2]  # model, clip, vae
+
+    @staticmethod
+    def _load_diffusion_model(model_name: str) -> Tuple[Any, Any, Any]:
+        """Load a diffusion model (unet) and return model, clip, and vae."""
+        import comfy.sd
+        import comfy.model_management
+        import torch
+        
+        # Get path from diffusion_models folder (includes unet and diffusion_models folders)
+        model_path = folder_paths.get_full_path("diffusion_models", model_name)
+        
+        # Load the raw model state dict
+        model_patcher = comfy.model_management.load_model_gpu_state_dict(model_path)
+        
+        # For diffusion models, we need to wrap them appropriately
+        # This creates a model object compatible with the sampling pipeline
+        model = comfy.sd.load_diffusion_model(model_path)
+        
+        # Diffusion models don't have built-in CLIP, so we return None
+        # The user should provide CLIP separately or use with a checkpoint that has CLIP
+        clip = None
+        vae = None
+        
+        return model, clip, vae
 
     @staticmethod
     def _load_vae(vae_name: str) -> Any:

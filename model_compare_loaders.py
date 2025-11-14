@@ -34,6 +34,7 @@ class ModelCompareLoaders:
     def INPUT_TYPES(cls):
         """Define input widgets for the node."""
         checkpoints = folder_paths.get_filename_list("checkpoints")
+        diffusion_models = folder_paths.get_filename_list("diffusion_models")
         vaes = folder_paths.get_filename_list("vae")
         clip_models = folder_paths.get_filename_list("clip")
         loras = folder_paths.get_filename_list("loras")
@@ -42,6 +43,13 @@ class ModelCompareLoaders:
             "required": {
                 "num_checkpoints": ("INT", {
                     "default": 1,
+                    "min": 0,
+                    "max": 10,
+                    "step": 1,
+                    "display": "slider",
+                }),
+                "num_diffusion_models": ("INT", {
+                    "default": 0,
                     "min": 0,
                     "max": 10,
                     "step": 1,
@@ -81,6 +89,7 @@ class ModelCompareLoaders:
     def configure_models(
         self,
         num_checkpoints: int,
+        num_diffusion_models: int,
         num_vaes: int,
         num_text_encoders: int,
         num_loras: int,
@@ -91,10 +100,12 @@ class ModelCompareLoaders:
         """
         config = {
             "num_checkpoints": num_checkpoints,
+            "num_diffusion_models": num_diffusion_models,
             "num_vaes": num_vaes,
             "num_text_encoders": num_text_encoders,
             "num_loras": num_loras,
             "checkpoints": [],
+            "diffusion_models": [],
             "vaes": [],
             "text_encoders": [],
             "loras": [],  # Format: [{"name": str, "strengths": [float, ...]}]
@@ -103,6 +114,7 @@ class ModelCompareLoaders:
         
         print(f"[ModelCompareLoaders] Config created:")
         print(f"  - Checkpoints: {num_checkpoints}")
+        print(f"  - Diffusion Models: {num_diffusion_models}")
         print(f"  - VAEs: {num_vaes}")
         print(f"  - Text Encoders: {num_text_encoders}")
         print(f"  - LoRAs: {num_loras}")
@@ -122,6 +134,7 @@ class ModelCompareLoadersAdvanced:
     @classmethod
     def INPUT_TYPES(cls):
         checkpoints = folder_paths.get_filename_list("checkpoints")
+        diffusion_models = folder_paths.get_filename_list("diffusion_models")
         vaes = folder_paths.get_filename_list("vae")
         clip_models = folder_paths.get_filename_list("clip")
         loras = folder_paths.get_filename_list("loras")
@@ -137,6 +150,13 @@ class ModelCompareLoadersAdvanced:
         for i in range(10):
             inputs["optional"][f"checkpoint_{i}"] = (
                 ["NONE"] + checkpoints,
+                {"default": "NONE"},
+            )
+
+        # Dynamically add diffusion model selection widgets
+        for i in range(10):
+            inputs["optional"][f"diffusion_model_{i}"] = (
+                ["NONE"] + diffusion_models,
                 {"default": "NONE"},
             )
 
@@ -186,7 +206,14 @@ class ModelCompareLoadersAdvanced:
         for i in range(config["num_checkpoints"]):
             key = f"checkpoint_{i}"
             if key in kwargs and kwargs[key] != "NONE":
-                checkpoints.append(kwargs[key])
+                checkpoints.append(("checkpoint", kwargs[key]))
+
+        # Extract diffusion model selections
+        diffusion_models = []
+        for i in range(config["num_diffusion_models"]):
+            key = f"diffusion_model_{i}"
+            if key in kwargs and kwargs[key] != "NONE":
+                diffusion_models.append(("diffusion_model", kwargs[key]))
 
         # Extract VAE selections
         vaes = []
@@ -228,8 +255,11 @@ class ModelCompareLoadersAdvanced:
                     "strengths": strengths,
                 })
 
-        # Update config
-        config["checkpoints"] = checkpoints
+        # Update config - combine checkpoints and diffusion models
+        config["checkpoints"] = [ckpt[1] for ckpt in checkpoints]
+        config["checkpoint_types"] = [ckpt[0] for ckpt in checkpoints]  # Track which are diffusion models
+        config["diffusion_models"] = [dm[1] for dm in diffusion_models]
+        config["diffusion_model_types"] = [dm[0] for dm in diffusion_models]
         config["vaes"] = vaes
         config["text_encoders"] = text_encoders
         config["loras"] = loras
@@ -238,7 +268,8 @@ class ModelCompareLoadersAdvanced:
         config["combinations"] = self._compute_combinations(config)
 
         print(f"[ModelCompareLoadersAdvanced] Config updated:")
-        print(f"  - Checkpoints: {checkpoints}")
+        print(f"  - Checkpoints: {config['checkpoints']}")
+        print(f"  - Diffusion Models: {config['diffusion_models']}")
         print(f"  - VAEs: {vaes}")
         print(f"  - Text Encoders: {text_encoders}")
         print(f"  - LoRAs: {[l['name'] for l in loras]}")
@@ -253,19 +284,29 @@ class ModelCompareLoadersAdvanced:
         
         For example, if we have:
         - 2 checkpoints
+        - 2 diffusion models
         - 2 VAEs
         - 2 LoRAs with 3 strengths each
         
-        We generate 2 * 2 * (3 * 3) = 36 combinations
+        We generate (2+2) * 2 * (3 * 3) = 72 combinations
         """
         checkpoints = config.get("checkpoints", [])
+        checkpoint_types = config.get("checkpoint_types", [])
+        diffusion_models = config.get("diffusion_models", [])
         vaes = config.get("vaes", [])
         text_encoders = config.get("text_encoders", [])
         loras = config.get("loras", [])
 
-        # Ensure we have at least one option for each
-        if not checkpoints:
-            checkpoints = [None]
+        # Combine checkpoint and diffusion model selections into one list
+        all_ckpts = []
+        for ckpt, ckpt_type in zip(checkpoints, checkpoint_types):
+            all_ckpts.append({"name": ckpt, "type": ckpt_type})
+        
+        for dm in diffusion_models:
+            all_ckpts.append({"name": dm, "type": "diffusion_model"})
+        
+        if not all_ckpts:
+            all_ckpts = [{"name": None, "type": None}]
         if not vaes:
             vaes = [None]
         if not text_encoders:
@@ -281,17 +322,18 @@ class ModelCompareLoadersAdvanced:
 
         # Generate all combinations
         combinations = []
-        for ckpt, vae, text_enc, lora_strengths in itertools.product(
-            checkpoints, vaes, text_encoders, lora_strength_combos
+        for ckpt_info, vae, text_enc, lora_strengths in itertools.product(
+            all_ckpts, vaes, text_encoders, lora_strength_combos
         ):
             combination = {
-                "checkpoint": ckpt,
+                "checkpoint": ckpt_info["name"],
+                "checkpoint_type": ckpt_info["type"],  # "checkpoint" or "diffusion_model"
                 "vae": vae,
                 "text_encoder": text_enc,
                 "lora_strengths": lora_strengths,  # Tuple of strength values
                 "lora_names": [l["name"] for l in loras] if loras else [],
                 "label": ModelCompareLoadersAdvanced._make_label(
-                    ckpt, vae, text_enc, loras, lora_strengths
+                    ckpt_info, vae, text_enc, loras, lora_strengths
                 ),
             }
             combinations.append(combination)
@@ -299,13 +341,14 @@ class ModelCompareLoadersAdvanced:
         return combinations
 
     @staticmethod
-    def _make_label(checkpoint, vae, text_encoder, loras, lora_strengths):
+    def _make_label(ckpt_info, vae, text_encoder, loras, lora_strengths):
         """Create a human-readable label for a combination."""
         parts = []
         
-        if checkpoint:
+        if ckpt_info and ckpt_info.get("name"):
             # Remove extension for cleaner label
-            parts.append(f"ckpt:{os.path.splitext(checkpoint)[0]}")
+            label_type = "diffusion" if ckpt_info.get("type") == "diffusion_model" else "ckpt"
+            parts.append(f"{label_type}:{os.path.splitext(ckpt_info['name'])[0]}")
         
         if vae:
             parts.append(f"vae:{os.path.splitext(vae)[0]}")
