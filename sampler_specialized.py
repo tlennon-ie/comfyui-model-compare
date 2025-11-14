@@ -80,14 +80,36 @@ class SamplerCompareCheckpoint:
                 
                 # Decode latents with VAE
                 print(f"[SamplerCompareCheckpoint] Decoding {stacked_latents.shape[0]} latents with VAE")
-                decoded = vae.decode_tiled(stacked_latents) if hasattr(vae, 'decode_tiled') else vae.decode(stacked_latents)
+                try:
+                    # Try regular decode first (handles both 2D and 3D latents)
+                    decoded = vae.decode(stacked_latents)
+                except Exception as e:
+                    print(f"[SamplerCompareCheckpoint] Decode failed: {e}, trying decode_tiled")
+                    try:
+                        # Fallback to decode_tiled if available and without extra args
+                        decoded = vae.decode_tiled(stacked_latents, tile_latent_min_size=32)
+                    except Exception as e2:
+                        print(f"[SamplerCompareCheckpoint] Decode_tiled also failed: {e2}")
+                        raise
                 
                 # Ensure output is in correct format (B, H, W, C) with values in [0, 1]
-                if decoded.shape[-1] == 3:
+                if decoded.dim() == 4 and decoded.shape[-1] == 3:
                     output = decoded
-                else:
+                elif decoded.dim() == 4 and decoded.shape[1] == 3:
                     # If it's (B, C, H, W), transpose to (B, H, W, C)
                     output = decoded.permute(0, 2, 3, 1)
+                elif decoded.dim() == 5:
+                    # Handle 5D output (B, C, T, H, W) - take first frame or average
+                    if decoded.shape[2] == 1:
+                        # Single frame, squeeze it
+                        decoded = decoded.squeeze(2)
+                        output = decoded.permute(0, 2, 3, 1)
+                    else:
+                        # Multiple frames, take first one
+                        decoded = decoded[:, :, 0, :, :]
+                        output = decoded.permute(0, 2, 3, 1)
+                else:
+                    output = decoded
                 
                 # Clamp to [0, 1]
                 output = torch.clamp(output, 0.0, 1.0)
@@ -192,14 +214,36 @@ class SamplerCompareQwenEdit:
                 
                 # Decode latents with VAE
                 print(f"[SamplerCompareQwenEdit] Decoding {stacked_latents.shape[0]} latents with VAE")
-                decoded = vae.decode_tiled(stacked_latents) if hasattr(vae, 'decode_tiled') else vae.decode(stacked_latents)
+                try:
+                    # Try regular decode first (handles both 2D and 3D latents)
+                    decoded = vae.decode(stacked_latents)
+                except Exception as e:
+                    print(f"[SamplerCompareQwenEdit] Decode failed: {e}, trying decode_tiled")
+                    try:
+                        # Fallback to decode_tiled if available and without extra args
+                        decoded = vae.decode_tiled(stacked_latents, tile_latent_min_size=32)
+                    except Exception as e2:
+                        print(f"[SamplerCompareQwenEdit] Decode_tiled also failed: {e2}")
+                        raise
                 
                 # Ensure output is in correct format (B, H, W, C) with values in [0, 1]
-                if decoded.shape[-1] == 3:
+                if decoded.dim() == 4 and decoded.shape[-1] == 3:
                     output = decoded
-                else:
+                elif decoded.dim() == 4 and decoded.shape[1] == 3:
                     # If it's (B, C, H, W), transpose to (B, H, W, C)
                     output = decoded.permute(0, 2, 3, 1)
+                elif decoded.dim() == 5:
+                    # Handle 5D output (B, C, T, H, W) - take first frame or average
+                    if decoded.shape[2] == 1:
+                        # Single frame, squeeze it
+                        decoded = decoded.squeeze(2)
+                        output = decoded.permute(0, 2, 3, 1)
+                    else:
+                        # Multiple frames, take first one
+                        decoded = decoded[:, :, 0, :, :]
+                        output = decoded.permute(0, 2, 3, 1)
+                else:
+                    output = decoded
                 
                 # Clamp to [0, 1]
                 output = torch.clamp(output, 0.0, 1.0)
@@ -278,14 +322,36 @@ class SamplerCompareDiffusion:
                 
                 # Decode latents with VAE
                 print(f"[SamplerCompareDiffusion] Decoding {stacked_latents.shape[0]} latents with VAE")
-                decoded = vae.decode_tiled(stacked_latents) if hasattr(vae, 'decode_tiled') else vae.decode(stacked_latents)
+                try:
+                    # Try regular decode first (handles both 2D and 3D latents)
+                    decoded = vae.decode(stacked_latents)
+                except Exception as e:
+                    print(f"[SamplerCompareDiffusion] Decode failed: {e}, trying decode_tiled")
+                    try:
+                        # Fallback to decode_tiled if available and without extra args
+                        decoded = vae.decode_tiled(stacked_latents, tile_latent_min_size=32)
+                    except Exception as e2:
+                        print(f"[SamplerCompareDiffusion] Decode_tiled also failed: {e2}")
+                        raise
                 
                 # Ensure output is in correct format (B, H, W, C) with values in [0, 1]
-                if decoded.shape[-1] == 3:
+                if decoded.dim() == 4 and decoded.shape[-1] == 3:
                     output = decoded
-                else:
+                elif decoded.dim() == 4 and decoded.shape[1] == 3:
                     # If it's (B, C, H, W), transpose to (B, H, W, C)
                     output = decoded.permute(0, 2, 3, 1)
+                elif decoded.dim() == 5:
+                    # Handle 5D output (B, C, T, H, W) - take first frame or average
+                    if decoded.shape[2] == 1:
+                        # Single frame, squeeze it
+                        decoded = decoded.squeeze(2)
+                        output = decoded.permute(0, 2, 3, 1)
+                    else:
+                        # Multiple frames, take first one
+                        decoded = decoded[:, :, 0, :, :]
+                        output = decoded.permute(0, 2, 3, 1)
+                else:
+                    output = decoded
                 
                 # Clamp to [0, 1]
                 output = torch.clamp(output, 0.0, 1.0)
