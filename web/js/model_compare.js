@@ -41,58 +41,35 @@ function registerExtension() {
             if (node.type === "ModelCompareLoaders") {
                 console.log("[ModelCompare] Adding Update Inputs button to ModelCompareLoaders");
                 
-                // Create custom button widget
-                const buttonWidget = {
-                    name: "update_inputs_btn",
-                    type: "custom",
-                    value: "",
-                    draw: function(ctx, node, widgetWidth, y, height) {
-                        // Draw button background
-                        const bgColor = "#1e1e1e";
-                        const textColor = "#ffffff";
-                        const hoverColor = "#333333";
+                // Use setTimeout to ensure node is fully initialized
+                setTimeout(() => {
+                    try {
+                        const self = node;
                         
-                        ctx.fillStyle = this.hovered ? hoverColor : bgColor;
-                        ctx.fillRect(0, y, widgetWidth, height);
-                        
-                        // Draw button border
-                        ctx.strokeStyle = "#444444";
-                        ctx.lineWidth = 1;
-                        ctx.strokeRect(0, y, widgetWidth, height);
-                        
-                        // Draw button text
-                        ctx.fillStyle = textColor;
-                        ctx.font = "14px monospace";
-                        ctx.textAlign = "center";
-                        ctx.textBaseline = "middle";
-                        ctx.fillText("Update Inputs", widgetWidth / 2, y + height / 2);
-                    },
-                    mouse: function(event, pos, node) {
-                        if (event.type === "pointerdown") {
+                        // Create button widget using ComfyUI's standard approach
+                        const buttonCallback = () => {
                             console.log("[ModelCompare] Update Inputs button clicked!");
                             
                             // Get the num_* values from the node's widgets
-                            const num_checkpoints = node.widgets.find(w => w.name === "num_checkpoints")?.value || 0;
-                            const num_diffusion_models = node.widgets.find(w => w.name === "num_diffusion_models")?.value || 0;
-                            const num_vaes = node.widgets.find(w => w.name === "num_vaes")?.value || 0;
-                            const num_text_encoders = node.widgets.find(w => w.name === "num_text_encoders")?.value || 0;
-                            const num_loras = node.widgets.find(w => w.name === "num_loras")?.value || 0;
+                            const num_checkpoints = self.widgets.find(w => w.name === "num_checkpoints")?.value || 0;
+                            const num_diffusion_models = self.widgets.find(w => w.name === "num_diffusion_models")?.value || 0;
+                            const num_vaes = self.widgets.find(w => w.name === "num_vaes")?.value || 0;
+                            const num_text_encoders = self.widgets.find(w => w.name === "num_text_encoders")?.value || 0;
+                            const num_loras = self.widgets.find(w => w.name === "num_loras")?.value || 0;
                             
                             console.log(`[ModelCompare] Values: checkpoints=${num_checkpoints}, diffusion=${num_diffusion_models}, vaes=${num_vaes}, encoders=${num_text_encoders}, loras=${num_loras}`);
                             
-                            // Show message to user
                             alert(`Model Comparison Configuration:\n\n✓ Checkpoints: ${num_checkpoints}\n✓ Diffusion Models: ${num_diffusion_models}\n✓ VAEs: ${num_vaes}\n✓ Text Encoders: ${num_text_encoders}\n✓ LoRAs: ${num_loras}`);
-                            
-                            // Trigger graph update to refresh node UI
-                            app.graph.change();
-                            return true;
-                        }
-                    },
-                    hovered: false,
-                };
-                
-                node.widgets.push(buttonWidget);
-                console.log("[ModelCompare] Update Inputs button added successfully");
+                        };
+                        
+                        // Add widget using addWidget method with button type
+                        self.addWidget("button", "Update Inputs", null, buttonCallback);
+                        console.log("[ModelCompare] Update Inputs button added successfully via addWidget");
+                        
+                    } catch (e) {
+                        console.error("[ModelCompare] Error adding button:", e);
+                    }
+                }, 100);
             }
         }
     });
