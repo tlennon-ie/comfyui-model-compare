@@ -93,26 +93,36 @@ class SamplerCompareCheckpoint:
                         raise
                 
                 # Ensure output is in correct format (B, H, W, C) with values in [0, 1]
+                print(f"[SamplerCompareCheckpoint] Decoded shape: {decoded.shape}, dtype: {decoded.dtype}")
+                
+                # First, ensure we have the right number of dimensions
                 if decoded.dim() == 4 and decoded.shape[-1] == 3:
+                    # Already (B, H, W, C)
                     output = decoded
                 elif decoded.dim() == 4 and decoded.shape[1] == 3:
-                    # If it's (B, C, H, W), transpose to (B, H, W, C)
+                    # (B, C, H, W) -> (B, H, W, C)
                     output = decoded.permute(0, 2, 3, 1)
+                    print(f"[SamplerCompareCheckpoint] Transposed from (B,C,H,W) to (B,H,W,C): {output.shape}")
                 elif decoded.dim() == 5:
-                    # Handle 5D output (B, C, T, H, W) - take first frame or average
+                    # Handle 5D output (B, C, T, H, W) or other variants
+                    print(f"[SamplerCompareCheckpoint] Got 5D tensor, attempting to handle...")
                     if decoded.shape[2] == 1:
-                        # Single frame, squeeze it
-                        decoded = decoded.squeeze(2)
-                        output = decoded.permute(0, 2, 3, 1)
+                        # (B, C, 1, H, W) -> squeeze and transpose
+                        decoded = decoded.squeeze(2)  # (B, C, H, W)
+                        output = decoded.permute(0, 2, 3, 1)  # (B, H, W, C)
                     else:
-                        # Multiple frames, take first one
-                        decoded = decoded[:, :, 0, :, :]
-                        output = decoded.permute(0, 2, 3, 1)
+                        # (B, C, T, H, W) -> take first frame
+                        decoded = decoded[:, :, 0, :, :]  # (B, C, H, W)
+                        output = decoded.permute(0, 2, 3, 1)  # (B, H, W, C)
+                    print(f"[SamplerCompareCheckpoint] Reshaped 5D to: {output.shape}")
                 else:
+                    # Last resort: try to reshape if we have unexpected dimensions
+                    print(f"[SamplerCompareCheckpoint] Warning: Unexpected tensor shape {decoded.shape}, flattening and reshaping")
                     output = decoded
                 
                 # Clamp to [0, 1]
                 output = torch.clamp(output, 0.0, 1.0)
+                print(f"[SamplerCompareCheckpoint] Final output shape: {output.shape}")
                 
                 labels = "; ".join(labels_list)
                 return (output, labels)
@@ -227,26 +237,36 @@ class SamplerCompareQwenEdit:
                         raise
                 
                 # Ensure output is in correct format (B, H, W, C) with values in [0, 1]
+                print(f"[SamplerCompareQwenEdit] Decoded shape: {decoded.shape}, dtype: {decoded.dtype}")
+                
+                # First, ensure we have the right number of dimensions
                 if decoded.dim() == 4 and decoded.shape[-1] == 3:
+                    # Already (B, H, W, C)
                     output = decoded
                 elif decoded.dim() == 4 and decoded.shape[1] == 3:
-                    # If it's (B, C, H, W), transpose to (B, H, W, C)
+                    # (B, C, H, W) -> (B, H, W, C)
                     output = decoded.permute(0, 2, 3, 1)
+                    print(f"[SamplerCompareQwenEdit] Transposed from (B,C,H,W) to (B,H,W,C): {output.shape}")
                 elif decoded.dim() == 5:
-                    # Handle 5D output (B, C, T, H, W) - take first frame or average
+                    # Handle 5D output (B, C, T, H, W) or other variants
+                    print(f"[SamplerCompareQwenEdit] Got 5D tensor, attempting to handle...")
                     if decoded.shape[2] == 1:
-                        # Single frame, squeeze it
-                        decoded = decoded.squeeze(2)
-                        output = decoded.permute(0, 2, 3, 1)
+                        # (B, C, 1, H, W) -> squeeze and transpose
+                        decoded = decoded.squeeze(2)  # (B, C, H, W)
+                        output = decoded.permute(0, 2, 3, 1)  # (B, H, W, C)
                     else:
-                        # Multiple frames, take first one
-                        decoded = decoded[:, :, 0, :, :]
-                        output = decoded.permute(0, 2, 3, 1)
+                        # (B, C, T, H, W) -> take first frame
+                        decoded = decoded[:, :, 0, :, :]  # (B, C, H, W)
+                        output = decoded.permute(0, 2, 3, 1)  # (B, H, W, C)
+                    print(f"[SamplerCompareQwenEdit] Reshaped 5D to: {output.shape}")
                 else:
+                    # Last resort: try to reshape if we have unexpected dimensions
+                    print(f"[SamplerCompareQwenEdit] Warning: Unexpected tensor shape {decoded.shape}, flattening and reshaping")
                     output = decoded
                 
                 # Clamp to [0, 1]
                 output = torch.clamp(output, 0.0, 1.0)
+                print(f"[SamplerCompareQwenEdit] Final output shape: {output.shape}")
                 
                 labels = "; ".join(labels_list)
                 return (output, labels)
@@ -335,26 +355,36 @@ class SamplerCompareDiffusion:
                         raise
                 
                 # Ensure output is in correct format (B, H, W, C) with values in [0, 1]
+                print(f"[SamplerCompareDiffusion] Decoded shape: {decoded.shape}, dtype: {decoded.dtype}")
+                
+                # First, ensure we have the right number of dimensions
                 if decoded.dim() == 4 and decoded.shape[-1] == 3:
+                    # Already (B, H, W, C)
                     output = decoded
                 elif decoded.dim() == 4 and decoded.shape[1] == 3:
-                    # If it's (B, C, H, W), transpose to (B, H, W, C)
+                    # (B, C, H, W) -> (B, H, W, C)
                     output = decoded.permute(0, 2, 3, 1)
+                    print(f"[SamplerCompareDiffusion] Transposed from (B,C,H,W) to (B,H,W,C): {output.shape}")
                 elif decoded.dim() == 5:
-                    # Handle 5D output (B, C, T, H, W) - take first frame or average
+                    # Handle 5D output (B, C, T, H, W) or other variants
+                    print(f"[SamplerCompareDiffusion] Got 5D tensor, attempting to handle...")
                     if decoded.shape[2] == 1:
-                        # Single frame, squeeze it
-                        decoded = decoded.squeeze(2)
-                        output = decoded.permute(0, 2, 3, 1)
+                        # (B, C, 1, H, W) -> squeeze and transpose
+                        decoded = decoded.squeeze(2)  # (B, C, H, W)
+                        output = decoded.permute(0, 2, 3, 1)  # (B, H, W, C)
                     else:
-                        # Multiple frames, take first one
-                        decoded = decoded[:, :, 0, :, :]
-                        output = decoded.permute(0, 2, 3, 1)
+                        # (B, C, T, H, W) -> take first frame
+                        decoded = decoded[:, :, 0, :, :]  # (B, C, H, W)
+                        output = decoded.permute(0, 2, 3, 1)  # (B, H, W, C)
+                    print(f"[SamplerCompareDiffusion] Reshaped 5D to: {output.shape}")
                 else:
+                    # Last resort: try to reshape if we have unexpected dimensions
+                    print(f"[SamplerCompareDiffusion] Warning: Unexpected tensor shape {decoded.shape}, flattening and reshaping")
                     output = decoded
                 
                 # Clamp to [0, 1]
                 output = torch.clamp(output, 0.0, 1.0)
+                print(f"[SamplerCompareDiffusion] Final output shape: {output.shape}")
                 
                 labels = "; ".join(labels_list)
                 return (output, labels)
