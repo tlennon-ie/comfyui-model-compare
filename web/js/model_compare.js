@@ -65,21 +65,31 @@ function registerExtension(app) {
                         });
                         
                         const updateVisibility = () => {
-                            const num_checkpoints = self.widgets.find(w => w.name === "num_checkpoints")?.value || 0;
-                            const num_diffusion_models = self.widgets.find(w => w.name === "num_diffusion_models")?.value || 0;
-                            const num_vaes = self.widgets.find(w => w.name === "num_vaes")?.value || 0;
-                            const num_text_encoders = self.widgets.find(w => w.name === "num_text_encoders")?.value || 0;
+                            const num_model_variations = self.widgets.find(w => w.name === "num_model_variations")?.value || 1;
+                            const num_vae_variations = self.widgets.find(w => w.name === "num_vae_variations")?.value || 1;
                             const num_loras = self.widgets.find(w => w.name === "num_loras")?.value || 0;
                             
-                            console.log(`[ModelCompare] Updating: checkpoints=${num_checkpoints}, diffusion=${num_diffusion_models}, vaes=${num_vaes}, encoders=${num_text_encoders}, loras=${num_loras}`);
+                            console.log(`[ModelCompare] Updating: model_variations=${num_model_variations}, vae_variations=${num_vae_variations}, loras=${num_loras}`);
                             
                             let hiddenCount = 0;
                             let visibleCount = 0;
                             
                             // Update computeSize for all widgets based on visibility
                             self.widgets.forEach((widget) => {
-                                if (!widget.name || widget.name.startsWith("num_") || widget.type === "button") {
-                                    // Always show control widgets
+                                if (!widget.name) {
+                                    // Always show unnamed widgets
+                                    widget.computeSize = widget.origComputeSize;
+                                    visibleCount++;
+                                    return;
+                                }
+                                
+                                // Always show base fields and control widgets
+                                const baseFields = ["base_model", "vae", "clip_model", "clip_type"];
+                                const controlFields = ["num_model_variations", "num_vae_variations", "num_loras"];
+                                
+                                if (baseFields.includes(widget.name) || 
+                                    controlFields.includes(widget.name) || 
+                                    widget.type === "button") {
                                     widget.computeSize = widget.origComputeSize;
                                     visibleCount++;
                                     return;
@@ -87,19 +97,18 @@ function registerExtension(app) {
                                 
                                 let shouldShow = false;
                                 
-                                if (widget.name.startsWith("checkpoint_")) {
-                                    const num = parseInt(widget.name.split("_")[1]);
-                                    shouldShow = num < num_checkpoints;
-                                } else if (widget.name.startsWith("diffusion_model_")) {
+                                // Model variations - show indices 1 through num_model_variations-1
+                                if (widget.name.startsWith("model_variation_")) {
                                     const num = parseInt(widget.name.split("_")[2]);
-                                    shouldShow = num < num_diffusion_models;
-                                } else if (widget.name.startsWith("vae_")) {
-                                    const num = parseInt(widget.name.split("_")[1]);
-                                    shouldShow = num < num_vaes;
-                                } else if (widget.name.startsWith("text_encoder_")) {
+                                    shouldShow = num < num_model_variations;
+                                }
+                                // VAE variations - show indices 1 through num_vae_variations-1
+                                else if (widget.name.startsWith("vae_variation_")) {
                                     const num = parseInt(widget.name.split("_")[2]);
-                                    shouldShow = num < num_text_encoders;
-                                } else if (widget.name.startsWith("lora_")) {
+                                    shouldShow = num < num_vae_variations;
+                                }
+                                // LoRA pairs (name and strength) - show indices 0 through num_loras-1
+                                else if (widget.name.startsWith("lora_")) {
                                     const num = parseInt(widget.name.split("_")[1]);
                                     shouldShow = num < num_loras;
                                 }
@@ -139,24 +148,26 @@ function registerExtension(app) {
                         setTimeout(() => {
                             console.log("[ModelCompare] Initial visibility setup");
                             
+                            const baseFields = ["base_model", "vae", "clip_model", "clip_type"];
+                            const controlFields = ["num_model_variations", "num_vae_variations", "num_loras"];
+                            
                             self.widgets.forEach((widget) => {
-                                if (!widget.name || widget.name.startsWith("num_") || widget.type === "button") {
+                                if (!widget.name || baseFields.includes(widget.name) || 
+                                    controlFields.includes(widget.name) || widget.type === "button") {
+                                    // Always show base and control fields
                                     widget.computeSize = widget.origComputeSize;
                                     return;
                                 }
                                 
                                 let hide = true;
                                 
-                                if (widget.name.startsWith("checkpoint_")) {
-                                    hide = !widget.name.includes("checkpoint_0");
-                                } else if (widget.name.startsWith("diffusion_model_")) {
-                                    hide = !widget.name.includes("diffusion_model_0");
-                                } else if (widget.name.startsWith("vae_")) {
-                                    hide = !widget.name.includes("vae_0");
-                                } else if (widget.name.startsWith("text_encoder_")) {
-                                    hide = !widget.name.includes("text_encoder_0");
+                                // Show only first variation of each type initially
+                                if (widget.name.startsWith("model_variation_")) {
+                                    hide = !widget.name.includes("model_variation_1");
+                                } else if (widget.name.startsWith("vae_variation_")) {
+                                    hide = !widget.name.includes("vae_variation_1");
                                 } else if (widget.name.startsWith("lora_")) {
-                                    hide = !widget.name.includes("lora_0");
+                                    hide = true;  // Hide all loras by default
                                 }
                                 
                                 if (hide) {

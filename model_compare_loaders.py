@@ -8,6 +8,7 @@ from typing import List, Dict, Tuple, Any
 import folder_paths
 import comfy.sd
 import comfy.clip_vision
+import comfy.utils
 
 
 class ModelCompareLoaders:
@@ -232,24 +233,69 @@ class ModelCompareLoaders:
     @staticmethod
     def _load_vae(vae_name: str) -> Any:
         """Load a VAE model."""
-        vae_path = folder_paths.get_full_path("vae", vae_name)
-        vae_sd = comfy.sd.load_vae(vae_path)
-        return vae_sd
+        # Handle special VAE names
+        if vae_name == "pixel_space":
+            import torch
+            sd = {}
+            sd["pixel_space_vae"] = torch.tensor(1.0)
+        elif vae_name in ["taesd", "taesdxl", "taesd3", "taef1"]:
+            # Load TAESD (approximate) VAE
+            sd = {}
+            approx_vaes = folder_paths.get_filename_list("vae_approx")
+            
+            encoder = next(filter(lambda a: a.startswith("{}_encoder.".format(vae_name)), approx_vaes))
+            decoder = next(filter(lambda a: a.startswith("{}_decoder.".format(vae_name)), approx_vaes))
+            
+            enc_path = folder_paths.get_full_path_or_raise("vae_approx", encoder)
+            dec_path = folder_paths.get_full_path_or_raise("vae_approx", decoder)
+            
+            enc = comfy.utils.load_torch_file(enc_path)
+            for k in enc:
+                sd["taesd_encoder.{}".format(k)] = enc[k]
+
+            dec = comfy.utils.load_torch_file(dec_path)
+            for k in dec:
+                sd["taesd_decoder.{}".format(k)] = dec[k]
+
+            import torch
+            if vae_name == "taesd":
+                sd["vae_scale"] = torch.tensor(0.18215)
+                sd["vae_shift"] = torch.tensor(0.0)
+            elif vae_name == "taesdxl":
+                sd["vae_scale"] = torch.tensor(0.13025)
+                sd["vae_shift"] = torch.tensor(0.0)
+            elif vae_name == "taesd3":
+                sd["vae_scale"] = torch.tensor(1.5305)
+                sd["vae_shift"] = torch.tensor(0.0609)
+            elif vae_name == "taef1":
+                sd["vae_scale"] = torch.tensor(0.3611)
+                sd["vae_shift"] = torch.tensor(0.1159)
+        else:
+            # Load standard VAE
+            vae_path = folder_paths.get_full_path_or_raise("vae", vae_name)
+            sd = comfy.utils.load_torch_file(vae_path)
+        
+        # Create VAE object from state dict
+        vae = comfy.sd.VAE(sd=sd)
+        vae.throw_exception_if_invalid()
+        return vae
     
     @staticmethod
     def _load_clip(clip_name: str, clip_type: str) -> Any:
         """Load a CLIP model."""
-        clip_path = folder_paths.get_full_path("clip", clip_name)
-        clip_type_obj = comfy.sd.SUPPORTED_MODELS.get(clip_type, comfy.sd.SUPPORTED_MODELS["default"])
+        clip_path = folder_paths.get_full_path_or_raise("text_encoders", clip_name)
         
-        if hasattr(comfy.sd, 'load_clip'):
-            clip_sd = comfy.sd.load_clip(clip_path, clip_type=clip_type_obj)
-        else:
-            # Fallback
-            import comfy.clip
-            clip_sd = comfy.clip.load_clip(clip_path)
+        # Map clip_type to CLIPType enum
+        clip_type_enum = getattr(comfy.sd.CLIPType, clip_type.upper(), comfy.sd.CLIPType.STABLE_DIFFUSION)
         
-        return clip_sd
+        # Load CLIP with the specified type
+        clip = comfy.sd.load_clip(
+            ckpt_paths=[clip_path],
+            embedding_directory=folder_paths.get_folder_paths("embeddings"),
+            clip_type=clip_type_enum
+        )
+        
+        return clip
     
     @staticmethod
     def _compute_combinations(config: Dict[str, Any]) -> List[Dict[str, Any]]:
