@@ -95,32 +95,42 @@ class SamplerCompareCheckpoint:
                 # Ensure output is in correct format (B, H, W, C) with values in [0, 1]
                 print(f"[SamplerCompareCheckpoint] Decoded shape: {decoded.shape}, dtype: {decoded.dtype}")
                 
-                # First, ensure we have the right number of dimensions
-                if decoded.dim() == 4 and decoded.shape[-1] == 3:
-                    # Already (B, H, W, C)
-                    output = decoded
-                elif decoded.dim() == 4 and decoded.shape[1] == 3:
-                    # (B, C, H, W) -> (B, H, W, C)
-                    output = decoded.permute(0, 2, 3, 1)
-                    print(f"[SamplerCompareCheckpoint] Transposed from (B,C,H,W) to (B,H,W,C): {output.shape}")
-                elif decoded.dim() == 5:
-                    # Handle 5D output (B, C, T, H, W) or other variants
-                    print(f"[SamplerCompareCheckpoint] Got 5D tensor, attempting to handle...")
-                    if decoded.shape[2] == 1:
-                        # (B, C, 1, H, W) -> squeeze and transpose
+                # Handle the actual shape returned: [4, 1, 3216, 2144, 3] -> should be [4, 3216, 2144, 3]
+                if decoded.dim() == 5:
+                    # Check if it's (B, C, H, W, 3) - the VAE is returning RGB channels last
+                    if decoded.shape[1] == 1 and decoded.shape[-1] == 3:
+                        # (B, 1, H, W, 3) -> squeeze C and we're done
+                        output = decoded.squeeze(1)  # (B, H, W, 3)
+                        print(f"[SamplerCompareCheckpoint] Squeezed (B,1,H,W,3) to: {output.shape}")
+                    elif decoded.shape[-1] == 3:
+                        # Some other 5D format with 3 as last dim - assume it's RGB channels
+                        output = decoded
+                    elif decoded.shape[2] == 1:
+                        # (B, C, 1, H, W) -> squeeze time, transpose
                         decoded = decoded.squeeze(2)  # (B, C, H, W)
                         output = decoded.permute(0, 2, 3, 1)  # (B, H, W, C)
                     else:
-                        # (B, C, T, H, W) -> take first frame
+                        # (B, C, T, H, W) -> take first frame, transpose
                         decoded = decoded[:, :, 0, :, :]  # (B, C, H, W)
                         output = decoded.permute(0, 2, 3, 1)  # (B, H, W, C)
-                    print(f"[SamplerCompareCheckpoint] Reshaped 5D to: {output.shape}")
+                elif decoded.dim() == 4:
+                    if decoded.shape[-1] == 3:
+                        # Already (B, H, W, C)
+                        output = decoded
+                    elif decoded.shape[1] == 3:
+                        # (B, C, H, W) -> (B, H, W, C)
+                        output = decoded.permute(0, 2, 3, 1)
+                        print(f"[SamplerCompareCheckpoint] Transposed from (B,C,H,W) to (B,H,W,C): {output.shape}")
+                    else:
+                        output = decoded
                 else:
-                    # Last resort: try to reshape if we have unexpected dimensions
-                    print(f"[SamplerCompareCheckpoint] Warning: Unexpected tensor shape {decoded.shape}, flattening and reshaping")
+                    # Fallback
+                    print(f"[SamplerCompareCheckpoint] Warning: Unexpected tensor shape {decoded.shape}")
                     output = decoded
                 
-                # Clamp to [0, 1]
+                # Ensure output is float in [0, 1] range
+                if output.dtype != torch.float32:
+                    output = output.float()
                 output = torch.clamp(output, 0.0, 1.0)
                 print(f"[SamplerCompareCheckpoint] Final output shape: {output.shape}")
                 
@@ -239,32 +249,42 @@ class SamplerCompareQwenEdit:
                 # Ensure output is in correct format (B, H, W, C) with values in [0, 1]
                 print(f"[SamplerCompareQwenEdit] Decoded shape: {decoded.shape}, dtype: {decoded.dtype}")
                 
-                # First, ensure we have the right number of dimensions
-                if decoded.dim() == 4 and decoded.shape[-1] == 3:
-                    # Already (B, H, W, C)
-                    output = decoded
-                elif decoded.dim() == 4 and decoded.shape[1] == 3:
-                    # (B, C, H, W) -> (B, H, W, C)
-                    output = decoded.permute(0, 2, 3, 1)
-                    print(f"[SamplerCompareQwenEdit] Transposed from (B,C,H,W) to (B,H,W,C): {output.shape}")
-                elif decoded.dim() == 5:
-                    # Handle 5D output (B, C, T, H, W) or other variants
-                    print(f"[SamplerCompareQwenEdit] Got 5D tensor, attempting to handle...")
-                    if decoded.shape[2] == 1:
-                        # (B, C, 1, H, W) -> squeeze and transpose
+                # Handle the actual shape returned: [4, 1, 3216, 2144, 3] -> should be [4, 3216, 2144, 3]
+                if decoded.dim() == 5:
+                    # Check if it's (B, C, H, W, 3) - the VAE is returning RGB channels last
+                    if decoded.shape[1] == 1 and decoded.shape[-1] == 3:
+                        # (B, 1, H, W, 3) -> squeeze C and we're done
+                        output = decoded.squeeze(1)  # (B, H, W, 3)
+                        print(f"[SamplerCompareQwenEdit] Squeezed (B,1,H,W,3) to: {output.shape}")
+                    elif decoded.shape[-1] == 3:
+                        # Some other 5D format with 3 as last dim - assume it's RGB channels
+                        output = decoded
+                    elif decoded.shape[2] == 1:
+                        # (B, C, 1, H, W) -> squeeze time, transpose
                         decoded = decoded.squeeze(2)  # (B, C, H, W)
                         output = decoded.permute(0, 2, 3, 1)  # (B, H, W, C)
                     else:
-                        # (B, C, T, H, W) -> take first frame
+                        # (B, C, T, H, W) -> take first frame, transpose
                         decoded = decoded[:, :, 0, :, :]  # (B, C, H, W)
                         output = decoded.permute(0, 2, 3, 1)  # (B, H, W, C)
-                    print(f"[SamplerCompareQwenEdit] Reshaped 5D to: {output.shape}")
+                elif decoded.dim() == 4:
+                    if decoded.shape[-1] == 3:
+                        # Already (B, H, W, C)
+                        output = decoded
+                    elif decoded.shape[1] == 3:
+                        # (B, C, H, W) -> (B, H, W, C)
+                        output = decoded.permute(0, 2, 3, 1)
+                        print(f"[SamplerCompareQwenEdit] Transposed from (B,C,H,W) to (B,H,W,C): {output.shape}")
+                    else:
+                        output = decoded
                 else:
-                    # Last resort: try to reshape if we have unexpected dimensions
-                    print(f"[SamplerCompareQwenEdit] Warning: Unexpected tensor shape {decoded.shape}, flattening and reshaping")
+                    # Fallback
+                    print(f"[SamplerCompareQwenEdit] Warning: Unexpected tensor shape {decoded.shape}")
                     output = decoded
                 
-                # Clamp to [0, 1]
+                # Ensure output is float in [0, 1] range
+                if output.dtype != torch.float32:
+                    output = output.float()
                 output = torch.clamp(output, 0.0, 1.0)
                 print(f"[SamplerCompareQwenEdit] Final output shape: {output.shape}")
                 
@@ -357,32 +377,42 @@ class SamplerCompareDiffusion:
                 # Ensure output is in correct format (B, H, W, C) with values in [0, 1]
                 print(f"[SamplerCompareDiffusion] Decoded shape: {decoded.shape}, dtype: {decoded.dtype}")
                 
-                # First, ensure we have the right number of dimensions
-                if decoded.dim() == 4 and decoded.shape[-1] == 3:
-                    # Already (B, H, W, C)
-                    output = decoded
-                elif decoded.dim() == 4 and decoded.shape[1] == 3:
-                    # (B, C, H, W) -> (B, H, W, C)
-                    output = decoded.permute(0, 2, 3, 1)
-                    print(f"[SamplerCompareDiffusion] Transposed from (B,C,H,W) to (B,H,W,C): {output.shape}")
-                elif decoded.dim() == 5:
-                    # Handle 5D output (B, C, T, H, W) or other variants
-                    print(f"[SamplerCompareDiffusion] Got 5D tensor, attempting to handle...")
-                    if decoded.shape[2] == 1:
-                        # (B, C, 1, H, W) -> squeeze and transpose
+                # Handle the actual shape returned: [4, 1, 3216, 2144, 3] -> should be [4, 3216, 2144, 3]
+                if decoded.dim() == 5:
+                    # Check if it's (B, C, H, W, 3) - the VAE is returning RGB channels last
+                    if decoded.shape[1] == 1 and decoded.shape[-1] == 3:
+                        # (B, 1, H, W, 3) -> squeeze C and we're done
+                        output = decoded.squeeze(1)  # (B, H, W, 3)
+                        print(f"[SamplerCompareDiffusion] Squeezed (B,1,H,W,3) to: {output.shape}")
+                    elif decoded.shape[-1] == 3:
+                        # Some other 5D format with 3 as last dim - assume it's RGB channels
+                        output = decoded
+                    elif decoded.shape[2] == 1:
+                        # (B, C, 1, H, W) -> squeeze time, transpose
                         decoded = decoded.squeeze(2)  # (B, C, H, W)
                         output = decoded.permute(0, 2, 3, 1)  # (B, H, W, C)
                     else:
-                        # (B, C, T, H, W) -> take first frame
+                        # (B, C, T, H, W) -> take first frame, transpose
                         decoded = decoded[:, :, 0, :, :]  # (B, C, H, W)
                         output = decoded.permute(0, 2, 3, 1)  # (B, H, W, C)
-                    print(f"[SamplerCompareDiffusion] Reshaped 5D to: {output.shape}")
+                elif decoded.dim() == 4:
+                    if decoded.shape[-1] == 3:
+                        # Already (B, H, W, C)
+                        output = decoded
+                    elif decoded.shape[1] == 3:
+                        # (B, C, H, W) -> (B, H, W, C)
+                        output = decoded.permute(0, 2, 3, 1)
+                        print(f"[SamplerCompareDiffusion] Transposed from (B,C,H,W) to (B,H,W,C): {output.shape}")
+                    else:
+                        output = decoded
                 else:
-                    # Last resort: try to reshape if we have unexpected dimensions
-                    print(f"[SamplerCompareDiffusion] Warning: Unexpected tensor shape {decoded.shape}, flattening and reshaping")
+                    # Fallback
+                    print(f"[SamplerCompareDiffusion] Warning: Unexpected tensor shape {decoded.shape}")
                     output = decoded
                 
-                # Clamp to [0, 1]
+                # Ensure output is float in [0, 1] range
+                if output.dtype != torch.float32:
+                    output = output.float()
                 output = torch.clamp(output, 0.0, 1.0)
                 print(f"[SamplerCompareDiffusion] Final output shape: {output.shape}")
                 
