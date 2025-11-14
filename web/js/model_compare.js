@@ -25,6 +25,23 @@ function setupModelCompareExtension() {
     }, 100);
 }
 
+function chainCallback(object, property, callback) {
+    if (object == undefined) {
+        console.error("[ModelCompare] Tried to add callback to non-existant object");
+        return;
+    }
+    if (property in object) {
+        const callback_orig = object[property];
+        object[property] = function () {
+            const r = callback_orig.apply(this, arguments);
+            callback.apply(this, arguments);
+            return r;
+        };
+    } else {
+        object[property] = callback;
+    }
+}
+
 function registerExtension() {
     const app = globalThis.app;
     
@@ -34,28 +51,27 @@ function registerExtension() {
     app.registerExtension({
         name: "comfyui-model-compare",
         
-        async nodeCreated(node, app) {
-            console.log(`[ModelCompare] nodeCreated called for: ${node.type}`);
+        async beforeRegisterNodeDef(nodeType, nodeData, app) {
+            console.log(`[ModelCompare] beforeRegisterNodeDef called for: ${nodeData.name}`);
             
-            // Only add button to ModelCompareLoaders node
-            if (node.type === "ModelCompareLoaders") {
-                console.log("[ModelCompare] Adding Update Inputs button to ModelCompareLoaders");
+            if (nodeData.name === "ModelCompareLoaders") {
+                console.log("[ModelCompare] Setting up ModelCompareLoaders");
                 
-                // Use setTimeout to ensure node is fully initialized
-                setTimeout(() => {
+                // Chain the onNodeCreated callback
+                chainCallback(nodeType.prototype, "onNodeCreated", function () {
+                    console.log("[ModelCompare] onNodeCreated called for ModelCompareLoaders instance");
+                    
                     try {
-                        const self = node;
-                        
-                        // Create button widget using ComfyUI's standard approach
+                        // Add button widget
                         const buttonCallback = () => {
                             console.log("[ModelCompare] Update Inputs button clicked!");
                             
                             // Get the num_* values from the node's widgets
-                            const num_checkpoints = self.widgets.find(w => w.name === "num_checkpoints")?.value || 0;
-                            const num_diffusion_models = self.widgets.find(w => w.name === "num_diffusion_models")?.value || 0;
-                            const num_vaes = self.widgets.find(w => w.name === "num_vaes")?.value || 0;
-                            const num_text_encoders = self.widgets.find(w => w.name === "num_text_encoders")?.value || 0;
-                            const num_loras = self.widgets.find(w => w.name === "num_loras")?.value || 0;
+                            const num_checkpoints = this.widgets.find(w => w.name === "num_checkpoints")?.value || 0;
+                            const num_diffusion_models = this.widgets.find(w => w.name === "num_diffusion_models")?.value || 0;
+                            const num_vaes = this.widgets.find(w => w.name === "num_vaes")?.value || 0;
+                            const num_text_encoders = this.widgets.find(w => w.name === "num_text_encoders")?.value || 0;
+                            const num_loras = this.widgets.find(w => w.name === "num_loras")?.value || 0;
                             
                             console.log(`[ModelCompare] Values: checkpoints=${num_checkpoints}, diffusion=${num_diffusion_models}, vaes=${num_vaes}, encoders=${num_text_encoders}, loras=${num_loras}`);
                             
@@ -63,13 +79,13 @@ function registerExtension() {
                         };
                         
                         // Add widget using addWidget method with button type
-                        self.addWidget("button", "Update Inputs", null, buttonCallback);
+                        this.addWidget("button", "Update Inputs", null, buttonCallback);
                         console.log("[ModelCompare] Update Inputs button added successfully via addWidget");
                         
                     } catch (e) {
                         console.error("[ModelCompare] Error adding button:", e);
                     }
-                }, 100);
+                });
             }
         }
     });
