@@ -142,6 +142,10 @@ class ModelCompareLoadersAdvanced:
         inputs = {
             "required": {
                 "config": ("MODEL_COMPARE_CONFIG",),
+                "refresh": ("BOOLEAN", {
+                    "default": False,
+                    "tooltip": "Toggle to refresh dropdown fields based on num_checkpoints, num_diffusion_models, etc.",
+                }),
             },
             "optional": {},
         }
@@ -197,39 +201,41 @@ class ModelCompareLoadersAdvanced:
     FUNCTION = "apply_model_selections"
     OUTPUT_NODE = True
 
-    def apply_model_selections(self, config: Dict[str, Any], **kwargs) -> Tuple[Dict[str, Any]]:
+    def apply_model_selections(self, config: Dict[str, Any], refresh: bool = False, **kwargs) -> Tuple[Dict[str, Any]]:
         """
         Process user selections and populate the config with specific models.
+        
+        The refresh parameter is used to trigger UI regeneration when toggled.
         """
-        # Extract checkpoint selections
+        # Extract checkpoint selections (only use the number specified in config)
         checkpoints = []
         for i in range(config["num_checkpoints"]):
             key = f"checkpoint_{i}"
             if key in kwargs and kwargs[key] != "NONE":
                 checkpoints.append(("checkpoint", kwargs[key]))
 
-        # Extract diffusion model selections
+        # Extract diffusion model selections (only use the number specified in config)
         diffusion_models = []
         for i in range(config["num_diffusion_models"]):
             key = f"diffusion_model_{i}"
             if key in kwargs and kwargs[key] != "NONE":
                 diffusion_models.append(("diffusion_model", kwargs[key]))
 
-        # Extract VAE selections
+        # Extract VAE selections (only use the number specified in config)
         vaes = []
         for i in range(config["num_vaes"]):
             key = f"vae_{i}"
             if key in kwargs and kwargs[key] != "NONE":
                 vaes.append(kwargs[key])
 
-        # Extract text encoder selections
+        # Extract text encoder selections (only use the number specified in config)
         text_encoders = []
         for i in range(config["num_text_encoders"]):
             key = f"text_encoder_{i}"
             if key in kwargs and kwargs[key] != "NONE":
                 text_encoders.append(kwargs[key])
 
-        # Extract LoRA selections and strengths
+        # Extract LoRA selections and strengths (only use the number specified in config)
         loras = []
         for i in range(config["num_loras"]):
             lora_key = f"lora_{i}"
