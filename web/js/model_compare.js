@@ -60,10 +60,8 @@ function registerExtension(app) {
                     console.log("[ModelCompare] onNodeCreated called for ModelCompareLoaders instance");
                     
                     try {
-                        // Add button widget
-                        const buttonCallback = () => {
-                            console.log("[ModelCompare] Update Inputs button clicked!");
-                            
+                        // Function to update visibility based on num_* values
+                        const updateWidgetVisibility = () => {
                             // Get the num_* values from the node's widgets
                             const num_checkpoints = this.widgets.find(w => w.name === "num_checkpoints")?.value || 0;
                             const num_diffusion_models = this.widgets.find(w => w.name === "num_diffusion_models")?.value || 0;
@@ -71,40 +69,41 @@ function registerExtension(app) {
                             const num_text_encoders = this.widgets.find(w => w.name === "num_text_encoders")?.value || 0;
                             const num_loras = this.widgets.find(w => w.name === "num_loras")?.value || 0;
                             
-                            console.log(`[ModelCompare] Values: checkpoints=${num_checkpoints}, diffusion=${num_diffusion_models}, vaes=${num_vaes}, encoders=${num_text_encoders}, loras=${num_loras}`);
-                            
                             // Hide/show widgets based on num_* values
-                            this.widgets.forEach((widget, idx) => {
-                                let shouldShow = true;
+                            this.widgets.forEach((widget) => {
+                                let shouldShow = false;
                                 
-                                // Hide checkpoint widgets beyond num_checkpoints
+                                // Show checkpoint widgets up to num_checkpoints
                                 if (widget.name && widget.name.startsWith("checkpoint_")) {
                                     const checkpointNum = parseInt(widget.name.split("_")[1]);
                                     shouldShow = checkpointNum < num_checkpoints;
                                 }
                                 
-                                // Hide diffusion_model widgets beyond num_diffusion_models
-                                if (widget.name && widget.name.startsWith("diffusion_model_")) {
+                                // Show diffusion_model widgets up to num_diffusion_models
+                                else if (widget.name && widget.name.startsWith("diffusion_model_")) {
                                     const diffusionNum = parseInt(widget.name.split("_")[2]);
                                     shouldShow = diffusionNum < num_diffusion_models;
                                 }
                                 
-                                // Hide vae widgets beyond num_vaes
-                                if (widget.name && widget.name.startsWith("vae_")) {
+                                // Show vae widgets up to num_vaes
+                                else if (widget.name && widget.name.startsWith("vae_")) {
                                     const vaeNum = parseInt(widget.name.split("_")[1]);
                                     shouldShow = vaeNum < num_vaes;
                                 }
                                 
-                                // Hide text_encoder widgets beyond num_text_encoders
-                                if (widget.name && widget.name.startsWith("text_encoder_")) {
+                                // Show text_encoder widgets up to num_text_encoders
+                                else if (widget.name && widget.name.startsWith("text_encoder_")) {
                                     const encNum = parseInt(widget.name.split("_")[2]);
                                     shouldShow = encNum < num_text_encoders;
                                 }
                                 
-                                // Hide lora widgets beyond num_loras
-                                if (widget.name && widget.name.startsWith("lora_")) {
-                                    const loraNum = parseInt(widget.name.split("_")[1]);
-                                    shouldShow = loraNum < num_loras;
+                                // Show lora and lora_*_strengths widgets up to num_loras
+                                else if (widget.name && widget.name.startsWith("lora_")) {
+                                    const loraMatch = widget.name.match(/^lora_(\d+)/);
+                                    if (loraMatch) {
+                                        const loraNum = parseInt(loraMatch[1]);
+                                        shouldShow = loraNum < num_loras;
+                                    }
                                 }
                                 
                                 // Set widget visibility
@@ -112,14 +111,37 @@ function registerExtension(app) {
                                     widget.element.style.display = shouldShow ? "" : "none";
                                 }
                             });
-                            
+                        };
+                        
+                        // Add button widget
+                        const buttonCallback = () => {
+                            console.log("[ModelCompare] Update Inputs button clicked!");
+                            updateWidgetVisibility();
                             // Trigger graph change to refresh the UI
                             app.graph.change();
                         };
                         
-                        // Add widget using addWidget method with button type
+                        // Add the button widget
                         this.addWidget("button", "Update Inputs", null, buttonCallback);
                         console.log("[ModelCompare] Update Inputs button added successfully via addWidget");
+                        
+                        // On initial creation, hide all but first of each type
+                        // This happens after a small delay to ensure widgets are initialized
+                        setTimeout(() => {
+                            // Set all num_* to 1 by default (only first of each type visible)
+                            const num_checkpoints = this.widgets.find(w => w.name === "num_checkpoints");
+                            const num_diffusion_models = this.widgets.find(w => w.name === "num_diffusion_models");
+                            const num_vaes = this.widgets.find(w => w.name === "num_vaes");
+                            const num_text_encoders = this.widgets.find(w => w.name === "num_text_encoders");
+                            const num_loras = this.widgets.find(w => w.name === "num_loras");
+                            
+                            // Initialize to show only first of each (value = 1 means show first 1)
+                            if (!num_checkpoints || num_checkpoints.value === undefined) {
+                                // Keep default values from INPUT_TYPES
+                            }
+                            
+                            updateWidgetVisibility();
+                        }, 100);
                         
                     } catch (e) {
                         console.error("[ModelCompare] Error adding button:", e);
