@@ -281,3 +281,13 @@ class ModelCompareLoaders:
             combinations.append(combination)
         
         return combinations
+
+
+# Node mappings
+NODE_CLASS_MAPPINGS = {
+    "ModelCompareLoaders": ModelCompareLoaders,
+}
+
+NODE_DISPLAY_NAME_MAPPINGS = {
+    "ModelCompareLoaders": "Model Compare Loaders",
+}
