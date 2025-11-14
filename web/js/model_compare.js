@@ -27,14 +27,12 @@ const maxAttempts = 100;
 function tryRegisterExtension() {
     registerAttempts++;
     
-    console.log(`[ModelCompare] Attempt ${registerAttempts}: checking for app...`);
-    console.log("[ModelCompare] window.comfyAPI:", window.comfyAPI);
-    
-    if (window.comfyAPI && window.comfyAPI.app) {
-        console.log("[ModelCompare] Found window.comfyAPI.app");
-        console.log("[ModelCompare] app object keys:", Object.keys(window.comfyAPI.app));
-        console.log("[ModelCompare] app.registerExtension exists?", typeof window.comfyAPI.app.registerExtension);
-        registerExtension(window.comfyAPI.app);
+    // The actual app is at window.comfyAPI.app.app
+    if (window.comfyAPI && window.comfyAPI.app && window.comfyAPI.app.app) {
+        const app = window.comfyAPI.app.app;
+        console.log("[ModelCompare] Found ComfyApp at window.comfyAPI.app.app");
+        console.log("[ModelCompare] app.registerExtension exists?", typeof app.registerExtension);
+        registerExtension(app);
         return;
     }
     
