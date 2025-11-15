@@ -19,17 +19,16 @@ import latent_preview
 AVAILABLE_SAMPLERS = list(SAMPLER_NAMES)
 
 
-def generate_smart_labels(combinations: List[Dict[str, Any]]) -> List[str]:
+def generate_smart_labels(combinations: List[Dict[str, Any]], config: Dict[str, Any] = None) -> List[str]:
     """
     Generate concise labels showing only the varying parameters.
-    If all combinations have the same model/VAE, only show LoRA differences.
-    If multiple models/VAEs vary, show those too.
-    Crucially: Only show LoRAs that actually have varying strengths across combinations.
+    Uses custom display names if provided, otherwise uses filenames.
     """
     if not combinations:
         return []
     
     labels = []
+    debug_log = config.get("debug_log", False) if config else False
     
     # Check what varies across combinations
     first_combo = combinations[0]
@@ -38,7 +37,9 @@ def generate_smart_labels(combinations: List[Dict[str, Any]]) -> List[str]:
     
     # Determine which LoRAs have varying strengths
     lora_names = first_combo.get('lora_names', []) if first_combo.get('lora_names') else []
+    lora_display_names = first_combo.get('lora_display_names', lora_names)
     lora_varies = {}
+    
     if lora_names:
         for idx, lora_name in enumerate(lora_names):
             # Check if this LoRA's strength varies across combinations
@@ -57,25 +58,31 @@ def generate_smart_labels(combinations: List[Dict[str, Any]]) -> List[str]:
         
         # Only show model if it varies
         if models_vary:
-            model_filename = combo['model'].split('\\')[-1]  # Just filename
+            model_filename = combo['model'].split('\\')[-1] if '\\' in combo['model'] else combo['model'].split('/')[-1]
             label_parts.append(model_filename)
         
         # Only show VAE if it varies
         if vaes_vary:
-            vae_filename = combo['vae'].split('\\')[-1]
+            vae_filename = combo['vae'].split('\\')[-1] if '\\' in combo['vae'] else combo['vae'].split('/')[-1]
             label_parts.append(f"VAE:{vae_filename}")
         
         # Only show LoRAs that actually vary
         if combo.get('lora_names') and combo.get('lora_strengths'):
-            for lora_name, strength in zip(combo['lora_names'], combo['lora_strengths']):
+            combo_display_names = combo.get('lora_display_names', combo.get('lora_names'))
+            for idx, (lora_name, strength) in enumerate(zip(combo['lora_names'], combo['lora_strengths'])):
                 # Only include if this LoRA's strength varies across combinations
                 if lora_varies.get(lora_name, False):
-                    lora_filename = lora_name.split('\\')[-1]
-                    label_parts.append(f"{lora_filename}({strength:.2f})")
+                    # Use display name if available, otherwise use filename
+                    if idx < len(combo_display_names):
+                        display_name = combo_display_names[idx]
+                    else:
+                        display_name = lora_name.split('\\')[-1] if '\\' in lora_name else lora_name.split('/')[-1]
+                    
+                    label_parts.append(f"{display_name}({strength:.2f})")
         
         # If nothing varies, show at least the model name
         if not label_parts:
-            model_filename = combo['model'].split('\\')[-1]
+            model_filename = combo['model'].split('\\')[-1] if '\\' in combo['model'] else combo['model'].split('/')[-1]
             label_parts.append(model_filename)
         
         labels.append(" + ".join(label_parts))
@@ -115,17 +122,21 @@ class SamplerCompareCheckpoint:
     OUTPUT_NODE = True
     
     def sample(self, config, model, clip, vae, latent, steps, cfg, sampler_name, scheduler, seed, positive, negative):
-        print("[SamplerCompareCheckpoint] Sampling from checkpoint models")
-        print(f"  - Steps: {steps}, CFG: {cfg}, Sampler: {sampler_name}, Scheduler: {scheduler}")
-        print(f"  - Seed: {seed}")
+        debug_log = config.get("debug_log", False)
+        
+        if debug_log:
+            print("[SamplerCompareCheckpoint] Sampling from checkpoint models")
+            print(f"  - Steps: {steps}, CFG: {cfg}, Sampler: {sampler_name}, Scheduler: {scheduler}")
+            print(f"  - Seed: {seed}")
         
         try:
             combinations = config.get("combinations", [])
             if not combinations:
-                print("[SamplerCompareCheckpoint] Warning: No combinations in config")
+                print("[SamplerCompareCheckpoint] Error: No combinations in config")
                 return (torch.zeros((1, 64, 64, 3)), "Error: No models")
             
-            print(f"[SamplerCompareCheckpoint] Processing {len(combinations)} combinations")
+            # Summary output (always shown)
+            print(f"[SamplerCompareCheckpoint] Generating {len(combinations)} images")
             
             # Collect latents for all combinations - for now use the provided latent
             sampled_latents = []
@@ -135,13 +146,15 @@ class SamplerCompareCheckpoint:
             
             for i, combo in enumerate(combinations):
                 progress_bar.update(i)
-                print(f"[SamplerCompareCheckpoint] Processing combination {i+1}/{len(combinations)}")
-                print(f"  Model: {combo['model']}, VAE: {combo['vae']}, LoRAs: {combo['lora_names']}")
-                print(f"  LoRA Strengths: {combo['lora_strengths']}")
+                print(f"[SamplerCompareCheckpoint] Generating image {i+1}/{len(combinations)}")
+                if debug_log:
+                    print(f"  Model: {combo['model']}, VAE: {combo['vae']}, LoRAs: {combo['lora_names']}")
+                    print(f"  LoRA Strengths: {combo['lora_strengths']}")
                 
                 # Pre-cleanup before loading new model
                 if i > 0:
-                    print(f"[SamplerCompareCheckpoint] Pre-cleanup before loading new model...")
+                    if debug_log:
+                        print(f"[SamplerCompareCheckpoint] Pre-cleanup before loading new model...")
                     import gc
                     gc.collect()
                     comfy.model_management.unload_all_models()
@@ -151,12 +164,14 @@ class SamplerCompareCheckpoint:
                 
                 # Perform actual sampling - use same seed for this combination
                 try:
-                    print(f"[SamplerCompareCheckpoint] Sampling with seed {seed}, steps {steps}...")
+                    if debug_log:
+                        print(f"[SamplerCompareCheckpoint] Sampling with seed {seed}, steps {steps}...")
                     
                     # Load the model for this combination
                     model_name = combo['model']
                     model_type = combo['model_type']
-                    print(f"[SamplerCompareCheckpoint] Loading {model_type} model: {model_name}")
+                    if debug_log:
+                        print(f"[SamplerCompareCheckpoint] Loading {model_type} model: {model_name}")
                     
                     if model_type == "checkpoint":
                         # Load checkpoint model
@@ -172,16 +187,20 @@ class SamplerCompareCheckpoint:
                         combo_model = comfy.sd.load_diffusion_model_state_dict(sd)
                         del sd  # Clear the state dict immediately after extraction
                     
-                    print(f"[SamplerCompareCheckpoint] Model loaded, type: {type(combo_model)}")
+                    if debug_log:
+                        print(f"[SamplerCompareCheckpoint] Model loaded, type: {type(combo_model)}")
                     
                     # Apply LoRAs to the model
                     if combo.get('lora_names') and combo.get('lora_strengths'):
-                        print(f"[SamplerCompareCheckpoint] Applying {len(combo['lora_names'])} LoRAs")
+                        if debug_log:
+                            print(f"[SamplerCompareCheckpoint] Applying {len(combo['lora_names'])} LoRAs")
                         for lora_name, lora_strength in zip(combo['lora_names'], combo['lora_strengths']):
                             if lora_strength == 0:
-                                print(f"[SamplerCompareCheckpoint]   Skipping {lora_name} (strength=0)")
+                                if debug_log:
+                                    print(f"[SamplerCompareCheckpoint]   Skipping {lora_name} (strength=0)")
                                 continue
-                            print(f"[SamplerCompareCheckpoint]   Loading {lora_name} with strength {lora_strength}")
+                            if debug_log:
+                                print(f"[SamplerCompareCheckpoint]   Loading {lora_name} with strength {lora_strength}")
                             try:
                                 lora_path = folder_paths.get_full_path_or_raise("loras", lora_name)
                                 lora_data = comfy.utils.load_torch_file(lora_path)
@@ -189,7 +208,8 @@ class SamplerCompareCheckpoint:
                                 old_patches = len(combo_model.patches) if hasattr(combo_model, 'patches') else 0
                                 combo_model, _ = comfy.sd.load_lora_for_models(combo_model, None, lora_data, lora_strength, 0)
                                 new_patches = len(combo_model.patches) if hasattr(combo_model, 'patches') else 0
-                                print(f"[SamplerCompareCheckpoint]   LoRA applied successfully (patches: {old_patches} -> {new_patches})")
+                                if debug_log:
+                                    print(f"[SamplerCompareCheckpoint]   LoRA applied successfully (patches: {old_patches} -> {new_patches})")
                             except Exception as lora_err:
                                 print(f"[SamplerCompareCheckpoint]   Error loading LoRA: {lora_err}")
                     
@@ -205,13 +225,15 @@ class SamplerCompareCheckpoint:
                     callback = latent_preview.prepare_callback(combo_model, steps)
                     
                     # Run the actual sampler
-                    print(f"[SamplerCompareCheckpoint] Running sampler: {sampler_name}")
+                    if debug_log:
+                        print(f"[SamplerCompareCheckpoint] Running sampler: {sampler_name}")
                     
-                    # Log model state before sampling
-                    patches_before = len(combo_model.patches) if hasattr(combo_model, 'patches') else 0
-                    print(f"[SamplerCompareCheckpoint] BEFORE sample call: patches count = {patches_before}")
-                    if hasattr(combo_model, 'patches') and combo_model.patches:
-                        print(f"[SamplerCompareCheckpoint]   Patch keys: {list(combo_model.patches.keys())[:5]}...")
+                    # Log model state before sampling (only in debug mode)
+                    if debug_log:
+                        patches_before = len(combo_model.patches) if hasattr(combo_model, 'patches') else 0
+                        print(f"[SamplerCompareCheckpoint] BEFORE sample call: patches count = {patches_before}")
+                        if hasattr(combo_model, 'patches') and combo_model.patches:
+                            print(f"[SamplerCompareCheckpoint]   Patch keys: {list(combo_model.patches.keys())[:5]}...")
                     
                     samples_out = comfy.sample.sample(
                         combo_model,
@@ -230,24 +252,28 @@ class SamplerCompareCheckpoint:
                         seed=seed
                     )
                     
-                    # Log model state after sampling
-                    patches_after = len(combo_model.patches) if hasattr(combo_model, 'patches') else 0
-                    print(f"[SamplerCompareCheckpoint] AFTER sample call: patches count = {patches_after}")
+                    # Log model state after sampling (only in debug mode)
+                    if debug_log:
+                        patches_after = len(combo_model.patches) if hasattr(combo_model, 'patches') else 0
+                        print(f"[SamplerCompareCheckpoint] AFTER sample call: patches count = {patches_after}")
                     
                     sampled_latents.append(samples_out)
-                    print(f"[SamplerCompareCheckpoint] Sampled latent shape: {samples_out.shape}")
+                    if debug_log:
+                        print(f"[SamplerCompareCheckpoint] Sampled latent shape: {samples_out.shape}")
                     
                 except comfy.model_management.InterruptProcessingException:
-                    print(f"[SamplerCompareCheckpoint] Sampling interrupted, stopping all combinations")
+                    print(f"[SamplerCompareCheckpoint] Interrupted")
                     raise  # Re-raise to stop execution
                 except Exception as e:
-                    print(f"[SamplerCompareCheckpoint] Sampling failed: {e}, using input latent instead")
-                    import traceback
-                    traceback.print_exc()
+                    print(f"[SamplerCompareCheckpoint] Error: {e}")
+                    if debug_log:
+                        import traceback
+                        traceback.print_exc()
                     sampled_latents.append(latent["samples"])
                 
                 # Aggressively clean up the model to prevent crashes when loading the next one
-                print(f"[SamplerCompareCheckpoint] Aggressively cleaning up models after combination {i+1}...")
+                if debug_log:
+                    print(f"[SamplerCompareCheckpoint] Cleaning up models...")
                 try:
                     # Delete all local references to model objects
                     if 'combo_model' in locals():
@@ -268,15 +294,17 @@ class SamplerCompareCheckpoint:
                 comfy.model_management.cleanup_models()
                 comfy.model_management.cleanup_models_gc()
                 comfy.model_management.soft_empty_cache()
-                print(f"[SamplerCompareCheckpoint] Cleanup complete, ready for next combination")
+                if debug_log:
+                    print(f"[SamplerCompareCheckpoint] Cleanup complete")
             
             progress_bar.update(len(combinations))
             
             # Generate smart labels showing only differences
-            labels_list = generate_smart_labels(combinations[:len(sampled_latents)])
+            labels_list = generate_smart_labels(combinations[:len(sampled_latents)], config)
             if sampled_latents:
                 stacked_latents = torch.cat(sampled_latents, dim=0)
-                print(f"[SamplerCompareCheckpoint] Stacked latent shape: {stacked_latents.shape}")
+                if debug_log:
+                    print(f"[SamplerCompareCheckpoint] Stacked latent shape: {stacked_latents.shape}")
                 
                 # Decode latents with VAE
                 print(f"[SamplerCompareCheckpoint] Decoding {stacked_latents.shape[0]} latents with VAE")
@@ -408,21 +436,24 @@ class SamplerCompareQwenEdit:
     OUTPUT_NODE = True
     
     def sample(self, config, latent, steps, sampler_name, seed, positive, negative, guidance_scale, aura_flow_mode, cfg_norm_strength, cfg_norm_mode, model=None, clip=None, vae=None):
-        print("[SamplerCompareQwenEdit] Sampling from Qwen Edit models with AuraFlow pipeline")
-        print(f"  - Sampler: {sampler_name}")
-        print(f"  - AuraFlow Mode: {aura_flow_mode}")
-        print(f"  - Guidance Scale: {guidance_scale}")
-        print(f"  - CFGNorm: {cfg_norm_mode} (strength: {cfg_norm_strength})")
-        print(f"  - Steps: {steps}, Seed: {seed}")
+        debug_log = config.get("debug_log", False)
+        
+        if debug_log:
+            print("[SamplerCompareQwenEdit] Sampling from Qwen Edit models with AuraFlow pipeline")
+            print(f"  - Sampler: {sampler_name}")
+            print(f"  - AuraFlow Mode: {aura_flow_mode}")
+            print(f"  - Guidance Scale: {guidance_scale}")
+            print(f"  - CFGNorm: {cfg_norm_mode} (strength: {cfg_norm_strength})")
+            print(f"  - Steps: {steps}, Seed: {seed}")
         
         try:
             # Use config from loader
             combinations = config.get("combinations", [])
             if not combinations:
-                print("[SamplerCompareQwenEdit] Warning: No combinations in config")
+                print("[SamplerCompareQwenEdit] Error: No combinations in config")
                 return (torch.zeros((1, 64, 64, 3)), "Error: No models")
             
-            print(f"[SamplerCompareQwenEdit] Processing {len(combinations)} combinations")
+            print(f"[SamplerCompareQwenEdit] Generating {len(combinations)} images")
             
             # Get VAE from the config path or from optional input
             if vae is None:
@@ -447,9 +478,10 @@ class SamplerCompareQwenEdit:
             
             for i, combo in enumerate(combinations):
                 progress_bar.update(i)
-                print(f"[SamplerCompareQwenEdit] Processing combination {i+1}/{len(combinations)}")
-                print(f"  Model: {combo['model']}, VAE: {combo['vae']}, LoRAs: {combo['lora_names']}")
-                print(f"  LoRA Strengths: {combo['lora_strengths']}")
+                print(f"[SamplerCompareQwenEdit] Generating image {i+1}/{len(combinations)}")
+                if debug_log:
+                    print(f"  Model: {combo['model']}, VAE: {combo['vae']}, LoRAs: {combo['lora_names']}")
+                    print(f"  LoRA Strengths: {combo['lora_strengths']}")
                 
                 # Pre-cleanup before loading new model
                 if i > 0:
@@ -585,7 +617,7 @@ class SamplerCompareQwenEdit:
             progress_bar.update(len(combinations))
             
             # Generate smart labels showing only differences
-            labels_list = generate_smart_labels(combinations[:len(sampled_latents)])
+            labels_list = generate_smart_labels(combinations[:len(sampled_latents)], config)
             
             # Stack all sampled latents
             if sampled_latents:
@@ -715,17 +747,20 @@ class SamplerCompareDiffusion:
     OUTPUT_NODE = True
     
     def sample(self, config, clip, vae, latent, steps, cfg, sampler_name, scheduler, seed, positive, negative):
-        print("[SamplerCompareDiffusion] Sampling from diffusion models (U-Net)")
-        print(f"  - Steps: {steps}, CFG: {cfg}, Sampler: {sampler_name}, Scheduler: {scheduler}")
-        print(f"  - Seed: {seed}")
+        debug_log = config.get("debug_log", False)
+        
+        if debug_log:
+            print("[SamplerCompareDiffusion] Sampling from diffusion models (U-Net)")
+            print(f"  - Steps: {steps}, CFG: {cfg}, Sampler: {sampler_name}, Scheduler: {scheduler}")
+            print(f"  - Seed: {seed}")
         
         try:
             combinations = config.get("combinations", [])
             if not combinations:
-                print("[SamplerCompareDiffusion] Warning: No combinations in config")
+                print("[SamplerCompareDiffusion] Error: No combinations in config")
                 return (torch.zeros((1, 64, 64, 3)), "Error: No models")
             
-            print(f"[SamplerCompareDiffusion] Processing {len(combinations)} combinations")
+            print(f"[SamplerCompareDiffusion] Generating {len(combinations)} images")
             
             # Collect latents for all combinations - for now use the provided latent
             sampled_latents = []
@@ -735,13 +770,15 @@ class SamplerCompareDiffusion:
             
             for i, combo in enumerate(combinations):
                 progress_bar.update(i)
-                print(f"[SamplerCompareDiffusion] Processing combination {i+1}/{len(combinations)}")
-                print(f"  Model: {combo['model']}, VAE: {combo['vae']}, LoRAs: {combo['lora_names']}")
-                print(f"  LoRA Strengths: {combo['lora_strengths']}")
+                print(f"[SamplerCompareDiffusion] Generating image {i+1}/{len(combinations)}")
+                if debug_log:
+                    print(f"  Model: {combo['model']}, VAE: {combo['vae']}, LoRAs: {combo['lora_names']}")
+                    print(f"  LoRA Strengths: {combo['lora_strengths']}")
                 
                 # Pre-cleanup before loading new model
                 if i > 0:
-                    print(f"[SamplerCompareDiffusion] Pre-cleanup before loading new model...")
+                    if debug_log:
+                        print(f"[SamplerCompareDiffusion] Pre-cleanup before loading new model...")
                     import gc
                     gc.collect()
                     comfy.model_management.unload_all_models()
@@ -873,10 +910,11 @@ class SamplerCompareDiffusion:
             progress_bar.update(len(combinations))
             
             # Generate smart labels showing only differences
-            labels_list = generate_smart_labels(combinations[:len(sampled_latents)])
+            labels_list = generate_smart_labels(combinations[:len(sampled_latents)], config)
             if sampled_latents:
                 stacked_latents = torch.cat(sampled_latents, dim=0)
-                print(f"[SamplerCompareDiffusion] Stacked latent shape: {stacked_latents.shape}")
+                if debug_log:
+                    print(f"[SamplerCompareDiffusion] Stacked latent shape: {stacked_latents.shape}")
                 
                 # Decode latents with VAE
                 print(f"[SamplerCompareDiffusion] Decoding {stacked_latents.shape[0]} latents with VAE")

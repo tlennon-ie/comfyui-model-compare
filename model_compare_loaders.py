@@ -76,6 +76,11 @@ class ModelCompareLoaders:
                     "step": 1,
                     "display": "slider",
                 }),
+                "debug_log": ("BOOLEAN", {
+                    "default": False,
+                    "label_on": "enabled",
+                    "label_off": "disabled",
+                }),
             },
             "optional": {},
         }
@@ -95,7 +100,7 @@ class ModelCompareLoaders:
                 {"default": "NONE"},
             )
 
-        # Add LoRA selection and strength widgets (up to 10)
+        # Add LoRA selection, strength, custom label, and combiner widgets (up to 10)
         for i in range(10):
             inputs["optional"][f"lora_{i}"] = (
                 ["NONE"] + loras,
@@ -109,6 +114,20 @@ class ModelCompareLoaders:
                     "tooltip": "Comma-separated strength values (e.g., '0.0, 0.5, 1.0, 1.5')",
                 },
             )
+            inputs["optional"][f"lora_{i}_customlabel"] = (
+                "STRING",
+                {
+                    "default": "",
+                    "multiline": False,
+                    "tooltip": "Custom label for this LoRA (leave empty to use filename)",
+                },
+            )
+            # Add combiner after each LoRA (AND = include in all combos, OR = switch between LoRAs)
+            if i < 9:  # Don't add after the last LoRA
+                inputs["optional"][f"lora_{i}_combiner"] = (
+                    ["AND", "OR"],
+                    {"default": "AND"},
+                )
 
         return inputs
 
@@ -127,6 +146,7 @@ class ModelCompareLoaders:
         num_model_variations: int,
         num_vae_variations: int,
         num_loras: int,
+        debug_log: bool,
         **kwargs
     ) -> Tuple[Dict[str, Any], Any, Any, Any]:
         """
@@ -137,13 +157,13 @@ class ModelCompareLoaders:
         base_model_type, base_model_name = self._parse_model_selector(base_model)
         
         # Load the base models
-        print(f"[ModelCompareLoaders] Loading base model: {base_model_name} ({base_model_type})")
+        if debug_log:
+            print(f"[ModelCompareLoaders] Loading base model: {base_model_name} ({base_model_type})")
+            print(f"[ModelCompareLoaders] Loading base VAE: {vae}")
+            print(f"[ModelCompareLoaders] Loading base CLIP: {clip_model}")
+        
         base_model_obj = self._load_model(base_model_name, base_model_type)
-        
-        print(f"[ModelCompareLoaders] Loading base VAE: {vae}")
         base_vae_obj = self._load_vae(vae)
-        
-        print(f"[ModelCompareLoaders] Loading base CLIP: {clip_model}")
         base_clip_obj = self._load_clip(clip_model, clip_type)
         
         # Collect model variations
@@ -161,15 +181,21 @@ class ModelCompareLoaders:
             if key in kwargs and kwargs[key] != "NONE":
                 vae_variations.append(kwargs[key])
         
-        # Collect LoRAs
+        # Collect LoRAs with custom labels and combiner operators
         loras = []
+        lora_combiners = []  # Track AND/OR operators between LoRAs
+        
         for i in range(num_loras):
             lora_key = f"lora_{i}"
             strengths_key = f"lora_{i}_strengths"
+            customlabel_key = f"lora_{i}_customlabel"
+            combiner_key = f"lora_{i}_combiner"
             
             if lora_key in kwargs and kwargs[lora_key] != "NONE":
                 lora_name = kwargs[lora_key]
                 strengths_str = kwargs.get(strengths_key, "1.0")
+                custom_label = kwargs.get(customlabel_key, "").strip()
+                combiner = kwargs.get(combiner_key, "AND")  # Default to AND
                 
                 try:
                     strengths = [
@@ -178,32 +204,47 @@ class ModelCompareLoaders:
                         if s.strip()
                     ]
                 except ValueError:
-                    print(f"[ModelCompareLoaders] Warning: Invalid strength values for {lora_name}")
+                    if debug_log:
+                        print(f"[ModelCompareLoaders] Warning: Invalid strength values for {lora_name}")
                     strengths = [1.0]
 
                 loras.append({
                     "name": lora_name,
+                    "display_name": custom_label if custom_label else lora_name,  # Use custom label if provided
                     "strengths": strengths,
                 })
+                
+                # Store combiner operator (before the next LoRA)
+                lora_combiners.append(combiner)
         
         # Create config
         config = {
             "model_variations": model_variations,
             "vae_variations": vae_variations,
             "loras": loras,
+            "lora_combiners": lora_combiners,  # Store combiner operators
             "clip_type": clip_type,
             "base_model_type": base_model_type,
             "base_model_name": base_model_name,
+            "debug_log": debug_log,  # Store debug flag in config
         }
         
         # Compute all combinations
         config["combinations"] = self._compute_combinations(config)
         
-        print(f"[ModelCompareLoaders] Config created:")
-        print(f"  - Model variations: {len(model_variations)}")
-        print(f"  - VAE variations: {len(vae_variations)}")
-        print(f"  - LoRAs: {len(loras)}")
-        print(f"  - Total combinations: {len(config['combinations'])}")
+        # Summary logging
+        num_total_combos = len(config['combinations'])
+        
+        if debug_log:
+            print(f"[ModelCompareLoaders] Config created:")
+            print(f"  - Model variations: {len(model_variations)}")
+            print(f"  - VAE variations: {len(vae_variations)}")
+            print(f"  - LoRAs: {len(loras)}")
+            print(f"  - LoRA combinations strategy: {' '.join([f'LoRA{i} {op} ' for i, op in enumerate(lora_combiners)])}")
+            print(f"  - Total images to generate: {num_total_combos}")
+        else:
+            # Clean log output
+            print(f"[ModelCompareLoaders] Will generate {num_total_combos} images across {len(config['combinations']) // max(1, len(vae_variations))} grid configurations")
         
         return (config, base_model_obj, base_clip_obj, base_vae_obj)
     
@@ -299,32 +340,96 @@ class ModelCompareLoaders:
     
     @staticmethod
     def _compute_combinations(config: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """Compute all possible combinations."""
+        """
+        Compute all possible combinations.
+        Supports AND/OR operators to control LoRA combination strategy.
+        AND = include LoRA in all combinations
+        OR = switch between LoRAs (test each separately or in groups)
+        """
         models = config["model_variations"]
         vaes = config["vae_variations"]
         loras = config["loras"]
+        lora_combiners = config.get("lora_combiners", [])
         
-        # Compute LoRA strength combinations
-        lora_strength_combos = []
-        if loras:
-            strength_lists = [l["strengths"] for l in loras]
+        debug_log = config.get("debug_log", False)
+        
+        # Group LoRAs by AND/OR operators
+        lora_groups = []
+        current_group = [loras[0]] if loras else []
+        
+        for i, combiner in enumerate(lora_combiners):
+            if combiner == "AND" and i + 1 < len(loras):
+                # Add to current group
+                current_group.append(loras[i + 1])
+            elif combiner == "OR" and i + 1 < len(loras):
+                # Start a new group
+                lora_groups.append(current_group)
+                current_group = [loras[i + 1]]
+        
+        # Add the last group
+        if current_group:
+            lora_groups.append(current_group)
+        
+        # If no loras, we still need at least one empty group
+        if not loras:
+            lora_groups = [[]]
+        
+        if debug_log:
+            print(f"[ModelCompareLoaders] LoRA grouping strategy:")
+            for idx, group in enumerate(lora_groups):
+                print(f"  - Group {idx}: {[l['name'] for l in group]}")
+        
+        # Compute LoRA strength combinations within each group
+        group_combos = []
+        for group in lora_groups:
+            if not group:
+                group_combos.append([{"lora_names": [], "lora_strengths": ()}])
+                continue
+            
+            # For each group, compute all strength combinations for LoRAs in that group
+            strength_lists = [l["strengths"] for l in group]
             lora_strength_combos = list(itertools.product(*strength_lists))
-        else:
-            lora_strength_combos = [None]
+            
+            group_combo_list = []
+            for lora_strengths in lora_strength_combos:
+                group_combo_list.append({
+                    "lora_names": [l["name"] for l in group],
+                    "lora_display_names": [l["display_name"] for l in group],
+                    "lora_strengths": lora_strengths,
+                })
+            
+            group_combos.append(group_combo_list)
         
-        # Generate all combinations
+        # Now create combinations: model × vae × (group1_combos OR group2_combos OR ...)
+        # This means we'll test each group separately
         combinations = []
-        for model, vae, lora_strengths in itertools.product(
-            models, vaes, lora_strength_combos
-        ):
-            combination = {
-                "model": model["name"],
-                "model_type": model["type"],
-                "vae": vae,
-                "lora_strengths": lora_strengths,
-                "lora_names": [l["name"] for l in loras] if loras else [],
-            }
-            combinations.append(combination)
+        
+        if len(lora_groups) == 1 and len(lora_groups[0]) == 0:
+            # No LoRAs case
+            for model, vae in itertools.product(models, vaes):
+                combination = {
+                    "model": model["name"],
+                    "model_type": model["type"],
+                    "vae": vae,
+                    "lora_strengths": (),
+                    "lora_names": [],
+                    "lora_display_names": [],
+                }
+                combinations.append(combination)
+        else:
+            # Standard case with LoRAs
+            for model, vae in itertools.product(models, vaes):
+                for group_idx, group_combo_list in enumerate(group_combos):
+                    for group_combo in group_combo_list:
+                        combination = {
+                            "model": model["name"],
+                            "model_type": model["type"],
+                            "vae": vae,
+                            "lora_strengths": group_combo["lora_strengths"],
+                            "lora_names": group_combo["lora_names"],
+                            "lora_display_names": group_combo.get("lora_display_names", group_combo["lora_names"]),
+                        }
+                        combinations.append(combination)
         
         return combinations
 
