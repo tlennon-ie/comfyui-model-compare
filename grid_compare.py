@@ -402,7 +402,26 @@ class GridCompare:
         
         # Calculate layout dimensions
         label_height = font_size + 20
-        label_width = 250  # Width for LoRA names on left
+        label_font = self._get_font(font_name, int(font_size * 0.8))
+        
+        # Calculate label_width based on longest LoRA name
+        max_label_width = 100  # Minimum width
+        for row in rows:
+            lora_name = row["lora_name"]
+            # Estimate text width
+            if label_font:
+                try:
+                    # Get bounding box of text
+                    bbox = label_font.getbbox(lora_name)
+                    text_width = bbox[2] - bbox[0]
+                except:
+                    text_width = len(lora_name) * 10
+            else:
+                # Default font estimate: ~10 pixels per character
+                text_width = len(lora_name) * 10
+            max_label_width = max(max_label_width, text_width + 40)  # Add padding
+        
+        label_width = max_label_width
         header_height = label_height + gap_size  # Height for strength headers
         title_height = label_height + gap_size if title else 0
         
@@ -417,7 +436,6 @@ class GridCompare:
         grid_img = Image.new('RGB', (grid_width, grid_height), color=grid_color)
         draw = ImageDraw.Draw(grid_img)
         font = self._get_font(font_name, font_size)
-        label_font = self._get_font(font_name, int(font_size * 0.8))
         header_font = self._get_font(font_name, int(font_size * 0.9))
         border_rgb = self._parse_color(border_color)
         text_rgb = self._parse_color(text_color)
@@ -477,36 +495,45 @@ class GridCompare:
         save_location: str,
         title: str,
     ) -> str:
-        """Save grid and optionally individual images."""
+        """Save grid and optionally individual images.
+        
+        Saves files like ComfyUI standard nodes:
+        - Grid: output/{save_location}/{title}_0.png, {title}_1.png, etc.
+        - Individuals: output/{save_location}/{title}_image_{idx}_{counter}.png
+        """
         
         # Create save directory
         output_dir = folder_paths.get_output_directory()
         save_dir = os.path.join(output_dir, save_location)
         os.makedirs(save_dir, exist_ok=True)
-
-        # Create a subdirectory for this comparison
-        import datetime
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        comparison_dir = os.path.join(save_dir, f"{title}_{timestamp}")
-        os.makedirs(comparison_dir, exist_ok=True)
-
+        
+        # Find next available counter for grid file (following ComfyUI pattern)
+        counter = 0
+        while True:
+            grid_path = os.path.join(save_dir, f"{title}_{counter}.png")
+            if not os.path.exists(grid_path):
+                break
+            counter += 1
+        
         # Save grid image
-        grid_path = os.path.join(comparison_dir, "grid.png")
         grid_image.save(grid_path, quality=95)
         print(f"[GridCompare] Saved grid: {grid_path}")
-
+        
         # Save individual images if requested
         if individual_images:
-            individual_dir = os.path.join(comparison_dir, "individual")
-            os.makedirs(individual_dir, exist_ok=True)
-            
             for idx, img in enumerate(individual_images):
-                img_path = os.path.join(individual_dir, f"image_{idx:04d}.png")
+                img_counter = 0
+                while True:
+                    img_path = os.path.join(save_dir, f"{title}_image_{idx}_{img_counter}.png")
+                    if not os.path.exists(img_path):
+                        break
+                    img_counter += 1
+                
                 img.save(img_path, quality=95)
             
-            print(f"[GridCompare] Saved {len(individual_images)} individual images")
-
-        return comparison_dir
+            print(f"[GridCompare] Saved {len(individual_images)} individual images to {save_dir}")
+        
+        return save_dir
 
 
 # Node mappings
