@@ -76,9 +76,6 @@ class ModelCompareLoaders:
                     "step": 1,
                     "display": "slider",
                 }),
-                "debug_log": ("BOOLEAN", {
-                    "default": False,
-                }),
             },
             "optional": {},
         }
@@ -143,7 +140,6 @@ class ModelCompareLoaders:
         num_model_variations: int,
         num_vae_variations: int,
         num_loras: int,
-        debug_log: bool,
         **kwargs
     ) -> Tuple[Dict[str, Any], Any, Any, Any]:
         """
@@ -154,11 +150,6 @@ class ModelCompareLoaders:
         base_model_type, base_model_name = self._parse_model_selector(base_model)
         
         # Load the base models
-        if debug_log:
-            print(f"[ModelCompareLoaders] Loading base model: {base_model_name} ({base_model_type})")
-            print(f"[ModelCompareLoaders] Loading base VAE: {vae}")
-            print(f"[ModelCompareLoaders] Loading base CLIP: {clip_model}")
-        
         base_model_obj = self._load_model(base_model_name, base_model_type)
         base_vae_obj = self._load_vae(vae)
         base_clip_obj = self._load_clip(clip_model, clip_type)
@@ -201,8 +192,6 @@ class ModelCompareLoaders:
                         if s.strip()
                     ]
                 except ValueError:
-                    if debug_log:
-                        print(f"[ModelCompareLoaders] Warning: Invalid strength values for {lora_name}")
                     strengths = [1.0]
 
                 loras.append({
@@ -223,25 +212,25 @@ class ModelCompareLoaders:
             "clip_type": clip_type,
             "base_model_type": base_model_type,
             "base_model_name": base_model_name,
-            "debug_log": debug_log,  # Store debug flag in config
         }
         
         # Compute all combinations
         config["combinations"] = self._compute_combinations(config)
         
-        # Summary logging
+        # Summary logging - always show key info
         num_total_combos = len(config['combinations'])
+        lora_combiners_list = config.get('lora_combiners', [])
         
-        if debug_log:
-            print(f"[ModelCompareLoaders] Config created:")
-            print(f"  - Model variations: {len(model_variations)}")
-            print(f"  - VAE variations: {len(vae_variations)}")
-            print(f"  - LoRAs: {len(loras)}")
-            print(f"  - LoRA combinations strategy: {' '.join([f'LoRA{i} {op} ' for i, op in enumerate(lora_combiners)])}")
-            print(f"  - Total images to generate: {num_total_combos}")
+        # Calculate grid dimensions
+        if lora_combiners_list:
+            or_count = sum(1 for op in lora_combiners_list if op == 'OR')
+            num_rows = or_count + 1
         else:
-            # Clean log output
-            print(f"[ModelCompareLoaders] Will generate {num_total_combos} images across {len(config['combinations']) // max(1, len(vae_variations))} grid configurations")
+            num_rows = 1
+        
+        num_cols = num_total_combos // max(1, num_rows) if num_rows > 0 else num_total_combos
+        
+        print(f"[ModelCompareLoaders] Grid: {num_rows} rows × {num_cols} columns = {num_total_combos} images")
         
         return (config, base_model_obj, base_clip_obj, base_vae_obj)
     
@@ -348,8 +337,6 @@ class ModelCompareLoaders:
         loras = config["loras"]
         lora_combiners = config.get("lora_combiners", [])
         
-        debug_log = config.get("debug_log", False)
-        
         # Group LoRAs by AND/OR operators
         lora_groups = []
         current_group = [loras[0]] if loras else []
@@ -370,11 +357,6 @@ class ModelCompareLoaders:
         # If no loras, we still need at least one empty group
         if not loras:
             lora_groups = [[]]
-        
-        if debug_log:
-            print(f"[ModelCompareLoaders] LoRA grouping strategy:")
-            for idx, group in enumerate(lora_groups):
-                print(f"  - Group {idx}: {[l['name'] for l in group]}")
         
         # Compute LoRA strength combinations within each group
         group_combos = []

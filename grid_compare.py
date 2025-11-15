@@ -65,9 +65,9 @@ class GridCompare:
                     "tooltip": "Hex color for text labels",
                 }),
                 "font_size": ("INT", {
-                    "default": 20,
+                    "default": 48,
                     "min": 8,
-                    "max": 100,
+                    "max": 200,
                     "step": 2,
                 }),
                 "font_name": (fonts, {
@@ -79,20 +79,7 @@ class GridCompare:
                     "label_off": "no",
                 }),
             },
-            "optional": {
-                "x_label": ("STRING", {
-                    "default": "Checkpoint",
-                    "multiline": False,
-                }),
-                "y_label": ("STRING", {
-                    "default": "LoRA Configuration",
-                    "multiline": False,
-                }),
-                "z_label": ("STRING", {
-                    "default": "Index",
-                    "multiline": False,
-                }),
-            },
+            "optional": {},
         }
 
     CATEGORY = "image"
@@ -103,53 +90,33 @@ class GridCompare:
     
     def _detect_varying_parameters(self, config: Dict[str, Any]) -> Tuple[int, int]:
         """
-        Analyze the config to determine which parameters vary and calculate grid dimensions.
-        
-        Returns:
-            Tuple of (rows, cols) based on varying parameters
-            - Single varying: 1 x N
-            - Two varying: M x N
-            - Three+: square-ish layout
+        Analyze the config to determine grid dimensions based on AND/OR logic.
+        Rows = number of OR groups (one row per OR-separated LoRA)
+        Cols = number of strength variations
         """
         if "combinations" not in config or not config["combinations"]:
             return 1, 1
         
         combinations = config["combinations"]
-        
-        # Check what actually varies
-        first = combinations[0]
-        models_vary = len(set(c['model'] for c in combinations)) > 1
-        vaes_vary = len(set(c['vae'] for c in combinations)) > 1
-        
-        # Check which LoRAs vary in strength
-        lora_varies = {}
-        if first.get('lora_names'):
-            for idx, lora_name in enumerate(first['lora_names']):
-                strengths = []
-                for combo in combinations:
-                    if combo.get('lora_strengths') and idx < len(combo['lora_strengths']):
-                        strengths.append(combo['lora_strengths'][idx])
-                lora_varies[lora_name] = len(set(strengths)) > 1
-        
-        varying_count = sum([models_vary, vaes_vary, any(lora_varies.values())])
-        
-        # Determine grid layout
         num_combinations = len(combinations)
         
-        if varying_count == 1:
-            # Single varying parameter - arrange as 1 row x N columns
-            return 1, num_combinations
-        elif varying_count == 2:
-            # Two varying parameters - try to make rectangular grid
-            # Use model/vae as rows, lora strength as columns
-            rows = config['model_variations'].__len__() if models_vary else (len(config['vae_variations']) if vaes_vary else 1)
-            cols = num_combinations // rows if rows > 0 else 1
-            return rows, cols
-        else:
-            # Three+ varying parameters - use square-ish layout
+        # Get LoRA combiners to determine grid rows
+        lora_combiners = config.get('lora_combiners', [])
+        if not lora_combiners:
+            # No combiners info, use square-ish layout
             cols = max(1, int(num_combinations ** 0.5))
             rows = (num_combinations + cols - 1) // cols
             return rows, cols
+        
+        # Count OR operators to determine number of rows
+        # OR separates LoRA groups, so row count = number of OR groups
+        or_count = sum(1 for op in lora_combiners if op == 'OR')
+        rows = or_count + 1  # OR count + 1 = number of groups/rows
+        
+        # Columns = combinations per row
+        cols = num_combinations // max(1, rows) if rows > 0 else num_combinations
+        
+        return rows, cols
 
     def create_grid(
         self,
@@ -165,9 +132,7 @@ class GridCompare:
         font_size: int,
         font_name: str,
         save_individuals: bool,
-        x_label: str = "LoRA Strength",
-        y_label: str = "LoRA Configuration",
-        z_label: str = "Index",
+        **kwargs  # Ignore any optional x_label, y_label, z_label
     ) -> Tuple[torch.Tensor, str]:
         """
         Create a comparison grid from images and labels.
@@ -279,25 +244,35 @@ class GridCompare:
 
     @staticmethod
     def _get_font(font_name: str, font_size: int):
-        """Load font from system."""
+        """Load font from system. Returns None if default should be used."""
+        if font_name == "default":
+            return None  # Use PIL default font
+        
         try:
-            if font_name == "default":
-                return None  # Use default font
-
-            # Try to find the font in common locations
-            font_paths = [
-                f"C:\\Windows\\Fonts\\{font_name}" if os.name == 'nt' else f"/usr/share/fonts/truetype/{font_name}",
-                f"/usr/share/fonts/truetype/dejavu/{font_name}",
-                font_name,  # Try direct path
-            ]
-
-            for font_path in font_paths:
+            # Windows system fonts
+            if os.name == 'nt':
+                font_path = f"C:\\Windows\\Fonts\\{font_name}"
                 if os.path.exists(font_path):
                     return ImageFont.truetype(font_path, font_size)
-
-            # Fallback to default
+            
+            # Linux system fonts
+            linux_paths = [
+                f"/usr/share/fonts/truetype/dejavu/{font_name}",
+                f"/usr/share/fonts/truetype/{font_name}",
+                f"/usr/share/fonts/{font_name}",
+            ]
+            for font_path in linux_paths:
+                if os.path.exists(font_path):
+                    return ImageFont.truetype(font_path, font_size)
+            
+            # Try direct path
+            if os.path.exists(font_name):
+                return ImageFont.truetype(font_name, font_size)
+            
+            # If no font found, use default
             return None
-        except:
+        except Exception as e:
+            print(f"[GridCompare] Font loading failed: {e}, using default")
             return None
 
     def _create_grid_image(

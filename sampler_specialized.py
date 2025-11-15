@@ -23,12 +23,12 @@ def generate_smart_labels(combinations: List[Dict[str, Any]], config: Dict[str, 
     """
     Generate concise labels showing only the varying parameters.
     Uses custom display names if provided, otherwise uses filenames.
+    Works with OR operators where different LoRAs appear in different combos.
     """
     if not combinations:
         return []
     
     labels = []
-    debug_log = config.get("debug_log", False) if config else False
     
     # Check what varies across combinations
     first_combo = combinations[0]
@@ -37,27 +37,25 @@ def generate_smart_labels(combinations: List[Dict[str, Any]], config: Dict[str, 
     
     # Build a map of lora_name -> display_name for all combinations
     lora_display_map = {}
+    all_lora_names = set()
     for combo in combinations:
+        if combo.get('lora_names'):
+            all_lora_names.update(combo['lora_names'])
         if combo.get('lora_names') and combo.get('lora_display_names'):
             for lora_name, display_name in zip(combo['lora_names'], combo['lora_display_names']):
                 lora_display_map[lora_name] = display_name
     
-    # Determine which LoRAs have varying strengths
-    lora_names = first_combo.get('lora_names', []) if first_combo.get('lora_names') else []
+    # Determine which LoRAs have varying strengths (check across ALL LoRAs in all combos)
     lora_varies = {}
-    
-    if lora_names:
-        for idx, lora_name in enumerate(lora_names):
-            # Check if this LoRA's strength varies across combinations
-            strengths = []
-            for combo in combinations:
-                if combo.get('lora_names') and idx < len(combo.get('lora_strengths', [])):
+    for lora_name in all_lora_names:
+        strengths = []
+        for combo in combinations:
+            if combo.get('lora_names') and lora_name in combo['lora_names']:
+                idx = combo['lora_names'].index(lora_name)
+                if idx < len(combo.get('lora_strengths', [])):
                     strengths.append(combo['lora_strengths'][idx])
-            # LoRA varies if not all strengths are the same
-            if len(set(strengths)) > 1:
-                lora_varies[lora_name] = True
-            else:
-                lora_varies[lora_name] = False
+        # LoRA varies if not all strengths are the same
+        lora_varies[lora_name] = len(set(strengths)) > 1 if strengths else False
     
     for combo in combinations:
         label_parts = []
@@ -72,12 +70,12 @@ def generate_smart_labels(combinations: List[Dict[str, Any]], config: Dict[str, 
             vae_filename = combo['vae'].split('\\')[-1] if '\\' in combo['vae'] else combo['vae'].split('/')[-1]
             label_parts.append(f"VAE:{vae_filename}")
         
-        # Only show LoRAs that actually vary
+        # Show LoRAs that vary (always show them with their custom names when they vary)
         if combo.get('lora_names') and combo.get('lora_strengths'):
-            for idx, (lora_name, strength) in enumerate(zip(combo['lora_names'], combo['lora_strengths'])):
-                # Only include if this LoRA's strength varies across combinations
+            for lora_name, strength in zip(combo['lora_names'], combo['lora_strengths']):
+                # Always show LoRA if it varies (regardless of AND/OR)
                 if lora_varies.get(lora_name, False):
-                    # Use display name from the map if available, otherwise use filename
+                    # Use display name from the map, fallback to filename
                     display_name = lora_display_map.get(lora_name)
                     if not display_name:
                         display_name = lora_name.split('\\')[-1] if '\\' in lora_name else lora_name.split('/')[-1]
