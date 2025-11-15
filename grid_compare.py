@@ -174,8 +174,6 @@ class GridCompare:
             font_size=font_size,
             font_name=font_name,
             title=grid_title,
-            x_label=x_label,
-            y_label=y_label,
         )
 
         # Save images
@@ -288,8 +286,6 @@ class GridCompare:
         font_size: int,
         font_name: str,
         title: str = "",
-        x_label: str = "",
-        y_label: str = "",
     ) -> Image.Image:
         """Create a grid image from PIL images."""
 

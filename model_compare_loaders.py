@@ -99,7 +99,7 @@ class ModelCompareLoaders:
         for i in range(10):
             inputs["optional"][f"lora_{i}"] = (
                 ["NONE"] + loras,
-                {"default": "NONE"},
+                {"default": "NONE", "tooltip": "Select a LoRA to compare"},
             )
             inputs["optional"][f"lora_{i}_strengths"] = (
                 "STRING",
@@ -120,7 +120,7 @@ class ModelCompareLoaders:
             # Add combiner after each LoRA (AND = include in all combos, OR = switch between LoRAs)
             inputs["optional"][f"lora_{i}_combiner"] = (
                 ["AND", "OR"],
-                {"default": "AND"},
+                {"default": "AND", "tooltip": "AND: always use, OR: test separately"},
             )
 
         return inputs
@@ -130,6 +130,53 @@ class ModelCompareLoaders:
     RETURN_NAMES = ("config", "base_model", "base_clip", "base_vae")
     FUNCTION = "load_models"
     OUTPUT_NODE = True
+
+    @classmethod
+    def VALIDATE_INPUTS(cls, input_dict):
+        """
+        Custom validation that only checks visible fields.
+        Hidden optional fields should not trigger validation errors.
+        """
+        # Always validate required fields
+        # For optional fields, only validate if they're actively set to something other than NONE or default
+        
+        loras_count = input_dict.get("num_loras", 0)
+        model_vars_count = input_dict.get("num_model_variations", 1)
+        vae_vars_count = input_dict.get("num_vae_variations", 1)
+        
+        # Check model variations if more than 1
+        for i in range(1, model_vars_count):
+            key = f"model_variation_{i}"
+            if key in input_dict and input_dict[key] != "NONE":
+                # This field is visible/set, validate it
+                if input_dict[key] not in cls.INPUT_TYPES()["optional"][key][0]:
+                    return f"Invalid model_variation_{i}: {input_dict[key]}"
+        
+        # Check VAE variations if more than 1
+        for i in range(1, vae_vars_count):
+            key = f"vae_variation_{i}"
+            if key in input_dict and input_dict[key] != "NONE":
+                if input_dict[key] not in cls.INPUT_TYPES()["optional"][key][0]:
+                    return f"Invalid vae_variation_{i}: {input_dict[key]}"
+        
+        # Check LoRAs if selected
+        for i in range(loras_count):
+            lora_key = f"lora_{i}"
+            combiner_key = f"lora_{i}_combiner"
+            
+            # If LoRA is set to something other than NONE, validate it
+            if lora_key in input_dict and input_dict[lora_key] != "NONE":
+                valid_loras = cls.INPUT_TYPES()["optional"][lora_key][0]
+                if input_dict[lora_key] not in valid_loras:
+                    return f"Invalid lora_{i}: {input_dict[lora_key]}"
+                
+                # If LoRA is set, combiner should also be valid
+                if combiner_key in input_dict:
+                    valid_combiners = cls.INPUT_TYPES()["optional"][combiner_key][0]
+                    if input_dict[combiner_key] not in valid_combiners:
+                        return f"Invalid lora_{i}_combiner: {input_dict[combiner_key]}"
+        
+        return True
 
     def load_models(
         self,
