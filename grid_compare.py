@@ -118,6 +118,59 @@ class GridCompare:
         
         return rows, cols
 
+    def _organize_images_by_lora(self, config: Dict[str, Any], pil_images: List[Image.Image], labels: List[str]) -> Dict[str, Any]:
+        """
+        Organize images into a structure grouped by LoRA and strength.
+        Returns a dict with rows of images, where each row represents one LoRA with multiple strengths.
+        """
+        combinations = config.get("combinations", [])
+        
+        # Extract unique LoRA groups and strengths from combinations
+        lora_groups = {}  # lora_name -> list of (strength, image, label)
+        strength_values = set()
+        
+        for idx, combo in enumerate(combinations):
+            lora_names = combo.get("lora_names", [])
+            lora_strengths = combo.get("lora_strengths", [])
+            lora_display_names = combo.get("lora_display_names", lora_names)
+            
+            # Extract LoRA from this combination
+            if lora_names and lora_strengths:
+                # Get the varying LoRA (the one that changes across combinations)
+                for lora_name, strength, display_name in zip(lora_names, lora_strengths, lora_display_names):
+                    # Use display name as the group key
+                    if display_name not in lora_groups:
+                        lora_groups[display_name] = []
+                    
+                    if idx < len(pil_images) and idx < len(labels):
+                        lora_groups[display_name].append({
+                            "strength": strength,
+                            "image": pil_images[idx],
+                            "label": labels[idx],
+                        })
+                    
+                    strength_values.add(strength)
+        
+        # Sort strength values for column headers
+        sorted_strengths = sorted(list(strength_values))
+        
+        # Organize into rows
+        rows = []
+        for lora_name in sorted(lora_groups.keys()):
+            # Sort this LoRA's strengths
+            lora_data = sorted(lora_groups[lora_name], key=lambda x: x["strength"])
+            rows.append({
+                "lora_name": lora_name,
+                "images": lora_data,
+            })
+        
+        return {
+            "rows": rows,
+            "column_headers": sorted_strengths,
+            "num_rows": len(rows),
+            "num_cols": len(sorted_strengths),
+        }
+
     def create_grid(
         self,
         images: torch.Tensor,
@@ -136,7 +189,7 @@ class GridCompare:
     ) -> Tuple[torch.Tensor, str]:
         """
         Create a comparison grid from images and labels.
-        Arranges by LoRA strength (columns) and LoRA names (rows).
+        Organizes images by LoRA rows and strength columns with proper axis labels.
         """
         print(f"[GridCompare] Creating comparison grid...")
         print(f"  Images shape: {images.shape}")
@@ -156,17 +209,12 @@ class GridCompare:
             while len(label_list) < len(pil_images):
                 label_list.append(f"Image {len(label_list)}")
 
-        # Determine grid layout based on which parameters vary
-        rows, cols = self._detect_varying_parameters(config)
+        # Organize images by LoRA and strength
+        organized_data = self._organize_images_by_lora(config, pil_images, label_list)
         
-        print(f"[GridCompare] Grid layout: {rows} rows x {cols} columns ({len(pil_images)} images)")
-
-        # Create grid
-        grid_image = self._create_grid_image(
-            pil_images=pil_images,
-            labels=label_list,
-            rows=rows,
-            cols=cols,
+        # Create grid with proper organization
+        grid_image = self._create_organized_grid(
+            organized_data=organized_data,
             gap_size=gap_size,
             border_color=border_color,
             border_width=border_width,
@@ -273,12 +321,9 @@ class GridCompare:
             print(f"[GridCompare] Font loading failed: {e}, using default")
             return None
 
-    def _create_grid_image(
+    def _create_organized_grid(
         self,
-        pil_images: List[Image.Image],
-        labels: List[str],
-        rows: int,
-        cols: int,
+        organized_data: Dict[str, Any],
         gap_size: int,
         border_color: str,
         border_width: int,
@@ -287,84 +332,92 @@ class GridCompare:
         font_name: str,
         title: str = "",
     ) -> Image.Image:
-        """Create a grid image from PIL images."""
-
-        if not pil_images:
-            return Image.new('RGB', (100, 100), color='white')
-
-        # Get image dimensions
-        img_width, img_height = pil_images[0].size
-
-        # Calculate grid dimensions
-        label_height = font_size + 20
-        label_width = 200
+        """
+        Create a grid image organized by LoRA and strength.
+        Rows represent different LoRAs, columns represent different strengths.
+        Strength values shown as column headers above, LoRA names as row labels on left.
+        """
+        rows = organized_data.get("rows", [])
+        column_headers = organized_data.get("column_headers", [])
         
-        grid_width = cols * (img_width + gap_size) + gap_size + label_width
-        grid_height = rows * (img_height + gap_size) + gap_size + label_height * 2
-
-        if title:
-            grid_height += label_height
-
+        if not rows or not column_headers:
+            return Image.new('RGB', (100, 100), color='white')
+        
+        # Get first image to determine cell dimensions
+        first_image = rows[0]["images"][0]["image"] if rows[0]["images"] else None
+        if not first_image:
+            return Image.new('RGB', (100, 100), color='white')
+        
+        img_width, img_height = first_image.size
+        
+        # Calculate layout dimensions
+        label_height = font_size + 20
+        label_width = 250  # Width for LoRA names on left
+        header_height = label_height + gap_size  # Height for strength headers
+        title_height = label_height + gap_size if title else 0
+        
+        num_rows = len(rows)
+        num_cols = len(column_headers)
+        
+        grid_width = label_width + gap_size + num_cols * (img_width + gap_size) + gap_size
+        grid_height = title_height + header_height + num_rows * (img_height + gap_size) + gap_size
+        
         # Create grid image
         grid_color = self._parse_color("#FFFFFF")
         grid_img = Image.new('RGB', (grid_width, grid_height), color=grid_color)
         draw = ImageDraw.Draw(grid_img)
         font = self._get_font(font_name, font_size)
         label_font = self._get_font(font_name, int(font_size * 0.8))
+        header_font = self._get_font(font_name, int(font_size * 0.9))
         border_rgb = self._parse_color(border_color)
         text_rgb = self._parse_color(text_color)
-
+        
         # Draw title
         current_y = gap_size
         if title:
-            draw.text((grid_width // 2, current_y), title, fill=text_rgb, font=font, anchor="mm")
-            current_y += label_height
-
-        # Draw images and labels
-        current_y = current_y + label_height + gap_size
-        for idx, pil_img in enumerate(pil_images):
-            row = idx // cols
-            col = idx % cols
-
-            x = label_width + gap_size + col * (img_width + gap_size)
-            y = current_y + row * (img_height + gap_size)
-
-            # Draw border
-            if border_width > 0:
-                for i in range(border_width):
-                    draw.rectangle(
-                        [(x - i, y - i), (x + img_width + i, y + img_height + i)],
-                        outline=border_rgb,
-                        width=1,
-                    )
-
-            # Paste image
-            grid_img.paste(pil_img, (x, y))
-
-            # Draw label below image
-            if idx < len(labels):
-                label_text = labels[idx]
-                # Wrap long text
-                max_width = img_width
-                wrapped_lines = []
-                for line in label_text.split('\n'):
-                    while line:
-                        # Try to fit as much as possible
-                        wrapped_lines.append(line[:30])  # Limit to 30 chars per line
-                        line = line[30:]
+            title_x = label_width + (num_cols * (img_width + gap_size)) // 2
+            draw.text((title_x, current_y), title, fill=text_rgb, font=font, anchor="mm")
+            current_y += title_height
+        
+        # Draw column headers (strength values)
+        header_y = current_y
+        for col_idx, strength in enumerate(column_headers):
+            x = label_width + gap_size + col_idx * (img_width + gap_size) + img_width // 2
+            header_text = f"{strength:.2f}"
+            draw.text((x, header_y), header_text, fill=text_rgb, font=header_font, anchor="mm")
+        
+        current_y += header_height
+        
+        # Draw rows with LoRA labels and images
+        for row_idx, row_data in enumerate(rows):
+            lora_name = row_data["lora_name"]
+            images_data = row_data["images"]
+            
+            # Draw LoRA name on left
+            lora_y = current_y + img_height // 2
+            draw.text((gap_size + label_width // 2, lora_y), lora_name, fill=text_rgb, font=label_font, anchor="mm")
+            
+            # Draw images for this row
+            for col_idx, img_data in enumerate(images_data):
+                pil_img = img_data["image"]
                 
-                # Draw each line of the label
-                for line_idx, line in enumerate(wrapped_lines[:2]):  # Limit to 2 lines
-                    label_y = y + img_height + gap_size // 2 + line_idx * (font_size // 2)
-                    draw.text(
-                        (x + img_width // 2, label_y),
-                        line,
-                        fill=text_rgb,
-                        font=label_font,
-                        anchor="mm",
-                    )
-                print(f"[GridCompare] Drew label for image {idx}: {label_text[:50]}")
-
+                x = label_width + gap_size + col_idx * (img_width + gap_size)
+                y = current_y
+                
+                # Draw border
+                if border_width > 0:
+                    for i in range(border_width):
+                        draw.rectangle(
+                            [(x - i, y - i), (x + img_width + i, y + img_height + i)],
+                            outline=border_rgb,
+                            width=1,
+                        )
+                
+                # Paste image
+                grid_img.paste(pil_img, (x, y))
+            
+            current_y += img_height + gap_size
+        
         return grid_img
 
     @staticmethod
