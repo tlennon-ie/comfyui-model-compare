@@ -168,8 +168,10 @@ class SamplerCompareCheckpoint:
                                 lora_path = folder_paths.get_full_path_or_raise("loras", lora_name)
                                 lora_data = comfy.utils.load_torch_file(lora_path)
                                 # Load and apply LoRA - model is required, clip is optional
+                                old_patches = len(combo_model.patches) if hasattr(combo_model, 'patches') else 0
                                 combo_model, _ = comfy.sd.load_lora_for_models(combo_model, None, lora_data, lora_strength, 0)
-                                print(f"[SamplerCompareCheckpoint]   LoRA applied successfully")
+                                new_patches = len(combo_model.patches) if hasattr(combo_model, 'patches') else 0
+                                print(f"[SamplerCompareCheckpoint]   LoRA applied successfully (patches: {old_patches} -> {new_patches})")
                             except Exception as lora_err:
                                 print(f"[SamplerCompareCheckpoint]   Error loading LoRA: {lora_err}")
                     
@@ -467,8 +469,10 @@ class SamplerCompareQwenEdit:
                                 lora_path = folder_paths.get_full_path_or_raise("loras", lora_name)
                                 lora_data = comfy.utils.load_torch_file(lora_path)
                                 # Load and apply LoRA - model is required, clip is optional
+                                old_patches = len(combo_model.patches) if hasattr(combo_model, 'patches') else 0
                                 combo_model, _ = comfy.sd.load_lora_for_models(combo_model, None, lora_data, lora_strength, 0)
-                                print(f"[SamplerCompareQwenEdit]   LoRA applied successfully")
+                                new_patches = len(combo_model.patches) if hasattr(combo_model, 'patches') else 0
+                                print(f"[SamplerCompareQwenEdit]   LoRA applied successfully (patches: {old_patches} -> {new_patches})")
                             except Exception as lora_err:
                                 print(f"[SamplerCompareQwenEdit]   Error loading LoRA: {lora_err}")
                     
@@ -742,8 +746,10 @@ class SamplerCompareDiffusion:
                                 lora_path = folder_paths.get_full_path_or_raise("loras", lora_name)
                                 lora_data = comfy.utils.load_torch_file(lora_path)
                                 # Load and apply LoRA - model is required, clip is optional
+                                old_patches = len(combo_model.patches) if hasattr(combo_model, 'patches') else 0
                                 combo_model, _ = comfy.sd.load_lora_for_models(combo_model, None, lora_data, lora_strength, 0)
-                                print(f"[SamplerCompareDiffusion]   LoRA applied successfully")
+                                new_patches = len(combo_model.patches) if hasattr(combo_model, 'patches') else 0
+                                print(f"[SamplerCompareDiffusion]   LoRA applied successfully (patches: {old_patches} -> {new_patches})")
                             except Exception as lora_err:
                                 print(f"[SamplerCompareDiffusion]   Error loading LoRA: {lora_err}")
                     
