@@ -99,12 +99,14 @@ class SamplerCompareCheckpoint:
                         model_path = folder_paths.get_full_path_or_raise("checkpoints", model_name)
                         sd = comfy.sd.load_checkpoint_guess_config(model_path, output_vae=False, output_clip=False, embedding_directory=None)
                         combo_model = sd[0]
+                        del sd  # Clear the state dict immediately after extraction
                     else:
                         # Load diffusion/U-Net model
                         model_path = folder_paths.get_full_path_or_raise("diffusion_models", model_name)
                         sd = comfy.utils.load_torch_file(model_path)
                         # Use proper diffusion model loading
                         combo_model = comfy.sd.load_diffusion_model_state_dict(sd)
+                        del sd  # Clear the state dict immediately after extraction
                     
                     print(f"[SamplerCompareCheckpoint] Model loaded, type: {type(combo_model)}")
                     
@@ -175,11 +177,14 @@ class SamplerCompareCheckpoint:
                 print(f"[SamplerCompareCheckpoint] Aggressively cleaning up models after combination {i+1}...")
                 try:
                     # Delete all local references to model objects
-                    del combo_model
-                    del sd
-                    del latent_samples
-                    del noise
-                    del samples_out
+                    if 'combo_model' in locals():
+                        del combo_model
+                    if 'latent_samples' in locals():
+                        del latent_samples
+                    if 'noise' in locals():
+                        del noise
+                    if 'samples_out' in locals():
+                        del samples_out
                 except:
                     pass
                 
@@ -387,12 +392,14 @@ class SamplerCompareQwenEdit:
                         model_path = folder_paths.get_full_path_or_raise("checkpoints", model_name)
                         sd = comfy.sd.load_checkpoint_guess_config(model_path, output_vae=False, output_clip=False, embedding_directory=None)
                         combo_model = sd[0]
+                        del sd  # Clear the state dict immediately after extraction
                     else:
                         # Load diffusion/U-Net model
                         model_path = folder_paths.get_full_path_or_raise("diffusion_models", model_name)
                         sd = comfy.utils.load_torch_file(model_path)
                         # Use proper diffusion model loading
                         combo_model = comfy.sd.load_diffusion_model_state_dict(sd)
+                        del sd  # Clear the state dict immediately after extraction
                     
                     print(f"[SamplerCompareQwenEdit] Model loaded, type: {type(combo_model)}")
                     
@@ -463,11 +470,14 @@ class SamplerCompareQwenEdit:
                 print(f"[SamplerCompareQwenEdit] Aggressively cleaning up models after combination {i+1}...")
                 try:
                     # Delete all local references to model objects
-                    del combo_model
-                    del sd
-                    del latent_samples
-                    del noise
-                    del samples_out
+                    if 'combo_model' in locals():
+                        del combo_model
+                    if 'latent_samples' in locals():
+                        del latent_samples
+                    if 'noise' in locals():
+                        del noise
+                    if 'samples_out' in locals():
+                        del samples_out
                 except:
                     pass
                 
@@ -649,12 +659,14 @@ class SamplerCompareDiffusion:
                         model_path = folder_paths.get_full_path_or_raise("checkpoints", model_name)
                         sd = comfy.sd.load_checkpoint_guess_config(model_path, output_vae=False, output_clip=False, embedding_directory=None)
                         combo_model = sd[0]
+                        del sd  # Clear the state dict immediately after extraction
                     else:
                         # Load diffusion/U-Net model
                         model_path = folder_paths.get_full_path_or_raise("diffusion_models", model_name)
                         sd = comfy.utils.load_torch_file(model_path)
                         # Use proper diffusion model loading
                         combo_model = comfy.sd.load_diffusion_model_state_dict(sd)
+                        del sd  # Clear the state dict immediately after extraction
                     
                     print(f"[SamplerCompareDiffusion] Model loaded, type: {type(combo_model)}")
                     
@@ -725,11 +737,14 @@ class SamplerCompareDiffusion:
                 print(f"[SamplerCompareDiffusion] Aggressively cleaning up models after combination {i+1}...")
                 try:
                     # Delete all local references to model objects
-                    del combo_model
-                    del sd
-                    del latent_samples
-                    del noise
-                    del samples_out
+                    if 'combo_model' in locals():
+                        del combo_model
+                    if 'latent_samples' in locals():
+                        del latent_samples
+                    if 'noise' in locals():
+                        del noise
+                    if 'samples_out' in locals():
+                        del samples_out
                 except:
                     pass
                 
