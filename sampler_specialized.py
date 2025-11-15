@@ -75,9 +75,9 @@ class SamplerCompareCheckpoint:
                 print(f"  Model: {combo['model']}, VAE: {combo['vae']}, LoRAs: {combo['lora_names']}")
                 print(f"  LoRA Strengths: {combo['lora_strengths']}")
                 
-                # Perform actual sampling
+                # Perform actual sampling - use same seed for this combination
                 try:
-                    print(f"[SamplerCompareCheckpoint] Sampling with seed {seed + i}, steps {steps}...")
+                    print(f"[SamplerCompareCheckpoint] Sampling with seed {seed}, steps {steps}...")
                     
                     # Load the model for this combination
                     model_name = combo['model']
@@ -98,13 +98,30 @@ class SamplerCompareCheckpoint:
                     
                     print(f"[SamplerCompareCheckpoint] Model loaded, type: {type(combo_model)}")
                     
+                    # Apply LoRAs to the model
+                    if combo.get('lora_names') and combo.get('lora_strengths'):
+                        print(f"[SamplerCompareCheckpoint] Applying {len(combo['lora_names'])} LoRAs")
+                        for lora_name, lora_strength in zip(combo['lora_names'], combo['lora_strengths']):
+                            if lora_strength == 0:
+                                print(f"[SamplerCompareCheckpoint]   Skipping {lora_name} (strength=0)")
+                                continue
+                            print(f"[SamplerCompareCheckpoint]   Loading {lora_name} with strength {lora_strength}")
+                            try:
+                                lora_path = folder_paths.get_full_path_or_raise("loras", lora_name)
+                                lora_data = comfy.utils.load_torch_file(lora_path)
+                                # Load and apply LoRA - model is required, clip is optional
+                                combo_model, _ = comfy.sd.load_lora_for_models(combo_model, None, lora_data, lora_strength, 0)
+                                print(f"[SamplerCompareCheckpoint]   LoRA applied successfully")
+                            except Exception as lora_err:
+                                print(f"[SamplerCompareCheckpoint]   Error loading LoRA: {lora_err}")
+                    
                     # Fix empty latent channels
                     latent_samples = latent["samples"].clone()
                     latent_samples = comfy.sample.fix_empty_latent_channels(combo_model, latent_samples)
                     
-                    # Prepare noise
+                    # Prepare noise - use same seed for this combination
                     batch_inds = latent.get("batch_index", None)
-                    noise = comfy.sample.prepare_noise(latent_samples, seed + i, batch_inds)
+                    noise = comfy.sample.prepare_noise(latent_samples, seed, batch_inds)
                     
                     # Setup callback for progress
                     callback = latent_preview.prepare_callback(combo_model, steps)
@@ -125,7 +142,7 @@ class SamplerCompareCheckpoint:
                         disable_noise=False,
                         callback=callback,
                         disable_pbar=not comfy.utils.PROGRESS_BAR_ENABLED,
-                        seed=seed + i
+                        seed=seed
                     )
                     
                     sampled_latents.append(samples_out)
@@ -300,9 +317,9 @@ class SamplerCompareQwenEdit:
                 print(f"  Model: {combo['model']}, VAE: {combo['vae']}, LoRAs: {combo['lora_names']}")
                 print(f"  LoRA Strengths: {combo['lora_strengths']}")
                 
-                # Perform actual sampling
+                # Perform actual sampling - use same seed for this combination
                 try:
-                    print(f"[SamplerCompareQwenEdit] Sampling with seed {seed + i}, steps {steps}...")
+                    print(f"[SamplerCompareQwenEdit] Sampling with seed {seed}, steps {steps}...")
                     
                     # Load the model for this combination
                     model_name = combo['model']
@@ -323,13 +340,30 @@ class SamplerCompareQwenEdit:
                     
                     print(f"[SamplerCompareQwenEdit] Model loaded, type: {type(combo_model)}")
                     
+                    # Apply LoRAs to the model
+                    if combo.get('lora_names') and combo.get('lora_strengths'):
+                        print(f"[SamplerCompareQwenEdit] Applying {len(combo['lora_names'])} LoRAs")
+                        for lora_name, lora_strength in zip(combo['lora_names'], combo['lora_strengths']):
+                            if lora_strength == 0:
+                                print(f"[SamplerCompareQwenEdit]   Skipping {lora_name} (strength=0)")
+                                continue
+                            print(f"[SamplerCompareQwenEdit]   Loading {lora_name} with strength {lora_strength}")
+                            try:
+                                lora_path = folder_paths.get_full_path_or_raise("loras", lora_name)
+                                lora_data = comfy.utils.load_torch_file(lora_path)
+                                # Load and apply LoRA - model is required, clip is optional
+                                combo_model, _ = comfy.sd.load_lora_for_models(combo_model, None, lora_data, lora_strength, 0)
+                                print(f"[SamplerCompareQwenEdit]   LoRA applied successfully")
+                            except Exception as lora_err:
+                                print(f"[SamplerCompareQwenEdit]   Error loading LoRA: {lora_err}")
+                    
                     # Fix empty latent channels
                     latent_samples = latent["samples"].clone()
                     latent_samples = comfy.sample.fix_empty_latent_channels(combo_model, latent_samples)
                     
-                    # Prepare noise
+                    # Prepare noise - use same seed for this combination
                     batch_inds = latent.get("batch_index", None)
-                    noise = comfy.sample.prepare_noise(latent_samples, seed + i, batch_inds)
+                    noise = comfy.sample.prepare_noise(latent_samples, seed, batch_inds)
                     
                     # Setup callback for progress
                     callback = latent_preview.prepare_callback(combo_model, steps)
@@ -350,7 +384,7 @@ class SamplerCompareQwenEdit:
                         disable_noise=False,
                         callback=callback,
                         disable_pbar=not comfy.utils.PROGRESS_BAR_ENABLED,
-                        seed=seed + i
+                        seed=seed
                     )
                     
                     sampled_latents.append(samples_out)
@@ -499,9 +533,9 @@ class SamplerCompareDiffusion:
                 print(f"  Model: {combo['model']}, VAE: {combo['vae']}, LoRAs: {combo['lora_names']}")
                 print(f"  LoRA Strengths: {combo['lora_strengths']}")
                 
-                # Perform actual sampling
+                # Perform actual sampling - use same seed for this combination
                 try:
-                    print(f"[SamplerCompareDiffusion] Sampling with seed {seed + i}, steps {steps}...")
+                    print(f"[SamplerCompareDiffusion] Sampling with seed {seed}, steps {steps}...")
                     
                     # Load the model for this combination
                     model_name = combo['model']
@@ -522,13 +556,30 @@ class SamplerCompareDiffusion:
                     
                     print(f"[SamplerCompareDiffusion] Model loaded, type: {type(combo_model)}")
                     
+                    # Apply LoRAs to the model
+                    if combo.get('lora_names') and combo.get('lora_strengths'):
+                        print(f"[SamplerCompareDiffusion] Applying {len(combo['lora_names'])} LoRAs")
+                        for lora_name, lora_strength in zip(combo['lora_names'], combo['lora_strengths']):
+                            if lora_strength == 0:
+                                print(f"[SamplerCompareDiffusion]   Skipping {lora_name} (strength=0)")
+                                continue
+                            print(f"[SamplerCompareDiffusion]   Loading {lora_name} with strength {lora_strength}")
+                            try:
+                                lora_path = folder_paths.get_full_path_or_raise("loras", lora_name)
+                                lora_data = comfy.utils.load_torch_file(lora_path)
+                                # Load and apply LoRA - model is required, clip is optional
+                                combo_model, _ = comfy.sd.load_lora_for_models(combo_model, None, lora_data, lora_strength, 0)
+                                print(f"[SamplerCompareDiffusion]   LoRA applied successfully")
+                            except Exception as lora_err:
+                                print(f"[SamplerCompareDiffusion]   Error loading LoRA: {lora_err}")
+                    
                     # Fix empty latent channels
                     latent_samples = latent["samples"].clone()
                     latent_samples = comfy.sample.fix_empty_latent_channels(combo_model, latent_samples)
                     
-                    # Prepare noise
+                    # Prepare noise - use same seed for this combination
                     batch_inds = latent.get("batch_index", None)
-                    noise = comfy.sample.prepare_noise(latent_samples, seed + i, batch_inds)
+                    noise = comfy.sample.prepare_noise(latent_samples, seed, batch_inds)
                     
                     # Setup callback for progress
                     callback = latent_preview.prepare_callback(combo_model, steps)
@@ -549,7 +600,7 @@ class SamplerCompareDiffusion:
                         disable_noise=False,
                         callback=callback,
                         disable_pbar=not comfy.utils.PROGRESS_BAR_ENABLED,
-                        seed=seed + i
+                        seed=seed
                     )
                     
                     sampled_latents.append(samples_out)
