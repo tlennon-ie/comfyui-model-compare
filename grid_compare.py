@@ -121,12 +121,10 @@ class GridCompare:
     def _organize_images_by_lora(self, config: Dict[str, Any], pil_images: List[Image.Image], labels: List[str]) -> Dict[str, Any]:
         """
         Organize images into a structure grouped by LoRA and strength.
-        Only groups by LoRAs that vary across combinations (not static ones like Lightning).
-        Returns a dict with rows of images, where each row represents one varying LoRA with multiple strengths.
+        Parses labels to extract LoRA names and strength values (labels format: "LoRA_Name(strength)")
+        Returns a dict with rows of images, where each row represents one LoRA with multiple strengths.
         """
-        combinations = config.get("combinations", [])
-        
-        if not combinations:
+        if not labels or not pil_images:
             return {
                 "rows": [],
                 "column_headers": [],
@@ -134,85 +132,87 @@ class GridCompare:
                 "num_cols": 0,
             }
         
-        # Find which LoRA positions vary across combinations
-        # A LoRA position is varying if it has different values/names across combos
-        num_loras = len(combinations[0].get("lora_names", []))
-        varying_positions = set()
-        
-        for pos in range(num_loras):
-            values_at_pos = set()
-            for combo in combinations:
-                lora_names = combo.get("lora_names", [])
-                if pos < len(lora_names):
-                    values_at_pos.add(lora_names[pos])
-            
-            # If more than one unique value at this position, it's varying
-            if len(values_at_pos) > 1:
-                varying_positions.add(pos)
-        
-        # If no varying positions, show the first LoRA (or none if only one LoRA per combo)
-        if not varying_positions and num_loras > 0:
-            # Check if all LoRAs are identical across combos
-            # In that case, don't organize by LoRA at all
-            first_loras = set(tuple(c.get("lora_names", [])[:1]) for c in combinations)
-            if len(first_loras) == 1:
-                # All combos have the same LoRA, so we can't organize by LoRA
-                # Fall back to using the second LoRA or just return empty
-                if num_loras > 1:
-                    varying_positions = {1}
-                else:
-                    return {
-                        "rows": [],
-                        "column_headers": [],
-                        "num_rows": 0,
-                        "num_cols": 0,
-                    }
-        
-        print(f"[GridCompare] Found varying LoRA positions: {varying_positions}")
-        
-        # Extract unique LoRA groups and strengths from combinations
-        lora_groups = {}  # (lora_name, lora_display_name) -> list of (strength, image, label)
+        # Parse labels to extract LoRA names and strengths
+        # Label format: "LoRA_Name(strength)" e.g., "Skin 1(0.00)"
+        lora_groups = {}  # lora_name -> list of (strength, image, label, image_index)
         strength_values = set()
-        image_index = 0
         
-        for combo_idx, combo in enumerate(combinations):
-            lora_names = combo.get("lora_names", [])
-            lora_strengths = combo.get("lora_strengths", [])
-            lora_display_names = combo.get("lora_display_names", lora_names)
+        print(f"[GridCompare] Parsing {len(labels)} labels for grid organization")
+        
+        for idx, label in enumerate(labels):
+            if idx >= len(pil_images):
+                break
             
-            # Extract varying LoRAs from this combination
-            for pos in varying_positions:
-                if pos < len(lora_names) and pos < len(lora_strengths) and pos < len(lora_display_names):
-                    lora_name = lora_names[pos]
-                    strength = lora_strengths[pos]
-                    display_name = lora_display_names[pos]
+            # Parse label to extract LoRA name and strength
+            # Format: "LoRA_Name(strength)"
+            if '(' in label and ')' in label:
+                try:
+                    # Split on the last opening parenthesis to handle LoRA names with numbers
+                    last_paren = label.rfind('(')
+                    lora_name = label[:last_paren].strip()
+                    strength_str = label[last_paren+1:-1].strip()  # Remove '(' and ')'
+                    strength = float(strength_str)
                     
-                    # Use (name, display_name) as key to handle similar names with different displays
-                    key = (lora_name, display_name)
-                    if key not in lora_groups:
-                        lora_groups[key] = []
+                    if lora_name not in lora_groups:
+                        lora_groups[lora_name] = []
                     
-                    if combo_idx < len(pil_images) and combo_idx < len(labels):
-                        lora_groups[key].append({
-                            "strength": strength,
-                            "image": pil_images[combo_idx],
-                            "label": labels[combo_idx],
-                        })
+                    lora_groups[lora_name].append({
+                        "strength": strength,
+                        "image": pil_images[idx],
+                        "label": label,
+                        "image_index": idx,
+                    })
                     
                     strength_values.add(strength)
+                    print(f"  [Label {idx}] LoRA: '{lora_name}' | Strength: {strength:.2f}")
+                except (ValueError, IndexError) as e:
+                    print(f"  [Label {idx}] Failed to parse '{label}': {e}")
+                    continue
+            else:
+                print(f"  [Label {idx}] Skipping invalid format: '{label}'")
+        
+        if not lora_groups or not strength_values:
+            print(f"[GridCompare] No valid labels parsed!")
+            return {
+                "rows": [],
+                "column_headers": [],
+                "num_rows": 0,
+                "num_cols": 0,
+            }
         
         # Sort strength values for column headers
         sorted_strengths = sorted(list(strength_values))
+        print(f"[GridCompare] Found {len(lora_groups)} unique LoRAs with strengths: {sorted_strengths}")
         
-        # Organize into rows
+        # Organize into rows, maintaining order of first appearance
         rows = []
-        for lora_name, display_name in sorted(lora_groups.keys()):
-            # Sort this LoRA's strengths
-            lora_data = sorted(lora_groups[(lora_name, display_name)], key=lambda x: x["strength"])
-            rows.append({
-                "lora_name": display_name,  # Use display name for row label
-                "images": lora_data,
-            })
+        lora_order = []  # Track order in which LoRAs first appeared
+        
+        for idx, label in enumerate(labels):
+            if idx >= len(pil_images):
+                break
+            
+            if '(' in label and ')' in label:
+                try:
+                    last_paren = label.rfind('(')
+                    lora_name = label[:last_paren].strip()
+                    
+                    if lora_name not in lora_order:
+                        lora_order.append(lora_name)
+                except:
+                    continue
+        
+        # Create rows in the order LoRAs first appeared
+        for lora_name in lora_order:
+            if lora_name in lora_groups:
+                # Sort this LoRA's strengths
+                lora_data = sorted(lora_groups[lora_name], key=lambda x: x["strength"])
+                rows.append({
+                    "lora_name": lora_name,
+                    "images": lora_data,
+                })
+        
+        print(f"[GridCompare] Organized grid: {len(rows)} rows × {len(sorted_strengths)} columns")
         
         return {
             "rows": rows,
