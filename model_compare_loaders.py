@@ -131,53 +131,6 @@ class ModelCompareLoaders:
     FUNCTION = "load_models"
     OUTPUT_NODE = True
 
-    @classmethod
-    def VALIDATE_INPUTS(cls, input_dict):
-        """
-        Custom validation that only checks visible fields.
-        Hidden optional fields should not trigger validation errors.
-        """
-        # Always validate required fields
-        # For optional fields, only validate if they're actively set to something other than NONE or default
-        
-        loras_count = input_dict.get("num_loras", 0)
-        model_vars_count = input_dict.get("num_model_variations", 1)
-        vae_vars_count = input_dict.get("num_vae_variations", 1)
-        
-        # Check model variations if more than 1
-        for i in range(1, model_vars_count):
-            key = f"model_variation_{i}"
-            if key in input_dict and input_dict[key] != "NONE":
-                # This field is visible/set, validate it
-                if input_dict[key] not in cls.INPUT_TYPES()["optional"][key][0]:
-                    return f"Invalid model_variation_{i}: {input_dict[key]}"
-        
-        # Check VAE variations if more than 1
-        for i in range(1, vae_vars_count):
-            key = f"vae_variation_{i}"
-            if key in input_dict and input_dict[key] != "NONE":
-                if input_dict[key] not in cls.INPUT_TYPES()["optional"][key][0]:
-                    return f"Invalid vae_variation_{i}: {input_dict[key]}"
-        
-        # Check LoRAs if selected
-        for i in range(loras_count):
-            lora_key = f"lora_{i}"
-            combiner_key = f"lora_{i}_combiner"
-            
-            # If LoRA is set to something other than NONE, validate it
-            if lora_key in input_dict and input_dict[lora_key] != "NONE":
-                valid_loras = cls.INPUT_TYPES()["optional"][lora_key][0]
-                if input_dict[lora_key] not in valid_loras:
-                    return f"Invalid lora_{i}: {input_dict[lora_key]}"
-                
-                # If LoRA is set, combiner should also be valid
-                if combiner_key in input_dict:
-                    valid_combiners = cls.INPUT_TYPES()["optional"][combiner_key][0]
-                    if input_dict[combiner_key] not in valid_combiners:
-                        return f"Invalid lora_{i}_combiner: {input_dict[combiner_key]}"
-        
-        return True
-
     def load_models(
         self,
         base_model: str,
@@ -191,6 +144,7 @@ class ModelCompareLoaders:
     ) -> Tuple[Dict[str, Any], Any, Any, Any]:
         """
         Load base models and create configuration for comparisons.
+        Hidden fields with old/invalid data are safely ignored.
         """
         
         # Parse base_model (format: "[Type] filename")
@@ -201,22 +155,30 @@ class ModelCompareLoaders:
         base_vae_obj = self._load_vae(vae)
         base_clip_obj = self._load_clip(clip_model, clip_type)
         
-        # Collect model variations
+        # Collect model variations (only up to num_model_variations)
         model_variations = [{"name": base_model_name, "type": base_model_type}]
         for i in range(1, num_model_variations):
             key = f"model_variation_{i}"
             if key in kwargs and kwargs[key] != "NONE":
-                mtype, mname = self._parse_model_selector(kwargs[key])
-                model_variations.append({"name": mname, "type": mtype})
+                try:
+                    mtype, mname = self._parse_model_selector(kwargs[key])
+                    model_variations.append({"name": mname, "type": mtype})
+                except:
+                    # Silently skip invalid model variations
+                    pass
         
-        # Collect VAE variations
+        # Collect VAE variations (only up to num_vae_variations)
         vae_variations = [vae]
         for i in range(1, num_vae_variations):
             key = f"vae_variation_{i}"
             if key in kwargs and kwargs[key] != "NONE":
-                vae_variations.append(kwargs[key])
+                try:
+                    vae_variations.append(kwargs[key])
+                except:
+                    # Silently skip invalid VAE variations
+                    pass
         
-        # Collect LoRAs with custom labels and combiner operators
+        # Collect LoRAs with custom labels and combiner operators (only up to num_loras)
         loras = []
         lora_combiners = []  # Track AND/OR operators between LoRAs
         
@@ -227,28 +189,32 @@ class ModelCompareLoaders:
             combiner_key = f"lora_{i}_combiner"
             
             if lora_key in kwargs and kwargs[lora_key] != "NONE":
-                lora_name = kwargs[lora_key]
-                strengths_str = kwargs.get(strengths_key, "1.0")
-                custom_label = kwargs.get(customlabel_key, "").strip()
-                combiner = kwargs.get(combiner_key, "AND")  # Default to AND
-                
                 try:
-                    strengths = [
-                        float(s.strip())
-                        for s in strengths_str.split(",")
-                        if s.strip()
-                    ]
-                except ValueError:
-                    strengths = [1.0]
+                    lora_name = kwargs[lora_key]
+                    strengths_str = kwargs.get(strengths_key, "1.0")
+                    custom_label = kwargs.get(customlabel_key, "").strip()
+                    combiner = kwargs.get(combiner_key, "AND")  # Default to AND
+                    
+                    try:
+                        strengths = [
+                            float(s.strip())
+                            for s in strengths_str.split(",")
+                            if s.strip()
+                        ]
+                    except ValueError:
+                        strengths = [1.0]
 
-                loras.append({
-                    "name": lora_name,
-                    "display_name": custom_label if custom_label else lora_name,  # Use custom label if provided
-                    "strengths": strengths,
-                })
-                
-                # Store combiner operator (before the next LoRA)
-                lora_combiners.append(combiner)
+                    loras.append({
+                        "name": lora_name,
+                        "display_name": custom_label if custom_label else lora_name,  # Use custom label if provided
+                        "strengths": strengths,
+                    })
+                    
+                    # Store combiner operator (before the next LoRA)
+                    lora_combiners.append(combiner)
+                except:
+                    # Silently skip invalid LoRAs
+                    pass
         
         # Create config
         config = {
