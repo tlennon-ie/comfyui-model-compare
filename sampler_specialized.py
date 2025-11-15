@@ -24,6 +24,7 @@ def generate_smart_labels(combinations: List[Dict[str, Any]]) -> List[str]:
     Generate concise labels showing only the varying parameters.
     If all combinations have the same model/VAE, only show LoRA differences.
     If multiple models/VAEs vary, show those too.
+    Crucially: Only show LoRAs that actually have varying strengths across combinations.
     """
     if not combinations:
         return []
@@ -34,7 +35,22 @@ def generate_smart_labels(combinations: List[Dict[str, Any]]) -> List[str]:
     first_combo = combinations[0]
     models_vary = any(c['model'] != first_combo['model'] for c in combinations)
     vaes_vary = any(c['vae'] != first_combo['vae'] for c in combinations)
-    loras_vary = any(c['lora_strengths'] != first_combo['lora_strengths'] for c in combinations)
+    
+    # Determine which LoRAs have varying strengths
+    lora_names = first_combo.get('lora_names', []) if first_combo.get('lora_names') else []
+    lora_varies = {}
+    if lora_names:
+        for idx, lora_name in enumerate(lora_names):
+            # Check if this LoRA's strength varies across combinations
+            strengths = []
+            for combo in combinations:
+                if combo.get('lora_names') and idx < len(combo.get('lora_strengths', [])):
+                    strengths.append(combo['lora_strengths'][idx])
+            # LoRA varies if not all strengths are the same
+            if len(set(strengths)) > 1:
+                lora_varies[lora_name] = True
+            else:
+                lora_varies[lora_name] = False
     
     for combo in combinations:
         label_parts = []
@@ -49,11 +65,13 @@ def generate_smart_labels(combinations: List[Dict[str, Any]]) -> List[str]:
             vae_filename = combo['vae'].split('\\')[-1]
             label_parts.append(f"VAE:{vae_filename}")
         
-        # Always show LoRA differences if LoRAs are used
+        # Only show LoRAs that actually vary
         if combo.get('lora_names') and combo.get('lora_strengths'):
             for lora_name, strength in zip(combo['lora_names'], combo['lora_strengths']):
-                lora_filename = lora_name.split('\\')[-1]
-                label_parts.append(f"{lora_filename}({strength:.2f})")
+                # Only include if this LoRA's strength varies across combinations
+                if lora_varies.get(lora_name, False):
+                    lora_filename = lora_name.split('\\')[-1]
+                    label_parts.append(f"{lora_filename}({strength:.2f})")
         
         # If nothing varies, show at least the model name
         if not label_parts:
@@ -113,11 +131,11 @@ class SamplerCompareCheckpoint:
             sampled_latents = []
             labels_list = []
             
-            progress_bar = ProgressBar(min(len(combinations), 4))
+            progress_bar = ProgressBar(len(combinations))
             
-            for i, combo in enumerate(combinations[:4]):  # Limit to 4 for now
+            for i, combo in enumerate(combinations):
                 progress_bar.update(i)
-                print(f"[SamplerCompareCheckpoint] Processing combination {i+1}/{min(len(combinations), 4)}")
+                print(f"[SamplerCompareCheckpoint] Processing combination {i+1}/{len(combinations)}")
                 print(f"  Model: {combo['model']}, VAE: {combo['vae']}, LoRAs: {combo['lora_names']}")
                 print(f"  LoRA Strengths: {combo['lora_strengths']}")
                 
@@ -188,6 +206,13 @@ class SamplerCompareCheckpoint:
                     
                     # Run the actual sampler
                     print(f"[SamplerCompareCheckpoint] Running sampler: {sampler_name}")
+                    
+                    # Log model state before sampling
+                    patches_before = len(combo_model.patches) if hasattr(combo_model, 'patches') else 0
+                    print(f"[SamplerCompareCheckpoint] BEFORE sample call: patches count = {patches_before}")
+                    if hasattr(combo_model, 'patches') and combo_model.patches:
+                        print(f"[SamplerCompareCheckpoint]   Patch keys: {list(combo_model.patches.keys())[:5]}...")
+                    
                     samples_out = comfy.sample.sample(
                         combo_model,
                         noise,
@@ -204,6 +229,10 @@ class SamplerCompareCheckpoint:
                         disable_pbar=not comfy.utils.PROGRESS_BAR_ENABLED,
                         seed=seed
                     )
+                    
+                    # Log model state after sampling
+                    patches_after = len(combo_model.patches) if hasattr(combo_model, 'patches') else 0
+                    print(f"[SamplerCompareCheckpoint] AFTER sample call: patches count = {patches_after}")
                     
                     sampled_latents.append(samples_out)
                     print(f"[SamplerCompareCheckpoint] Sampled latent shape: {samples_out.shape}")
@@ -241,7 +270,7 @@ class SamplerCompareCheckpoint:
                 comfy.model_management.soft_empty_cache()
                 print(f"[SamplerCompareCheckpoint] Cleanup complete, ready for next combination")
             
-            progress_bar.update(min(len(combinations), 4))
+            progress_bar.update(len(combinations))
             
             # Generate smart labels showing only differences
             labels_list = generate_smart_labels(combinations[:len(sampled_latents)])
@@ -414,11 +443,11 @@ class SamplerCompareQwenEdit:
             sampled_latents = []
             labels_list = []
             
-            progress_bar = ProgressBar(min(len(combinations), 4))
+            progress_bar = ProgressBar(len(combinations))
             
-            for i, combo in enumerate(combinations[:4]):  # Limit to 4 for now
+            for i, combo in enumerate(combinations):
                 progress_bar.update(i)
-                print(f"[SamplerCompareQwenEdit] Processing combination {i+1}/{min(len(combinations), 4)}")
+                print(f"[SamplerCompareQwenEdit] Processing combination {i+1}/{len(combinations)}")
                 print(f"  Model: {combo['model']}, VAE: {combo['vae']}, LoRAs: {combo['lora_names']}")
                 print(f"  LoRA Strengths: {combo['lora_strengths']}")
                 
@@ -489,6 +518,13 @@ class SamplerCompareQwenEdit:
                     
                     # Run the actual sampler
                     print(f"[SamplerCompareQwenEdit] Running sampler: {sampler_name}")
+                    
+                    # Log model state before sampling
+                    patches_before = len(combo_model.patches) if hasattr(combo_model, 'patches') else 0
+                    print(f"[SamplerCompareQwenEdit] BEFORE sample call: patches count = {patches_before}")
+                    if hasattr(combo_model, 'patches') and combo_model.patches:
+                        print(f"[SamplerCompareQwenEdit]   Patch keys: {list(combo_model.patches.keys())[:5]}...")
+                    
                     samples_out = comfy.sample.sample(
                         combo_model,
                         noise,
@@ -505,6 +541,10 @@ class SamplerCompareQwenEdit:
                         disable_pbar=not comfy.utils.PROGRESS_BAR_ENABLED,
                         seed=seed
                     )
+                    
+                    # Log model state after sampling
+                    patches_after = len(combo_model.patches) if hasattr(combo_model, 'patches') else 0
+                    print(f"[SamplerCompareQwenEdit] AFTER sample call: patches count = {patches_after}")
                     
                     sampled_latents.append(samples_out)
                     print(f"[SamplerCompareQwenEdit] Sampled latent shape: {samples_out.shape}")
@@ -542,7 +582,7 @@ class SamplerCompareQwenEdit:
                 comfy.model_management.soft_empty_cache()
                 print(f"[SamplerCompareQwenEdit] Cleanup complete, ready for next combination")
             
-            progress_bar.update(min(len(combinations), 4))
+            progress_bar.update(len(combinations))
             
             # Generate smart labels showing only differences
             labels_list = generate_smart_labels(combinations[:len(sampled_latents)])
@@ -691,11 +731,11 @@ class SamplerCompareDiffusion:
             sampled_latents = []
             labels_list = []
             
-            progress_bar = ProgressBar(min(len(combinations), 4))
+            progress_bar = ProgressBar(len(combinations))
             
-            for i, combo in enumerate(combinations[:4]):  # Limit to 4 for now
+            for i, combo in enumerate(combinations):
                 progress_bar.update(i)
-                print(f"[SamplerCompareDiffusion] Processing combination {i+1}/{min(len(combinations), 4)}")
+                print(f"[SamplerCompareDiffusion] Processing combination {i+1}/{len(combinations)}")
                 print(f"  Model: {combo['model']}, VAE: {combo['vae']}, LoRAs: {combo['lora_names']}")
                 print(f"  LoRA Strengths: {combo['lora_strengths']}")
                 
@@ -766,6 +806,13 @@ class SamplerCompareDiffusion:
                     
                     # Run the actual sampler
                     print(f"[SamplerCompareDiffusion] Running sampler: {sampler_name}")
+                    
+                    # Log model state before sampling
+                    patches_before = len(combo_model.patches) if hasattr(combo_model, 'patches') else 0
+                    print(f"[SamplerCompareDiffusion] BEFORE sample call: patches count = {patches_before}")
+                    if hasattr(combo_model, 'patches') and combo_model.patches:
+                        print(f"[SamplerCompareDiffusion]   Patch keys: {list(combo_model.patches.keys())[:5]}...")
+                    
                     samples_out = comfy.sample.sample(
                         combo_model,
                         noise,
@@ -782,6 +829,10 @@ class SamplerCompareDiffusion:
                         disable_pbar=not comfy.utils.PROGRESS_BAR_ENABLED,
                         seed=seed
                     )
+                    
+                    # Log model state after sampling
+                    patches_after = len(combo_model.patches) if hasattr(combo_model, 'patches') else 0
+                    print(f"[SamplerCompareDiffusion] AFTER sample call: patches count = {patches_after}")
                     
                     sampled_latents.append(samples_out)
                     print(f"[SamplerCompareDiffusion] Sampled latent shape: {samples_out.shape}")
@@ -819,7 +870,7 @@ class SamplerCompareDiffusion:
                 comfy.model_management.soft_empty_cache()
                 print(f"[SamplerCompareDiffusion] Cleanup complete, ready for next combination")
             
-            progress_bar.update(min(len(combinations), 4))
+            progress_bar.update(len(combinations))
             
             # Generate smart labels showing only differences
             labels_list = generate_smart_labels(combinations[:len(sampled_latents)])

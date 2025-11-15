@@ -100,6 +100,56 @@ class GridCompare:
     RETURN_NAMES = ("grid_image", "save_path")
     FUNCTION = "create_grid"
     OUTPUT_NODE = True
+    
+    def _detect_varying_parameters(self, config: Dict[str, Any]) -> Tuple[int, int]:
+        """
+        Analyze the config to determine which parameters vary and calculate grid dimensions.
+        
+        Returns:
+            Tuple of (rows, cols) based on varying parameters
+            - Single varying: 1 x N
+            - Two varying: M x N
+            - Three+: square-ish layout
+        """
+        if "combinations" not in config or not config["combinations"]:
+            return 1, 1
+        
+        combinations = config["combinations"]
+        
+        # Check what actually varies
+        first = combinations[0]
+        models_vary = len(set(c['model'] for c in combinations)) > 1
+        vaes_vary = len(set(c['vae'] for c in combinations)) > 1
+        
+        # Check which LoRAs vary in strength
+        lora_varies = {}
+        if first.get('lora_names'):
+            for idx, lora_name in enumerate(first['lora_names']):
+                strengths = []
+                for combo in combinations:
+                    if combo.get('lora_strengths') and idx < len(combo['lora_strengths']):
+                        strengths.append(combo['lora_strengths'][idx])
+                lora_varies[lora_name] = len(set(strengths)) > 1
+        
+        varying_count = sum([models_vary, vaes_vary, any(lora_varies.values())])
+        
+        # Determine grid layout
+        num_combinations = len(combinations)
+        
+        if varying_count == 1:
+            # Single varying parameter - arrange as 1 row x N columns
+            return 1, num_combinations
+        elif varying_count == 2:
+            # Two varying parameters - try to make rectangular grid
+            # Use model/vae as rows, lora strength as columns
+            rows = config['model_variations'].__len__() if models_vary else (len(config['vae_variations']) if vaes_vary else 1)
+            cols = num_combinations // rows if rows > 0 else 1
+            return rows, cols
+        else:
+            # Three+ varying parameters - use square-ish layout
+            cols = max(1, int(num_combinations ** 0.5))
+            rows = (num_combinations + cols - 1) // cols
+            return rows, cols
 
     def create_grid(
         self,
@@ -141,14 +191,10 @@ class GridCompare:
             while len(label_list) < len(pil_images):
                 label_list.append(f"Image {len(label_list)}")
 
-        # Determine grid layout based on image count
-        # For LoRA strength variations: arrange as columns
-        # Assume roughly square grid for multiple LoRAs
-        num_images = len(pil_images)
-        cols = max(1, int(num_images ** 0.5))  # Try square-ish layout
-        rows = (num_images + cols - 1) // cols  # Round up
-
-        print(f"[GridCompare] Grid layout: {rows} rows x {cols} columns ({num_images} images)")
+        # Determine grid layout based on which parameters vary
+        rows, cols = self._detect_varying_parameters(config)
+        
+        print(f"[GridCompare] Grid layout: {rows} rows x {cols} columns ({len(pil_images)} images)")
 
         # Create grid
         grid_image = self._create_grid_image(
