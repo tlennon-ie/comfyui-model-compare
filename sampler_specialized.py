@@ -35,9 +35,15 @@ def generate_smart_labels(combinations: List[Dict[str, Any]], config: Dict[str, 
     models_vary = any(c['model'] != first_combo['model'] for c in combinations)
     vaes_vary = any(c['vae'] != first_combo['vae'] for c in combinations)
     
+    # Build a map of lora_name -> display_name for all combinations
+    lora_display_map = {}
+    for combo in combinations:
+        if combo.get('lora_names') and combo.get('lora_display_names'):
+            for lora_name, display_name in zip(combo['lora_names'], combo['lora_display_names']):
+                lora_display_map[lora_name] = display_name
+    
     # Determine which LoRAs have varying strengths
     lora_names = first_combo.get('lora_names', []) if first_combo.get('lora_names') else []
-    lora_display_names = first_combo.get('lora_display_names', lora_names)
     lora_varies = {}
     
     if lora_names:
@@ -68,14 +74,12 @@ def generate_smart_labels(combinations: List[Dict[str, Any]], config: Dict[str, 
         
         # Only show LoRAs that actually vary
         if combo.get('lora_names') and combo.get('lora_strengths'):
-            combo_display_names = combo.get('lora_display_names', combo.get('lora_names'))
             for idx, (lora_name, strength) in enumerate(zip(combo['lora_names'], combo['lora_strengths'])):
                 # Only include if this LoRA's strength varies across combinations
                 if lora_varies.get(lora_name, False):
-                    # Use display name if available, otherwise use filename
-                    if idx < len(combo_display_names):
-                        display_name = combo_display_names[idx]
-                    else:
+                    # Use display name from the map if available, otherwise use filename
+                    display_name = lora_display_map.get(lora_name)
+                    if not display_name:
                         display_name = lora_name.split('\\')[-1] if '\\' in lora_name else lora_name.split('/')[-1]
                     
                     label_parts.append(f"{display_name}({strength:.2f})")

@@ -78,8 +78,6 @@ class ModelCompareLoaders:
                 }),
                 "debug_log": ("BOOLEAN", {
                     "default": False,
-                    "label_on": "enabled",
-                    "label_off": "disabled",
                 }),
             },
             "optional": {},
@@ -123,11 +121,10 @@ class ModelCompareLoaders:
                 },
             )
             # Add combiner after each LoRA (AND = include in all combos, OR = switch between LoRAs)
-            if i < 9:  # Don't add after the last LoRA
-                inputs["optional"][f"lora_{i}_combiner"] = (
-                    ["AND", "OR"],
-                    {"default": "AND"},
-                )
+            inputs["optional"][f"lora_{i}_combiner"] = (
+                ["AND", "OR"],
+                {"default": "AND"},
+            )
 
         return inputs
 
