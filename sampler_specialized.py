@@ -160,6 +160,23 @@ class SamplerCompareCheckpoint:
                     for lora_name, strength in zip(combo['lora_names'], combo['lora_strengths'] or []):
                         label_parts.append(f"{lora_name.split(chr(92))[-1]}({strength:.2f})")  # Strength in parentheses
                 labels_list.append(" + ".join(label_parts))
+                
+                # Clean up the model to free memory for the next combination
+                print(f"[SamplerCompareCheckpoint] Cleaning up models after combination {i+1}...")
+                try:
+                    if hasattr(combo_model, 'model'):
+                        combo_model.model = None
+                    if hasattr(combo_model, 'model_options'):
+                        combo_model.model_options = None
+                except:
+                    pass
+                
+                # Force garbage collection and model cleanup
+                import gc
+                gc.collect()
+                comfy.model_management.cleanup_models()
+                comfy.model_management.cleanup_models_gc()
+                comfy.model_management.soft_empty_cache()
             
             progress_bar.update(min(len(combinations), 4))
             
@@ -229,10 +246,25 @@ class SamplerCompareCheckpoint:
             else:
                 return (torch.zeros((1, 512, 512, 3)), "Error: No latents generated")
         
+        except KeyboardInterrupt:
+            print("[SamplerCompareCheckpoint] Sampling interrupted by user")
+            import gc
+            gc.collect()
+            comfy.model_management.cleanup_models()
+            comfy.model_management.cleanup_models_gc()
+            comfy.model_management.soft_empty_cache()
+            return (torch.zeros((1, 512, 512, 3)), "Error: Cancelled by user")
+        
         except Exception as e:
             print(f"[SamplerCompareCheckpoint] Error during sampling: {e}")
             import traceback
             traceback.print_exc()
+            # Clean up on error
+            import gc
+            gc.collect()
+            comfy.model_management.cleanup_models()
+            comfy.model_management.cleanup_models_gc()
+            comfy.model_management.soft_empty_cache()
             return (torch.zeros((1, 512, 512, 3)), f"Error: {str(e)}")
 
 
@@ -402,6 +434,23 @@ class SamplerCompareQwenEdit:
                     for lora_name, strength in zip(combo['lora_names'], combo['lora_strengths'] or []):
                         label_parts.append(f"{lora_name.split(chr(92))[-1]}({strength:.2f})")  # Strength in parentheses
                 labels_list.append(" + ".join(label_parts))
+                
+                # Clean up the model to free memory for the next combination
+                print(f"[SamplerCompareQwenEdit] Cleaning up models after combination {i+1}...")
+                try:
+                    if hasattr(combo_model, 'model'):
+                        combo_model.model = None
+                    if hasattr(combo_model, 'model_options'):
+                        combo_model.model_options = None
+                except:
+                    pass
+                
+                # Force garbage collection and model cleanup
+                import gc
+                gc.collect()
+                comfy.model_management.cleanup_models()
+                comfy.model_management.cleanup_models_gc()
+                comfy.model_management.soft_empty_cache()
             
             progress_bar.update(min(len(combinations), 4))
             
@@ -471,10 +520,25 @@ class SamplerCompareQwenEdit:
             else:
                 return (torch.zeros((1, 512, 512, 3)), "Error: No latents generated")
         
+        except KeyboardInterrupt:
+            print("[SamplerCompareQwenEdit] Sampling interrupted by user")
+            import gc
+            gc.collect()
+            comfy.model_management.cleanup_models()
+            comfy.model_management.cleanup_models_gc()
+            comfy.model_management.soft_empty_cache()
+            return (torch.zeros((1, 512, 512, 3)), "Error: Cancelled by user")
+        
         except Exception as e:
             print(f"[SamplerCompareQwenEdit] Error during sampling: {e}")
             import traceback
             traceback.print_exc()
+            # Clean up on error
+            import gc
+            gc.collect()
+            comfy.model_management.cleanup_models()
+            comfy.model_management.cleanup_models_gc()
+            comfy.model_management.soft_empty_cache()
             return (torch.zeros((1, 512, 512, 3)), f"Error: {str(e)}")
 
 
@@ -618,6 +682,23 @@ class SamplerCompareDiffusion:
                     for lora_name, strength in zip(combo['lora_names'], combo['lora_strengths'] or []):
                         label_parts.append(f"{lora_name.split(chr(92))[-1]}({strength:.2f})")  # Strength in parentheses
                 labels_list.append(" + ".join(label_parts))
+                
+                # Clean up the model to free memory for the next combination
+                print(f"[SamplerCompareDiffusion] Cleaning up models after combination {i+1}...")
+                try:
+                    if hasattr(combo_model, 'model'):
+                        combo_model.model = None
+                    if hasattr(combo_model, 'model_options'):
+                        combo_model.model_options = None
+                except:
+                    pass
+                
+                # Force garbage collection and model cleanup
+                import gc
+                gc.collect()
+                comfy.model_management.cleanup_models()
+                comfy.model_management.cleanup_models_gc()
+                comfy.model_management.soft_empty_cache()
             
             progress_bar.update(min(len(combinations), 4))
             
@@ -687,10 +768,25 @@ class SamplerCompareDiffusion:
             else:
                 return (torch.zeros((1, 512, 512, 3)), "Error: No latents generated")
         
+        except KeyboardInterrupt:
+            print("[SamplerCompareDiffusion] Sampling interrupted by user")
+            import gc
+            gc.collect()
+            comfy.model_management.cleanup_models()
+            comfy.model_management.cleanup_models_gc()
+            comfy.model_management.soft_empty_cache()
+            return (torch.zeros((1, 512, 512, 3)), "Error: Cancelled by user")
+        
         except Exception as e:
             print(f"[SamplerCompareDiffusion] Error during sampling: {e}")
             import traceback
             traceback.print_exc()
+            # Clean up on error
+            import gc
+            gc.collect()
+            comfy.model_management.cleanup_models()
+            comfy.model_management.cleanup_models_gc()
+            comfy.model_management.soft_empty_cache()
             return (torch.zeros((1, 512, 512, 3)), f"Error: {str(e)}")
 
 
