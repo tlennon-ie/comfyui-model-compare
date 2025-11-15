@@ -10,8 +10,10 @@ import folder_paths
 import comfy.sd
 import comfy.model_management
 import comfy.utils
+import comfy.sample
 from comfy.utils import ProgressBar
 from comfy.samplers import SAMPLER_NAMES
+import latent_preview
 
 # Get full sampler list from ComfyUI
 AVAILABLE_SAMPLERS = list(SAMPLER_NAMES)
@@ -73,8 +75,48 @@ class SamplerCompareCheckpoint:
                 print(f"  Model: {combo['model']}, VAE: {combo['vae']}, LoRAs: {combo['lora_names']}")
                 print(f"  LoRA Strengths: {combo['lora_strengths']}")
                 
-                # Use the input latent (would be actual sampling in real implementation)
-                sampled_latents.append(latent["samples"])
+                # Perform actual sampling
+                try:
+                    print(f"[SamplerCompareCheckpoint] Sampling with seed {seed}, steps {steps}...")
+                    
+                    # Fix empty latent channels
+                    latent_samples = latent["samples"].clone()
+                    latent_samples = comfy.sample.fix_empty_latent_channels(model, latent_samples)
+                    
+                    # Prepare noise
+                    batch_inds = latent.get("batch_index", None)
+                    noise = comfy.sample.prepare_noise(latent_samples, seed + i, batch_inds)
+                    
+                    # Setup callback for progress
+                    callback = latent_preview.prepare_callback(model, steps)
+                    
+                    # Run the actual sampler
+                    print(f"[SamplerCompareCheckpoint] Running sampler: {sampler_name}")
+                    samples_out = comfy.sample.sample(
+                        model,
+                        noise,
+                        steps,
+                        cfg,
+                        sampler_name,
+                        scheduler,
+                        positive,
+                        negative,
+                        latent_samples,
+                        denoise=1.0,
+                        disable_noise=False,
+                        callback=callback,
+                        disable_pbar=not comfy.utils.PROGRESS_BAR_ENABLED,
+                        seed=seed + i
+                    )
+                    
+                    sampled_latents.append(samples_out)
+                    print(f"[SamplerCompareCheckpoint] Sampled latent shape: {samples_out.shape}")
+                    
+                except Exception as e:
+                    print(f"[SamplerCompareCheckpoint] Sampling failed: {e}, using input latent instead")
+                    import traceback
+                    traceback.print_exc()
+                    sampled_latents.append(latent["samples"])
                 
                 # Build detailed label for this combination
                 label_parts = [combo['model'].split('\\')[-1]]  # Just the filename
@@ -239,8 +281,46 @@ class SamplerCompareQwenEdit:
                 print(f"  Model: {combo['model']}, VAE: {combo['vae']}, LoRAs: {combo['lora_names']}")
                 print(f"  LoRA Strengths: {combo['lora_strengths']}")
                 
-                # Use the input latent (would be actual sampling in real implementation)
-                sampled_latents.append(latent["samples"])
+                # Perform actual sampling
+                try:
+                    print(f"[SamplerCompareQwenEdit] Sampling with seed {seed}, steps {steps}...")
+                    
+                    # Fix empty latent channels
+                    latent_samples = latent["samples"].clone()
+                    latent_samples = comfy.sample.fix_empty_latent_channels(model if model else torch.nn.Module(), latent_samples)
+                    
+                    # Prepare noise
+                    batch_inds = latent.get("batch_index", None)
+                    noise = comfy.sample.prepare_noise(latent_samples, seed + i, batch_inds)
+                    
+                    # Setup callback for progress
+                    callback = latent_preview.prepare_callback(model if model else torch.nn.Module(), steps)
+                    
+                    # Run the actual sampler
+                    print(f"[SamplerCompareQwenEdit] Running sampler: {sampler_name}")
+                    samples_out = comfy.sample.sample(
+                        model if model else torch.nn.Module(),
+                        noise,
+                        steps,
+                        guidance_scale,  # Use guidance_scale as CFG
+                        sampler_name,
+                        "normal",  # scheduler
+                        positive,
+                        negative,
+                        latent_samples,
+                        denoise=1.0,
+                        disable_noise=False,
+                        callback=callback,
+                        disable_pbar=not comfy.utils.PROGRESS_BAR_ENABLED,
+                        seed=seed + i
+                    )
+                    
+                    sampled_latents.append(samples_out)
+                    print(f"[SamplerCompareQwenEdit] Sampled latent shape: {samples_out.shape}")
+                    
+                except Exception as e:
+                    print(f"[SamplerCompareQwenEdit] Sampling failed: {e}, using input latent instead")
+                    sampled_latents.append(latent["samples"])
                 
                 # Build detailed label for this combination
                 label_parts = [combo['model'].split('\\')[-1]]  # Just the filename
@@ -379,8 +459,48 @@ class SamplerCompareDiffusion:
                 print(f"  Model: {combo['model']}, VAE: {combo['vae']}, LoRAs: {combo['lora_names']}")
                 print(f"  LoRA Strengths: {combo['lora_strengths']}")
                 
-                # Use the input latent (would be actual sampling in real implementation)
-                sampled_latents.append(latent["samples"])
+                # Perform actual sampling
+                try:
+                    print(f"[SamplerCompareDiffusion] Sampling with seed {seed}, steps {steps}...")
+                    
+                    # Fix empty latent channels
+                    latent_samples = latent["samples"].clone()
+                    latent_samples = comfy.sample.fix_empty_latent_channels(torch.nn.Module(), latent_samples)
+                    
+                    # Prepare noise
+                    batch_inds = latent.get("batch_index", None)
+                    noise = comfy.sample.prepare_noise(latent_samples, seed + i, batch_inds)
+                    
+                    # Setup callback for progress
+                    callback = latent_preview.prepare_callback(torch.nn.Module(), steps)
+                    
+                    # Run the actual sampler
+                    print(f"[SamplerCompareDiffusion] Running sampler: {sampler_name}")
+                    samples_out = comfy.sample.sample(
+                        torch.nn.Module(),
+                        noise,
+                        steps,
+                        cfg,
+                        sampler_name,
+                        scheduler,
+                        positive,
+                        negative,
+                        latent_samples,
+                        denoise=1.0,
+                        disable_noise=False,
+                        callback=callback,
+                        disable_pbar=not comfy.utils.PROGRESS_BAR_ENABLED,
+                        seed=seed + i
+                    )
+                    
+                    sampled_latents.append(samples_out)
+                    print(f"[SamplerCompareDiffusion] Sampled latent shape: {samples_out.shape}")
+                    
+                except Exception as e:
+                    print(f"[SamplerCompareDiffusion] Sampling failed: {e}, using input latent instead")
+                    import traceback
+                    traceback.print_exc()
+                    sampled_latents.append(latent["samples"])
                 
                 # Build detailed label for this combination
                 label_parts = [combo['model'].split('\\')[-1]]  # Just the filename
