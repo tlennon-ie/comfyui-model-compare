@@ -5,7 +5,7 @@ Each node type handles its specific model architecture with built-in pipeline co
 
 import os
 import torch
-from typing import Dict, List, Tuple, Any
+from typing import Dict, List, Tuple, Any, Optional
 import folder_paths
 import comfy.sd
 import comfy.model_management
@@ -17,6 +17,76 @@ import latent_preview
 
 # Get full sampler list from ComfyUI
 AVAILABLE_SAMPLERS = list(SAMPLER_NAMES)
+
+# Model cache to avoid reloading unchanged models
+class ModelCache:
+    """
+    Caches loaded models to avoid expensive reloads.
+    Only reloads when model path changes.
+    """
+    def __init__(self):
+        self.cached_model = None
+        self.cached_model_path = None
+        self.cached_loras = {}  # path -> applied strengths dict
+    
+    def get_or_load_model(self, model_path: str, model_type: str, debug_log: bool = False) -> Any:
+        """
+        Get cached model or load it if path changed.
+        Returns the model and whether it was newly loaded.
+        """
+        if self.cached_model_path == model_path and self.cached_model is not None:
+            if debug_log:
+                print(f"[ModelCache] Using cached model: {model_path}")
+            return self.cached_model, False
+        
+        if debug_log:
+            print(f"[ModelCache] Loading new model: {model_path}")
+        
+        # Clear old cache
+        if self.cached_model is not None and self.cached_model_path != model_path:
+            if debug_log:
+                print(f"[ModelCache] Clearing cached model: {self.cached_model_path}")
+            self.clear()
+        
+        # Load new model
+        if model_type == "checkpoint":
+            sd = comfy.sd.load_checkpoint_guess_config(model_path, output_vae=False, output_clip=False, embedding_directory=None)
+            self.cached_model = sd[0]
+            del sd
+        else:
+            sd = comfy.utils.load_torch_file(model_path)
+            self.cached_model = comfy.sd.load_diffusion_model_state_dict(sd)
+            del sd
+        
+        self.cached_model_path = model_path
+        self.cached_loras = {}
+        return self.cached_model, True
+    
+    def is_lora_applied(self, lora_path: str, strength: float) -> bool:
+        """Check if a LoRA is already applied at the specified strength."""
+        return self.cached_loras.get(lora_path) == strength
+    
+    def mark_lora_applied(self, lora_path: str, strength: float):
+        """Mark a LoRA as applied."""
+        self.cached_loras[lora_path] = strength
+    
+    def clear(self):
+        """Clear all cached models."""
+        if self.cached_model is not None:
+            del self.cached_model
+        self.cached_model = None
+        self.cached_model_path = None
+        self.cached_loras = {}
+    
+    def soft_reset_loras(self):
+        """
+        Reset LoRA tracking but keep the base model.
+        Use this when moving to a different combination with the same base model.
+        """
+        self.cached_loras = {}
+
+# Global cache instance shared across all samplers
+_model_cache = ModelCache()
 
 
 def generate_smart_labels(combinations: List[Dict[str, Any]], config: Dict[str, Any] = None) -> List[str]:
@@ -153,10 +223,11 @@ class SamplerCompareCheckpoint:
                     print(f"  Model: {combo['model']}, VAE: {combo['vae']}, LoRAs: {combo['lora_names']}")
                     print(f"  LoRA Strengths: {combo['lora_strengths']}")
                 
-                # Pre-cleanup before loading new model
-                if i > 0:
+                # Only unload if we're switching to a different base model
+                current_model_name = combo['model']
+                if i > 0 and _model_cache.cached_model_path and not _model_cache.cached_model_path.endswith(current_model_name):
                     if debug_log:
-                        print(f"[SamplerCompareCheckpoint] Pre-cleanup before loading new model...")
+                        print(f"[SamplerCompareCheckpoint] Base model changed, cleaning up...")
                     import gc
                     gc.collect()
                     comfy.model_management.unload_all_models()
@@ -169,30 +240,18 @@ class SamplerCompareCheckpoint:
                     if debug_log:
                         print(f"[SamplerCompareCheckpoint] Sampling with seed {seed}, steps {steps}...")
                     
-                    # Load the model for this combination
+                    # Load or retrieve cached model
                     model_name = combo['model']
                     model_type = combo['model_type']
-                    if debug_log:
-                        print(f"[SamplerCompareCheckpoint] Loading {model_type} model: {model_name}")
+                    model_path = folder_paths.get_full_path_or_raise("checkpoints", model_name) if model_type == "checkpoint" else folder_paths.get_full_path_or_raise("diffusion_models", model_name)
                     
-                    if model_type == "checkpoint":
-                        # Load checkpoint model
-                        model_path = folder_paths.get_full_path_or_raise("checkpoints", model_name)
-                        sd = comfy.sd.load_checkpoint_guess_config(model_path, output_vae=False, output_clip=False, embedding_directory=None)
-                        combo_model = sd[0]
-                        del sd  # Clear the state dict immediately after extraction
-                    else:
-                        # Load diffusion/U-Net model
-                        model_path = folder_paths.get_full_path_or_raise("diffusion_models", model_name)
-                        sd = comfy.utils.load_torch_file(model_path)
-                        # Use proper diffusion model loading
-                        combo_model = comfy.sd.load_diffusion_model_state_dict(sd)
-                        del sd  # Clear the state dict immediately after extraction
+                    combo_model, was_loaded = _model_cache.get_or_load_model(model_path, model_type, debug_log)
                     
                     if debug_log:
-                        print(f"[SamplerCompareCheckpoint] Model loaded, type: {type(combo_model)}")
+                        cache_status = "newly loaded" if was_loaded else "from cache"
+                        print(f"[SamplerCompareCheckpoint] Model {cache_status}, type: {type(combo_model)}")
                     
-                    # Apply LoRAs to the model
+                    # Apply LoRAs to the model (only if not already applied)
                     if combo.get('lora_names') and combo.get('lora_strengths'):
                         if debug_log:
                             print(f"[SamplerCompareCheckpoint] Applying {len(combo['lora_names'])} LoRAs")
@@ -201,15 +260,24 @@ class SamplerCompareCheckpoint:
                                 if debug_log:
                                     print(f"[SamplerCompareCheckpoint]   Skipping {lora_name} (strength=0)")
                                 continue
+                            
+                            lora_path = folder_paths.get_full_path_or_raise("loras", lora_name)
+                            
+                            # Check if this LoRA is already applied at this strength
+                            if _model_cache.is_lora_applied(lora_path, lora_strength):
+                                if debug_log:
+                                    print(f"[SamplerCompareCheckpoint]   {lora_name} already applied at {lora_strength}")
+                                continue
+                            
                             if debug_log:
                                 print(f"[SamplerCompareCheckpoint]   Loading {lora_name} with strength {lora_strength}")
                             try:
-                                lora_path = folder_paths.get_full_path_or_raise("loras", lora_name)
                                 lora_data = comfy.utils.load_torch_file(lora_path)
                                 # Load and apply LoRA - model is required, clip is optional
                                 old_patches = len(combo_model.patches) if hasattr(combo_model, 'patches') else 0
                                 combo_model, _ = comfy.sd.load_lora_for_models(combo_model, None, lora_data, lora_strength, 0)
                                 new_patches = len(combo_model.patches) if hasattr(combo_model, 'patches') else 0
+                                _model_cache.mark_lora_applied(lora_path, lora_strength)
                                 if debug_log:
                                     print(f"[SamplerCompareCheckpoint]   LoRA applied successfully (patches: {old_patches} -> {new_patches})")
                             except Exception as lora_err:
@@ -275,11 +343,9 @@ class SamplerCompareCheckpoint:
                 
                 # Aggressively clean up the model to prevent crashes when loading the next one
                 if debug_log:
-                    print(f"[SamplerCompareCheckpoint] Cleaning up models...")
+                    print(f"[SamplerCompareCheckpoint] Cleaning up temporary variables...")
                 try:
-                    # Delete all local references to model objects
-                    if 'combo_model' in locals():
-                        del combo_model
+                    # Delete all local references to temporary objects
                     if 'latent_samples' in locals():
                         del latent_samples
                     if 'noise' in locals():
@@ -289,15 +355,27 @@ class SamplerCompareCheckpoint:
                 except:
                     pass
                 
-                # Force aggressive garbage collection and model unloading
-                import gc
-                gc.collect()
-                comfy.model_management.unload_all_models()
-                comfy.model_management.cleanup_models()
-                comfy.model_management.cleanup_models_gc()
-                comfy.model_management.soft_empty_cache()
-                if debug_log:
-                    print(f"[SamplerCompareCheckpoint] Cleanup complete")
+                # Only do aggressive cleanup between different models
+                if i < len(combinations) - 1:
+                    next_model = combinations[i + 1]['model']
+                    if next_model != current_model_name:
+                        if debug_log:
+                            print(f"[SamplerCompareCheckpoint] Next model is different, aggressive cleanup...")
+                        import gc
+                        gc.collect()
+                        comfy.model_management.soft_empty_cache()
+                    elif debug_log:
+                        print(f"[SamplerCompareCheckpoint] Next model is same, skipping aggressive cleanup")
+                else:
+                    # Final cleanup at the end
+                    if debug_log:
+                        print(f"[SamplerCompareCheckpoint] Final cleanup after all images...")
+                    import gc
+                    gc.collect()
+                    comfy.model_management.unload_all_models()
+                    comfy.model_management.cleanup_models()
+                    comfy.model_management.cleanup_models_gc()
+                    comfy.model_management.soft_empty_cache()
             
             progress_bar.update(len(combinations))
             
