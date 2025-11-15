@@ -19,6 +19,52 @@ import latent_preview
 AVAILABLE_SAMPLERS = list(SAMPLER_NAMES)
 
 
+def generate_smart_labels(combinations: List[Dict[str, Any]]) -> List[str]:
+    """
+    Generate concise labels showing only the varying parameters.
+    If all combinations have the same model/VAE, only show LoRA differences.
+    If multiple models/VAEs vary, show those too.
+    """
+    if not combinations:
+        return []
+    
+    labels = []
+    
+    # Check what varies across combinations
+    first_combo = combinations[0]
+    models_vary = any(c['model'] != first_combo['model'] for c in combinations)
+    vaes_vary = any(c['vae'] != first_combo['vae'] for c in combinations)
+    loras_vary = any(c['lora_strengths'] != first_combo['lora_strengths'] for c in combinations)
+    
+    for combo in combinations:
+        label_parts = []
+        
+        # Only show model if it varies
+        if models_vary:
+            model_filename = combo['model'].split('\\')[-1]  # Just filename
+            label_parts.append(model_filename)
+        
+        # Only show VAE if it varies
+        if vaes_vary:
+            vae_filename = combo['vae'].split('\\')[-1]
+            label_parts.append(f"VAE:{vae_filename}")
+        
+        # Always show LoRA differences if LoRAs are used
+        if combo.get('lora_names') and combo.get('lora_strengths'):
+            for lora_name, strength in zip(combo['lora_names'], combo['lora_strengths']):
+                lora_filename = lora_name.split('\\')[-1]
+                label_parts.append(f"{lora_filename}({strength:.2f})")
+        
+        # If nothing varies, show at least the model name
+        if not label_parts:
+            model_filename = combo['model'].split('\\')[-1]
+            label_parts.append(model_filename)
+        
+        labels.append(" + ".join(label_parts))
+    
+    return labels
+
+
 class SamplerCompareCheckpoint:
     """
     Sampler for standard Checkpoint models (SD/SDXL)
@@ -160,18 +206,14 @@ class SamplerCompareCheckpoint:
                     sampled_latents.append(samples_out)
                     print(f"[SamplerCompareCheckpoint] Sampled latent shape: {samples_out.shape}")
                     
+                except comfy.model_management.InterruptProcessingException:
+                    print(f"[SamplerCompareCheckpoint] Sampling interrupted, stopping all combinations")
+                    raise  # Re-raise to stop execution
                 except Exception as e:
                     print(f"[SamplerCompareCheckpoint] Sampling failed: {e}, using input latent instead")
                     import traceback
                     traceback.print_exc()
                     sampled_latents.append(latent["samples"])
-                
-                # Build detailed label for this combination
-                label_parts = [combo['model'].split('\\')[-1]]  # Just the filename
-                if combo['lora_names']:
-                    for lora_name, strength in zip(combo['lora_names'], combo['lora_strengths'] or []):
-                        label_parts.append(f"{lora_name.split(chr(92))[-1]}({strength:.2f})")  # Strength in parentheses
-                labels_list.append(" + ".join(label_parts))
                 
                 # Aggressively clean up the model to prevent crashes when loading the next one
                 print(f"[SamplerCompareCheckpoint] Aggressively cleaning up models after combination {i+1}...")
@@ -199,7 +241,8 @@ class SamplerCompareCheckpoint:
             
             progress_bar.update(min(len(combinations), 4))
             
-            # Stack all sampled latents
+            # Generate smart labels showing only differences
+            labels_list = generate_smart_labels(combinations[:len(sampled_latents)])
             if sampled_latents:
                 stacked_latents = torch.cat(sampled_latents, dim=0)
                 print(f"[SamplerCompareCheckpoint] Stacked latent shape: {stacked_latents.shape}")
@@ -264,6 +307,15 @@ class SamplerCompareCheckpoint:
                 return (output, labels)
             else:
                 return (torch.zeros((1, 512, 512, 3)), "Error: No latents generated")
+        
+        except comfy.model_management.InterruptProcessingException:
+            print("[SamplerCompareCheckpoint] Execution cancelled by user")
+            import gc
+            gc.collect()
+            comfy.model_management.cleanup_models()
+            comfy.model_management.cleanup_models_gc()
+            comfy.model_management.soft_empty_cache()
+            return (torch.zeros((1, 512, 512, 3)), "Error: Cancelled by user")
         
         except KeyboardInterrupt:
             print("[SamplerCompareCheckpoint] Sampling interrupted by user")
@@ -453,18 +505,14 @@ class SamplerCompareQwenEdit:
                     sampled_latents.append(samples_out)
                     print(f"[SamplerCompareQwenEdit] Sampled latent shape: {samples_out.shape}")
                     
+                except comfy.model_management.InterruptProcessingException:
+                    print(f"[SamplerCompareQwenEdit] Sampling interrupted, stopping all combinations")
+                    raise  # Re-raise to stop execution
                 except Exception as e:
                     print(f"[SamplerCompareQwenEdit] Sampling failed: {e}, using input latent instead")
                     import traceback
                     traceback.print_exc()
                     sampled_latents.append(latent["samples"])
-                
-                # Build detailed label for this combination
-                label_parts = [combo['model'].split('\\')[-1]]  # Just the filename
-                if combo['lora_names']:
-                    for lora_name, strength in zip(combo['lora_names'], combo['lora_strengths'] or []):
-                        label_parts.append(f"{lora_name.split(chr(92))[-1]}({strength:.2f})")  # Strength in parentheses
-                labels_list.append(" + ".join(label_parts))
                 
                 # Aggressively clean up the model to prevent crashes when loading the next one
                 print(f"[SamplerCompareQwenEdit] Aggressively cleaning up models after combination {i+1}...")
@@ -491,6 +539,9 @@ class SamplerCompareQwenEdit:
                 print(f"[SamplerCompareQwenEdit] Cleanup complete, ready for next combination")
             
             progress_bar.update(min(len(combinations), 4))
+            
+            # Generate smart labels showing only differences
+            labels_list = generate_smart_labels(combinations[:len(sampled_latents)])
             
             # Stack all sampled latents
             if sampled_latents:
@@ -557,6 +608,15 @@ class SamplerCompareQwenEdit:
                 return (output, labels)
             else:
                 return (torch.zeros((1, 512, 512, 3)), "Error: No latents generated")
+        
+        except comfy.model_management.InterruptProcessingException:
+            print("[SamplerCompareQwenEdit] Execution cancelled by user")
+            import gc
+            gc.collect()
+            comfy.model_management.cleanup_models()
+            comfy.model_management.cleanup_models_gc()
+            comfy.model_management.soft_empty_cache()
+            return (torch.zeros((1, 512, 512, 3)), "Error: Cancelled by user")
         
         except KeyboardInterrupt:
             print("[SamplerCompareQwenEdit] Sampling interrupted by user")
@@ -720,18 +780,14 @@ class SamplerCompareDiffusion:
                     sampled_latents.append(samples_out)
                     print(f"[SamplerCompareDiffusion] Sampled latent shape: {samples_out.shape}")
                     
+                except comfy.model_management.InterruptProcessingException:
+                    print(f"[SamplerCompareDiffusion] Sampling interrupted, stopping all combinations")
+                    raise  # Re-raise to stop execution
                 except Exception as e:
                     print(f"[SamplerCompareDiffusion] Sampling failed: {e}, using input latent instead")
                     import traceback
                     traceback.print_exc()
                     sampled_latents.append(latent["samples"])
-                
-                # Build detailed label for this combination
-                label_parts = [combo['model'].split('\\')[-1]]  # Just the filename
-                if combo['lora_names']:
-                    for lora_name, strength in zip(combo['lora_names'], combo['lora_strengths'] or []):
-                        label_parts.append(f"{lora_name.split(chr(92))[-1]}({strength:.2f})")  # Strength in parentheses
-                labels_list.append(" + ".join(label_parts))
                 
                 # Aggressively clean up the model to prevent crashes when loading the next one
                 print(f"[SamplerCompareDiffusion] Aggressively cleaning up models after combination {i+1}...")
@@ -759,7 +815,8 @@ class SamplerCompareDiffusion:
             
             progress_bar.update(min(len(combinations), 4))
             
-            # Stack all sampled latents
+            # Generate smart labels showing only differences
+            labels_list = generate_smart_labels(combinations[:len(sampled_latents)])
             if sampled_latents:
                 stacked_latents = torch.cat(sampled_latents, dim=0)
                 print(f"[SamplerCompareDiffusion] Stacked latent shape: {stacked_latents.shape}")
@@ -824,6 +881,15 @@ class SamplerCompareDiffusion:
                 return (output, labels)
             else:
                 return (torch.zeros((1, 512, 512, 3)), "Error: No latents generated")
+        
+        except comfy.model_management.InterruptProcessingException:
+            print("[SamplerCompareDiffusion] Execution cancelled by user")
+            import gc
+            gc.collect()
+            comfy.model_management.cleanup_models()
+            comfy.model_management.cleanup_models_gc()
+            comfy.model_management.soft_empty_cache()
+            return (torch.zeros((1, 512, 512, 3)), "Error: Cancelled by user")
         
         except KeyboardInterrupt:
             print("[SamplerCompareDiffusion] Sampling interrupted by user")
