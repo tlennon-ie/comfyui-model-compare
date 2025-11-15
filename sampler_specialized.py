@@ -75,6 +75,16 @@ class SamplerCompareCheckpoint:
                 print(f"  Model: {combo['model']}, VAE: {combo['vae']}, LoRAs: {combo['lora_names']}")
                 print(f"  LoRA Strengths: {combo['lora_strengths']}")
                 
+                # Pre-cleanup before loading new model
+                if i > 0:
+                    print(f"[SamplerCompareCheckpoint] Pre-cleanup before loading new model...")
+                    import gc
+                    gc.collect()
+                    comfy.model_management.unload_all_models()
+                    comfy.model_management.cleanup_models()
+                    comfy.model_management.cleanup_models_gc()
+                    comfy.model_management.soft_empty_cache()
+                
                 # Perform actual sampling - use same seed for this combination
                 try:
                     print(f"[SamplerCompareCheckpoint] Sampling with seed {seed}, steps {steps}...")
@@ -161,22 +171,26 @@ class SamplerCompareCheckpoint:
                         label_parts.append(f"{lora_name.split(chr(92))[-1]}({strength:.2f})")  # Strength in parentheses
                 labels_list.append(" + ".join(label_parts))
                 
-                # Clean up the model to free memory for the next combination
-                print(f"[SamplerCompareCheckpoint] Cleaning up models after combination {i+1}...")
+                # Aggressively clean up the model to prevent crashes when loading the next one
+                print(f"[SamplerCompareCheckpoint] Aggressively cleaning up models after combination {i+1}...")
                 try:
-                    if hasattr(combo_model, 'model'):
-                        combo_model.model = None
-                    if hasattr(combo_model, 'model_options'):
-                        combo_model.model_options = None
+                    # Delete all local references to model objects
+                    del combo_model
+                    del sd
+                    del latent_samples
+                    del noise
+                    del samples_out
                 except:
                     pass
                 
-                # Force garbage collection and model cleanup
+                # Force aggressive garbage collection and model unloading
                 import gc
                 gc.collect()
+                comfy.model_management.unload_all_models()
                 comfy.model_management.cleanup_models()
                 comfy.model_management.cleanup_models_gc()
                 comfy.model_management.soft_empty_cache()
+                print(f"[SamplerCompareCheckpoint] Cleanup complete, ready for next combination")
             
             progress_bar.update(min(len(combinations), 4))
             
@@ -349,6 +363,16 @@ class SamplerCompareQwenEdit:
                 print(f"  Model: {combo['model']}, VAE: {combo['vae']}, LoRAs: {combo['lora_names']}")
                 print(f"  LoRA Strengths: {combo['lora_strengths']}")
                 
+                # Pre-cleanup before loading new model
+                if i > 0:
+                    print(f"[SamplerCompareQwenEdit] Pre-cleanup before loading new model...")
+                    import gc
+                    gc.collect()
+                    comfy.model_management.unload_all_models()
+                    comfy.model_management.cleanup_models()
+                    comfy.model_management.cleanup_models_gc()
+                    comfy.model_management.soft_empty_cache()
+                
                 # Perform actual sampling - use same seed for this combination
                 try:
                     print(f"[SamplerCompareQwenEdit] Sampling with seed {seed}, steps {steps}...")
@@ -435,22 +459,26 @@ class SamplerCompareQwenEdit:
                         label_parts.append(f"{lora_name.split(chr(92))[-1]}({strength:.2f})")  # Strength in parentheses
                 labels_list.append(" + ".join(label_parts))
                 
-                # Clean up the model to free memory for the next combination
-                print(f"[SamplerCompareQwenEdit] Cleaning up models after combination {i+1}...")
+                # Aggressively clean up the model to prevent crashes when loading the next one
+                print(f"[SamplerCompareQwenEdit] Aggressively cleaning up models after combination {i+1}...")
                 try:
-                    if hasattr(combo_model, 'model'):
-                        combo_model.model = None
-                    if hasattr(combo_model, 'model_options'):
-                        combo_model.model_options = None
+                    # Delete all local references to model objects
+                    del combo_model
+                    del sd
+                    del latent_samples
+                    del noise
+                    del samples_out
                 except:
                     pass
                 
-                # Force garbage collection and model cleanup
+                # Force aggressive garbage collection and model unloading
                 import gc
                 gc.collect()
+                comfy.model_management.unload_all_models()
                 comfy.model_management.cleanup_models()
                 comfy.model_management.cleanup_models_gc()
                 comfy.model_management.soft_empty_cache()
+                print(f"[SamplerCompareQwenEdit] Cleanup complete, ready for next combination")
             
             progress_bar.update(min(len(combinations), 4))
             
@@ -597,6 +625,16 @@ class SamplerCompareDiffusion:
                 print(f"  Model: {combo['model']}, VAE: {combo['vae']}, LoRAs: {combo['lora_names']}")
                 print(f"  LoRA Strengths: {combo['lora_strengths']}")
                 
+                # Pre-cleanup before loading new model
+                if i > 0:
+                    print(f"[SamplerCompareDiffusion] Pre-cleanup before loading new model...")
+                    import gc
+                    gc.collect()
+                    comfy.model_management.unload_all_models()
+                    comfy.model_management.cleanup_models()
+                    comfy.model_management.cleanup_models_gc()
+                    comfy.model_management.soft_empty_cache()
+                
                 # Perform actual sampling - use same seed for this combination
                 try:
                     print(f"[SamplerCompareDiffusion] Sampling with seed {seed}, steps {steps}...")
@@ -683,22 +721,26 @@ class SamplerCompareDiffusion:
                         label_parts.append(f"{lora_name.split(chr(92))[-1]}({strength:.2f})")  # Strength in parentheses
                 labels_list.append(" + ".join(label_parts))
                 
-                # Clean up the model to free memory for the next combination
-                print(f"[SamplerCompareDiffusion] Cleaning up models after combination {i+1}...")
+                # Aggressively clean up the model to prevent crashes when loading the next one
+                print(f"[SamplerCompareDiffusion] Aggressively cleaning up models after combination {i+1}...")
                 try:
-                    if hasattr(combo_model, 'model'):
-                        combo_model.model = None
-                    if hasattr(combo_model, 'model_options'):
-                        combo_model.model_options = None
+                    # Delete all local references to model objects
+                    del combo_model
+                    del sd
+                    del latent_samples
+                    del noise
+                    del samples_out
                 except:
                     pass
                 
-                # Force garbage collection and model cleanup
+                # Force aggressive garbage collection and model unloading
                 import gc
                 gc.collect()
+                comfy.model_management.unload_all_models()
                 comfy.model_management.cleanup_models()
                 comfy.model_management.cleanup_models_gc()
                 comfy.model_management.soft_empty_cache()
+                print(f"[SamplerCompareDiffusion] Cleanup complete, ready for next combination")
             
             progress_bar.update(min(len(combinations), 4))
             
