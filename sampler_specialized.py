@@ -77,23 +77,42 @@ class SamplerCompareCheckpoint:
                 
                 # Perform actual sampling
                 try:
-                    print(f"[SamplerCompareCheckpoint] Sampling with seed {seed}, steps {steps}...")
+                    print(f"[SamplerCompareCheckpoint] Sampling with seed {seed + i}, steps {steps}...")
+                    
+                    # Load the model for this combination
+                    model_name = combo['model']
+                    model_type = combo['model_type']
+                    print(f"[SamplerCompareCheckpoint] Loading {model_type} model: {model_name}")
+                    
+                    if model_type == "checkpoint":
+                        # Load checkpoint model
+                        model_path = folder_paths.get_full_path_or_raise("checkpoints", model_name)
+                        sd = comfy.sd.load_checkpoint_guess_config(model_path, output_vae=False, output_clip=False, embedding_directory=None)
+                        combo_model = sd[0]
+                    else:
+                        # Load diffusion/U-Net model
+                        model_path = folder_paths.get_full_path_or_raise("diffusion_models", model_name)
+                        sd = comfy.utils.load_torch_file(model_path)
+                        # Use proper diffusion model loading
+                        combo_model = comfy.sd.load_diffusion_model_state_dict(sd)
+                    
+                    print(f"[SamplerCompareCheckpoint] Model loaded, type: {type(combo_model)}")
                     
                     # Fix empty latent channels
                     latent_samples = latent["samples"].clone()
-                    latent_samples = comfy.sample.fix_empty_latent_channels(model, latent_samples)
+                    latent_samples = comfy.sample.fix_empty_latent_channels(combo_model, latent_samples)
                     
                     # Prepare noise
                     batch_inds = latent.get("batch_index", None)
                     noise = comfy.sample.prepare_noise(latent_samples, seed + i, batch_inds)
                     
                     # Setup callback for progress
-                    callback = latent_preview.prepare_callback(model, steps)
+                    callback = latent_preview.prepare_callback(combo_model, steps)
                     
                     # Run the actual sampler
                     print(f"[SamplerCompareCheckpoint] Running sampler: {sampler_name}")
                     samples_out = comfy.sample.sample(
-                        model,
+                        combo_model,
                         noise,
                         steps,
                         cfg,
@@ -283,23 +302,42 @@ class SamplerCompareQwenEdit:
                 
                 # Perform actual sampling
                 try:
-                    print(f"[SamplerCompareQwenEdit] Sampling with seed {seed}, steps {steps}...")
+                    print(f"[SamplerCompareQwenEdit] Sampling with seed {seed + i}, steps {steps}...")
+                    
+                    # Load the model for this combination
+                    model_name = combo['model']
+                    model_type = combo['model_type']
+                    print(f"[SamplerCompareQwenEdit] Loading {model_type} model: {model_name}")
+                    
+                    if model_type == "checkpoint":
+                        # Load checkpoint model
+                        model_path = folder_paths.get_full_path_or_raise("checkpoints", model_name)
+                        sd = comfy.sd.load_checkpoint_guess_config(model_path, output_vae=False, output_clip=False, embedding_directory=None)
+                        combo_model = sd[0]
+                    else:
+                        # Load diffusion/U-Net model
+                        model_path = folder_paths.get_full_path_or_raise("diffusion_models", model_name)
+                        sd = comfy.utils.load_torch_file(model_path)
+                        # Use proper diffusion model loading
+                        combo_model = comfy.sd.load_diffusion_model_state_dict(sd)
+                    
+                    print(f"[SamplerCompareQwenEdit] Model loaded, type: {type(combo_model)}")
                     
                     # Fix empty latent channels
                     latent_samples = latent["samples"].clone()
-                    latent_samples = comfy.sample.fix_empty_latent_channels(model if model else torch.nn.Module(), latent_samples)
+                    latent_samples = comfy.sample.fix_empty_latent_channels(combo_model, latent_samples)
                     
                     # Prepare noise
                     batch_inds = latent.get("batch_index", None)
                     noise = comfy.sample.prepare_noise(latent_samples, seed + i, batch_inds)
                     
                     # Setup callback for progress
-                    callback = latent_preview.prepare_callback(model if model else torch.nn.Module(), steps)
+                    callback = latent_preview.prepare_callback(combo_model, steps)
                     
                     # Run the actual sampler
                     print(f"[SamplerCompareQwenEdit] Running sampler: {sampler_name}")
                     samples_out = comfy.sample.sample(
-                        model if model else torch.nn.Module(),
+                        combo_model,
                         noise,
                         steps,
                         guidance_scale,  # Use guidance_scale as CFG
@@ -320,6 +358,8 @@ class SamplerCompareQwenEdit:
                     
                 except Exception as e:
                     print(f"[SamplerCompareQwenEdit] Sampling failed: {e}, using input latent instead")
+                    import traceback
+                    traceback.print_exc()
                     sampled_latents.append(latent["samples"])
                 
                 # Build detailed label for this combination
@@ -461,23 +501,42 @@ class SamplerCompareDiffusion:
                 
                 # Perform actual sampling
                 try:
-                    print(f"[SamplerCompareDiffusion] Sampling with seed {seed}, steps {steps}...")
+                    print(f"[SamplerCompareDiffusion] Sampling with seed {seed + i}, steps {steps}...")
+                    
+                    # Load the model for this combination
+                    model_name = combo['model']
+                    model_type = combo['model_type']
+                    print(f"[SamplerCompareDiffusion] Loading {model_type} model: {model_name}")
+                    
+                    if model_type == "checkpoint":
+                        # Load checkpoint model
+                        model_path = folder_paths.get_full_path_or_raise("checkpoints", model_name)
+                        sd = comfy.sd.load_checkpoint_guess_config(model_path, output_vae=False, output_clip=False, embedding_directory=None)
+                        combo_model = sd[0]
+                    else:
+                        # Load diffusion/U-Net model
+                        model_path = folder_paths.get_full_path_or_raise("diffusion_models", model_name)
+                        sd = comfy.utils.load_torch_file(model_path)
+                        # Use proper diffusion model loading
+                        combo_model = comfy.sd.load_diffusion_model_state_dict(sd)
+                    
+                    print(f"[SamplerCompareDiffusion] Model loaded, type: {type(combo_model)}")
                     
                     # Fix empty latent channels
                     latent_samples = latent["samples"].clone()
-                    latent_samples = comfy.sample.fix_empty_latent_channels(torch.nn.Module(), latent_samples)
+                    latent_samples = comfy.sample.fix_empty_latent_channels(combo_model, latent_samples)
                     
                     # Prepare noise
                     batch_inds = latent.get("batch_index", None)
                     noise = comfy.sample.prepare_noise(latent_samples, seed + i, batch_inds)
                     
                     # Setup callback for progress
-                    callback = latent_preview.prepare_callback(torch.nn.Module(), steps)
+                    callback = latent_preview.prepare_callback(combo_model, steps)
                     
                     # Run the actual sampler
                     print(f"[SamplerCompareDiffusion] Running sampler: {sampler_name}")
                     samples_out = comfy.sample.sample(
-                        torch.nn.Module(),
+                        combo_model,
                         noise,
                         steps,
                         cfg,
