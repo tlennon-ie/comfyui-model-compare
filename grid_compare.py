@@ -8,8 +8,12 @@ import os
 import torch
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
+from PIL.PngImagePlugin import PngInfo
 from typing import Dict, List, Tuple, Any
 import folder_paths
+import json
+import comfy.cli_args
+args = comfy.cli_args.args
 
 
 class GridCompare:
@@ -37,49 +41,65 @@ class GridCompare:
                 "save_location": ("STRING", {
                     "default": "model-compare/ComfyUI",
                     "multiline": False,
+                    "tooltip": "Output folder path for saving grid",
                 }),
                 "grid_title": ("STRING", {
                     "default": "Model Comparison Grid",
                     "multiline": False,
+                    "tooltip": "Name for the saved grid file",
                 }),
                 "gap_size": ("INT", {
                     "default": 10,
                     "min": 0,
                     "max": 100,
                     "step": 1,
+                    "tooltip": "Space between images in pixels",
                 }),
                 "border_color": ("STRING", {
                     "default": "#000000",
                     "multiline": False,
-                    "tooltip": "Hex color for borders (e.g., #000000 for black)",
+                    "tooltip": "Hex color for image borders",
                 }),
                 "border_width": ("INT", {
                     "default": 2,
                     "min": 0,
                     "max": 10,
                     "step": 1,
+                    "tooltip": "Border width in pixels",
                 }),
                 "text_color": ("STRING", {
-                    "default": "#FFFFFF",
+                    "default": "#000000",
                     "multiline": False,
                     "tooltip": "Hex color for text labels",
                 }),
                 "font_size": ("INT", {
-                    "default": 48,
+                    "default": 40,
                     "min": 8,
                     "max": 200,
                     "step": 2,
+                    "tooltip": "Label text size in points",
                 }),
                 "font_name": (fonts, {
                     "default": "default",
+                    "tooltip": "Font for text labels",
                 }),
                 "save_individuals": ("BOOLEAN", {
-                    "default": False,
+                    "default": True,
                     "label_on": "yes",
                     "label_off": "no",
+                    "tooltip": "Save individual images in addition to grid",
+                }),
+                "save_metadata": ("BOOLEAN", {
+                    "default": True,
+                    "label_on": "yes",
+                    "label_off": "no",
+                    "tooltip": "Embed workflow metadata in PNG files",
                 }),
             },
-            "optional": {},
+            "hidden": {
+                "prompt": "PROMPT",
+                "extra_pnginfo": "EXTRA_PNGINFO",
+            },
         }
 
     CATEGORY = "image"
@@ -235,6 +255,9 @@ class GridCompare:
         font_size: int,
         font_name: str,
         save_individuals: bool,
+        save_metadata: bool = False,
+        prompt=None,
+        extra_pnginfo=None,
         **kwargs  # Ignore any optional x_label, y_label, z_label
     ) -> Tuple[torch.Tensor, str]:
         """
@@ -245,34 +268,65 @@ class GridCompare:
         print(f"  Images shape: {images.shape}")
         print(f"  Labels input: {repr(labels)}")
         
-        # Parse labels - they come as semicolon-separated from sampler
-        label_list = [l.strip() for l in labels.split(";") if l.strip()]
+        # Parse labels - try newline-separated first, then semicolon for backwards compatibility
+        if "\n" in labels:
+            label_list = [l.strip() for l in labels.split("\n") if l.strip()]
+        else:
+            label_list = [l.strip() for l in labels.split(";") if l.strip()]
         print(f"  Parsed {len(label_list)} labels")
         
         # Convert images to PIL
         pil_images = self._tensor_to_pil_list(images)
         print(f"  Converted {len(pil_images)} images to PIL")
 
-        if len(pil_images) != len(label_list):
-            print(f"[GridCompare] Warning: Image count ({len(pil_images)}) != label count ({len(label_list)})")
-            # Pad labels if needed
-            while len(label_list) < len(pil_images):
-                label_list.append(f"Image {len(label_list)}")
+        # Check if sampling failed (e.g., "No successful samples" returned)
+        if len(pil_images) > 0 and len(label_list) == 1 and label_list[0].lower().startswith("no "):
+            print(f"[GridCompare] Sampling failed: {label_list[0]}")
+            # Create a simple fallback grid showing error message
+            grid_image = self._create_error_grid(
+                images=pil_images,
+                error_message=label_list[0],
+                text_color=text_color,
+                font_size=font_size,
+                font_name=font_name,
+                title=grid_title,
+            )
+        else:
+            if len(pil_images) != len(label_list):
+                print(f"[GridCompare] Warning: Image count ({len(pil_images)}) != label count ({len(label_list)})")
+                # Pad labels if needed
+                while len(label_list) < len(pil_images):
+                    label_list.append(f"Image {len(label_list)}")
 
-        # Organize images by LoRA and strength
-        organized_data = self._organize_images_by_lora(config, pil_images, label_list)
-        
-        # Create grid with proper organization
-        grid_image = self._create_organized_grid(
-            organized_data=organized_data,
-            gap_size=gap_size,
-            border_color=border_color,
-            border_width=border_width,
-            text_color=text_color,
-            font_size=font_size,
-            font_name=font_name,
-            title=grid_title,
-        )
+            # Organize images by LoRA and strength
+            organized_data = self._organize_images_by_lora(config, pil_images, label_list)
+            
+            # Create grid with proper organization
+            if organized_data["num_rows"] == 0 or organized_data["num_cols"] == 0:
+                # Fallback to simple grid if label parsing failed
+                print(f"[GridCompare] Label parsing failed, creating simple grid")
+                grid_image = self._create_simple_grid(
+                    images=pil_images,
+                    labels=label_list,
+                    gap_size=gap_size,
+                    border_color=border_color,
+                    border_width=border_width,
+                    text_color=text_color,
+                    font_size=font_size,
+                    font_name=font_name,
+                    title=grid_title,
+                )
+            else:
+                grid_image = self._create_organized_grid(
+                    organized_data=organized_data,
+                    gap_size=gap_size,
+                    border_color=border_color,
+                    border_width=border_width,
+                    text_color=text_color,
+                    font_size=font_size,
+                    font_name=font_name,
+                    title=grid_title,
+                )
 
         # Save images
         save_path = self._save_images(
@@ -280,6 +334,9 @@ class GridCompare:
             individual_images=pil_images if save_individuals else [],
             save_location=save_location,
             title=grid_title,
+            save_metadata=save_metadata,
+            prompt=prompt,
+            extra_pnginfo=extra_pnginfo,
         )
 
         print(f"[GridCompare] Grid saved to: {save_path}")
@@ -294,27 +351,47 @@ class GridCompare:
         """Convert image tensor to list of PIL images."""
         images_list = []
         
+        # Handle different tensor formats
+        # Expected shapes:
+        # - 4D: [batch, height, width, channels]
+        # - 5D video: [batch, frames, height, width, channels]
+        
+        # If 5D and frames=1, squeeze it down to 4D
+        if images.ndim == 5:
+            if images.shape[1] == 1:  # Single frame video
+                images = images.squeeze(1)  # Remove frame dimension
+            else:
+                # Multiple frames - take first frame of each batch
+                images = images[:, 0, :, :, :]
+        
         for i in range(images.shape[0]):
             img = images[i]
             
             # Handle different tensor formats
-            if img.dtype == torch.float32:
+            if img.dtype == torch.float32 or img.dtype == torch.float16 or img.dtype == torch.bfloat16:
                 # Assume range [0, 1]
-                img_np = (img.numpy() * 255).astype(np.uint8)
+                img_np = (img.cpu().numpy() * 255).astype(np.uint8)
             else:
                 # Direct conversion for uint8 or other types
-                img_np = img.numpy().astype(np.uint8)
+                img_np = img.cpu().numpy().astype(np.uint8)
 
             # Handle different shapes
-            if img_np.shape[-1] == 4:
+            if img_np.ndim == 3 and img_np.shape[-1] == 4:
                 # RGBA
                 pil_img = Image.fromarray(img_np, mode='RGBA')
-            elif img_np.shape[-1] == 3:
+            elif img_np.ndim == 3 and img_np.shape[-1] == 3:
                 # RGB
                 pil_img = Image.fromarray(img_np, mode='RGB')
-            else:
+            elif img_np.ndim == 2:
                 # Grayscale
-                pil_img = Image.fromarray(img_np.squeeze(), mode='L')
+                pil_img = Image.fromarray(img_np, mode='L')
+            else:
+                # Try to squeeze and retry
+                img_np_squeezed = img_np.squeeze()
+                if img_np_squeezed.ndim == 2:
+                    pil_img = Image.fromarray(img_np_squeezed, mode='L')
+                else:
+                    raise ValueError(f"Cannot convert image with shape {img_np.shape} to PIL")
 
             images_list.append(pil_img)
 
@@ -370,6 +447,111 @@ class GridCompare:
         except Exception as e:
             print(f"[GridCompare] Font loading failed: {e}, using default")
             return None
+
+    def _create_error_grid(
+        self,
+        images: List[Image.Image],
+        error_message: str,
+        text_color: str,
+        font_size: int,
+        font_name: str,
+        title: str = "",
+    ) -> Image.Image:
+        """Create a simple grid showing error message when sampling fails."""
+        if not images:
+            return Image.new('RGB', (400, 100), color='white')
+        
+        # Use first image as reference size
+        img_width, img_height = images[0].size
+        
+        # Create simple layout
+        gap = 10
+        header_height = font_size + 20
+        
+        grid_width = img_width + gap * 2
+        grid_height = header_height + img_height + gap * 2
+        
+        grid_img = Image.new('RGB', (grid_width, grid_height), color=(255, 255, 255))
+        draw = ImageDraw.Draw(grid_img)
+        
+        font = self._get_font(font_name, font_size)
+        text_rgb = self._parse_color(text_color)
+        
+        # Draw error message
+        msg_x = grid_width // 2
+        msg_y = header_height // 2
+        draw.text((msg_x, msg_y), error_message, fill=text_rgb, font=font, anchor="mm")
+        
+        # Draw placeholder image
+        if images:
+            grid_img.paste(images[0], (gap, header_height + gap))
+        
+        return grid_img
+
+    def _create_simple_grid(
+        self,
+        images: List[Image.Image],
+        labels: List[str],
+        gap_size: int,
+        border_color: str,
+        border_width: int,
+        text_color: str,
+        font_size: int,
+        font_name: str,
+        title: str = "",
+    ) -> Image.Image:
+        """Create a simple grid when label parsing fails - just rows of images."""
+        if not images:
+            return Image.new('RGB', (100, 100), color='white')
+        
+        # Get image dimensions from first image
+        img_width, img_height = images[0].size
+        
+        # Create a single column grid
+        label_height = font_size + 20
+        title_height = label_height + gap_size if title else 0
+        
+        grid_width = img_width + gap_size * 2
+        grid_height = title_height + len(images) * (img_height + label_height + gap_size) + gap_size
+        
+        grid_img = Image.new('RGB', (grid_width, grid_height), color=(255, 255, 255))
+        draw = ImageDraw.Draw(grid_img)
+        
+        font = self._get_font(font_name, font_size)
+        border_rgb = self._parse_color(border_color)
+        text_rgb = self._parse_color(text_color)
+        
+        current_y = gap_size
+        
+        # Draw title if provided
+        if title:
+            title_x = grid_width // 2
+            draw.text((title_x, current_y), title, fill=text_rgb, font=font, anchor="mm")
+            current_y += title_height
+        
+        # Draw each image with its label
+        for idx, (img, label) in enumerate(zip(images, labels)):
+            x = gap_size
+            y = current_y
+            
+            # Draw label
+            draw.text((x, y), label, fill=text_rgb, font=font)
+            y += label_height
+            
+            # Draw border if specified
+            if border_width > 0:
+                for i in range(border_width):
+                    draw.rectangle(
+                        [(x - i, y - i), (x + img_width + i, y + img_height + i)],
+                        outline=border_rgb,
+                        width=1,
+                    )
+            
+            # Paste image
+            grid_img.paste(img, (x, y))
+            current_y = y + img_height + gap_size
+        
+        return grid_img
 
     def _create_organized_grid(
         self,
@@ -451,7 +633,7 @@ class GridCompare:
         header_y = current_y
         for col_idx, strength in enumerate(column_headers):
             x = label_width + gap_size + col_idx * (img_width + gap_size) + img_width // 2
-            header_text = f"{strength:.2f}"
+            header_text = f"LoRA Strength\n{strength:.2f}"
             draw.text((x, header_y), header_text, fill=text_rgb, font=header_font, anchor="mm")
         
         current_y += header_height
@@ -494,6 +676,9 @@ class GridCompare:
         individual_images: List[Image.Image],
         save_location: str,
         title: str,
+        save_metadata: bool = False,
+        prompt=None,
+        extra_pnginfo=None,
     ) -> str:
         """Save grid and optionally individual images.
         
@@ -501,6 +686,16 @@ class GridCompare:
         - Grid: output/{save_location}/{title}_0.png, {title}_1.png, etc.
         - Individuals: output/{save_location}/{title}_image_{idx}_{counter}.png
         """
+        
+        # Create metadata if requested
+        metadata = None
+        if save_metadata and not args.disable_metadata:
+            metadata = PngInfo()
+            if prompt is not None:
+                metadata.add_text("prompt", json.dumps(prompt))
+            if extra_pnginfo is not None:
+                for key in extra_pnginfo:
+                    metadata.add_text(key, json.dumps(extra_pnginfo[key]))
         
         # Create save directory
         output_dir = folder_paths.get_output_directory()
@@ -515,8 +710,8 @@ class GridCompare:
                 break
             counter += 1
         
-        # Save grid image
-        grid_image.save(grid_path, quality=95)
+        # Save grid image with metadata
+        grid_image.save(grid_path, pnginfo=metadata, compress_level=4)
         print(f"[GridCompare] Saved grid: {grid_path}")
         
         # Save individual images if requested
@@ -529,7 +724,7 @@ class GridCompare:
                         break
                     img_counter += 1
                 
-                img.save(img_path, quality=95)
+                img.save(img_path, pnginfo=metadata, compress_level=4)
             
             print(f"[GridCompare] Saved {len(individual_images)} individual images to {save_dir}")
         

@@ -1,19 +1,19 @@
 # ComfyUI Model Compare
 
-A powerful custom node package for ComfyUI that enables side-by-side comparison of different model configurations. Generate and compare all possible combinations of checkpoints, VAEs, text encoders, and LoRAs in a single workflow with a customizable comparison grid.
+A streamlined custom node package for ComfyUI that enables side-by-side comparison of different model configurations. Test LoRA strength variations, model configurations, and CLIP variations for FLUX and QWEN models in a single workflow with a customizable comparison grid.
 
 ## Features
 
-- 🔄 **Multi-Model Support**: Compare multiple checkpoints, VAEs, text encoders, and LoRAs simultaneously
-- 📊 **Automatic Combination Generation**: Generates all possible combinations of your model selections
-- 🎯 **LoRA Strength Testing**: Test each LoRA at multiple strength values (e.g., 0.0, 0.5, 1.0, 1.5)
-- 🖼️ **Customizable Comparison Grid**: Arrange results in a visual grid with configurable:
-  - Grid dimensions based on model configurations
-  - Custom labels for axes (X, Y, Z)
+- ✨ **FLUX & QWEN Support**: Optimized for both FLUX and QWEN diffusion models
+- 🔄 **Multi-Model Variants**: Compare multiple checkpoints, VAEs, and text encoders (including FLUX clip pairs)
+- 📊 **LoRA Strength Testing**: Test LoRAs at multiple strength values (e.g., 0.0, 0.5, 1.0, 1.5) with proper isolation
+- 🎨 **CLIP Pair Variations**: For FLUX, test different clip_model_a/b pairs; for QWEN, test different single clips
+- 🖼️ **Customizable Comparison Grid**: Arrange results in a visual grid with:
+  - Custom labels for axes
   - Border styling and colors
-  - Text labels and fonts
+  - Text labels and configurable fonts
 - 💾 **Flexible Output**: Save comparison grids and optionally all individual images
-- 🎨 **Full Customization**: Configure fonts, colors, spacing, and layout
+- 🎯 **Fixed Seed Comparison**: Same seed across iterations for isolated variable testing
 
 ## Installation
 
@@ -32,7 +32,7 @@ A powerful custom node package for ComfyUI that enables side-by-side comparison 
    ```bash
    git clone https://github.com/yourusername/comfyui-model-compare.git
    ```
-3. Install dependencies (optional, as most are already in ComfyUI):
+3. Install dependencies:
    ```bash
    cd comfyui-model-compare
    pip install -r requirements.txt
@@ -43,134 +43,147 @@ A powerful custom node package for ComfyUI that enables side-by-side comparison 
 
 ### Basic Workflow
 
-1. **Add Model Compare Loaders Node**
-   - Set number of checkpoints, VAEs, text encoders, and LoRAs you want to compare
-   - This creates the configuration template
+1. **Add ModelCompareLoaders Node**
+   - Configure number of model variations, VAE variations, CLIP variations, and LoRAs
+   - Select specific models and LoRA strength values
+   - For FLUX: set clip_model_a and clip_model_b (paired clips)
+   - For QWEN: set clip_model (single clip)
 
-2. **Add Model Compare Loaders Advanced Node**
-   - Connect the output from the first node
-   - Select specific models from dropdowns for each slot
-   - For LoRAs, specify strength values as comma-separated numbers (e.g., "0.0, 0.5, 1.0")
+2. **Add SamplerCompareSimple Node**
+   - Connect the config and models from ModelCompareLoaders
+   - Set sampling parameters (steps, cfg, sampler, scheduler, seed)
+   - The sampler handles all combinations with fixed seed for comparison isolation
 
-3. **Add Sampler Compare Node**
-   - Connect the config, latent, positive/negative conditioning, and other sampling parameters
-   - Performs sampling across all combinations
-
-4. **Add Grid Compare Node**
-   - Connect sampled images and labels from the Sampler
+3. **Add GridCompare Node**
+   - Connect images and labels from the sampler
    - Configure grid appearance, labels, and save location
-   - Toggle "Save individuals" to also save individual images
+   - Toggle "Save individuals" to also save individual comparison images
 
 ### Example Configuration
 
-**Model Compare Loaders:**
-- Number of Checkpoints: 2
-- Number of VAEs: 2
-- Number of Text Encoders: 0
-- Number of LoRAs: 2
+**ModelCompareLoaders:**
+- Preset: FLUX
+- Diffusion Model: `flux1-dev.safetensors`
+- VAE: `flux_vae.safetensors`
+- Clip Model (FLUX pair): 
+  - clip_model_a: `clip_l.safetensors`
+  - clip_model_b: `t5xxl_fp16.safetensors`
+- Num LoRAs: 2
+- LoRA 1: `AidmaMJ6.safetensors` with strengths `0.0, 1.0`
+- LoRA 2: `UltraReal.safetensors` with combiner `OR`
 
-**Model Compare Loaders Advanced:**
-- Checkpoint 0: `model_v1.safetensors`
-- Checkpoint 1: `model_v2.safetensors`
-- VAE 0: `vae_model_a.safetensors`
-- VAE 1: `vae_model_b.safetensors`
-- LoRA 0: `QwenEdit.safetensors` with strengths `0.0, 0.5, 1.0`
-- LoRA 1: `DetailBoost.safetensors` with strengths `0.0, 0.75, 1.0`
+This creates **4 combinations** (2 LoRA groups with 2 strength options each).
 
-This creates **2 × 2 × (3 × 3) = 36 combinations** to sample and compare.
+## Understanding the Nodes
 
-## Node Reference
+### ModelCompareLoaders
+Loads models and generates all comparison combinations.
 
-### Model Compare Loaders
-Configuration node that defines how many of each model type will be compared.
-
-**Inputs:**
-- `num_checkpoints`: Number of base models to compare (0-10)
-- `num_vaes`: Number of VAE models to compare (0-5)
-- `num_text_encoders`: Number of text encoders to compare (0-5)
+**Key Inputs:**
+- `preset`: "FLUX" or "QWEN" (determines CLIP loading strategy)
+- `diffusion_model`: The base diffusion model
+- `vae`: The VAE encoder/decoder
+- `clip_model`: For QWEN, the single clip model
+- `clip_model_a`, `clip_model_b`: For FLUX, the paired clip models
+- `num_clip_variations`: How many clip variations to test (1-5)
 - `num_loras`: Number of LoRAs to compare (0-10)
 
-**Output:**
-- `config`: Configuration dictionary for downstream nodes
-
-### Model Compare Loaders Advanced
-Detailed configuration node where you select specific models and LoRA strengths.
-
-**Inputs:**
-- `config`: From Model Compare Loaders
-- `checkpoint_0 to checkpoint_9`: Specific checkpoint selections
-- `vae_0 to vae_4`: Specific VAE selections
-- `text_encoder_0 to text_encoder_4`: Specific text encoder selections
-- `lora_0 to lora_9`: Specific LoRA selections
-- `lora_0_strengths to lora_9_strengths`: Comma-separated strength values for each LoRA
+**CLIP Variations:**
+- **FLUX**: Collect multiple clip_model_a/b pairs for testing (e.g., different T5XXL + CLIP-L combinations)
+- **QWEN**: Collect multiple single clip models for testing
 
 **Output:**
-- `config`: Updated configuration with all model selections
+- `config`: Configuration with all combinations
+- `base_model`: The diffusion model
+- `base_clip`: The base CLIP model (for text encoding)
+- `base_vae`: The VAE model
 
-### Sampler Compare
-Performs sampling across all model combinations.
+### SamplerCompareSimple
+Simplified sampler that processes all combinations with standard KSampler logic.
 
-**Inputs:**
-- `config`: From Model Compare Loaders Advanced
-- `latent`: Initial latent tensor
-- `steps`: Number of sampling steps
-- `cfg`: CFG scale value
-- `sampler_name`: Sampling algorithm (euler, dpmpp_2m_sde, etc.)
-- `scheduler`: Noise scheduler
-- `seed`: Base seed (incremented for each combination)
-- `positive`: Positive conditioning
-- `negative`: Negative conditioning
-- `model` (optional): Base model (used if no checkpoint in combination)
-- `clip` (optional): Base CLIP model
-- `vae` (optional): Base VAE
-
-**Output:**
-- `images`: Concatenated sampled images
-- `labels`: String labels for each image
-
-### Grid Compare
-Creates a customizable comparison grid from sampled images.
-
-**Inputs:**
-- `images`: From Sampler Compare
-- `labels`: Image labels from Sampler Compare
-- `config`: From Model Compare Loaders Advanced
-- `save_location`: Directory to save results (default: `model-compare/ComfyUI`)
-- `grid_title`: Title for the comparison grid
-- `gap_size`: Pixel spacing between grid cells (0-100)
-- `border_color`: Hex color for cell borders (e.g., `#000000`)
-- `border_width`: Border thickness in pixels (0-10)
-- `text_color`: Hex color for labels (e.g., `#FFFFFF`)
-- `font_size`: Font size for labels (8-100)
-- `font_name`: System font to use (default, or .ttf filename)
-- `save_individuals`: Toggle to save individual images alongside grid
-- `x_label`: Label for horizontal axis (e.g., "Checkpoint")
-- `y_label`: Label for vertical axis (e.g., "LoRA Configuration")
-- `z_label`: Label for depth axis (e.g., "Index")
+**Key Inputs:**
+- `config`: From ModelCompareLoaders
+- `model`: The diffusion model
+- `positive`: Text conditioning (positive)
+- `negative`: Text conditioning (negative)
+- `latent`: Initial latent noise
+- `steps`, `cfg`: Sampling parameters
+- `sampler_name`, `scheduler`: Sampling algorithm settings
+- `seed`: Base seed (same across all combinations for isolation)
+- `denoise`: Denoising strength
 
 **Output:**
-- `grid_image`: The comparison grid as an image tensor
+- `images`: All generated images concatenated
+- `labels`: Labels for each image
+
+**How It Works:**
+- For each combination: Clone model → Apply LoRAs → Sample with fixed seed → Decode
+- LoRAs with strength 0.0 are skipped (no effect)
+- Each combination uses the same seed to isolate variables
+- CLIP variations are tracked but conditioning is pre-encoded
+
+### GridCompare
+Creates a customizable visual comparison grid.
+
+**Key Inputs:**
+- `images`: From SamplerCompareSimple
+- `labels`: Labels from SamplerCompareSimple
+- `config`: From ModelCompareLoaders
+- `save_location`: Where to save results
+- `grid_title`: Title for the grid
+- `gap_size`: Spacing between images
+- `border_color`: Cell border color (hex: #RRGGBB)
+- `border_width`: Border thickness in pixels
+- `text_color`: Label text color
+- `font_size`: Label font size
+- `x_label`, `y_label`, `z_label`: Axis labels
+
+**Output:**
+- `grid_image`: The comparison grid
 - `save_path`: Directory where images were saved
 
 ## LoRA Strength Format
 
-LoRA strengths are specified as comma-separated values. Examples:
+Specify strengths as comma-separated values:
 
 ```
-Single value:
-0.5
-
-Multiple values:
-0.0, 0.5, 1.0, 1.5
-
-Range with step:
-0.0, 0.25, 0.5, 0.75, 1.0
-
-Precise values:
-0.125, 0.375, 0.625, 0.875
+0.0              # No effect (skipped in sampling)
+0.5              # Single strength
+0.0, 0.5, 1.0    # Multiple strengths (creates Cartesian product)
 ```
 
-Each value is tested independently, creating Cartesian products with other LoRAs.
+### LoRA Combiners (AND/OR)
+
+- **AND**: Include in all combinations with other LoRAs
+- **OR**: Test this LoRA group separately from others
+
+Example:
+- LoRA 1 (Style): strengths [0.0, 1.0], combiner AND
+- LoRA 2 (Detail): strengths [0.0, 1.0], combiner OR
+
+Creates: (Style 0.0 + Detail 0.0) | (Style 0.0 + Detail 1.0) | (Style 1.0 + Detail 0.0) | (Style 1.0 + Detail 1.0)
+
+## FLUX vs QWEN
+
+### FLUX Configuration
+- **CLIP Setup**: Requires TWO models: `clip_model_a` (CLIP-L) and `clip_model_b` (T5XXL)
+- **CLIP Variations**: Can test different clip_a/b pairs (e.g., different T5XXL versions)
+- **Example**: 
+  ```
+  clip_model_a: clip_l.safetensors
+  clip_model_b: t5xxl_fp16.safetensors
+  clip_model_1_a: clip_l.safetensors
+  clip_model_1_b: t5xxl_nf4.safetensors  (different quantization)
+  ```
+
+### QWEN Configuration
+- **CLIP Setup**: Single model: `clip_model`
+- **CLIP Variations**: Can test different single clips
+- **Example**:
+  ```
+  clip_model: qwen_vl_model.safetensors
+  clip_model_1: qwen_vl_model_v2.safetensors
+  ```
 
 ## Output Structure
 
@@ -180,8 +193,9 @@ Results are saved in a timestamped directory:
 output/
 └── model-compare/
     └── ComfyUI/
-        └── Model Comparison Grid_20240115_143022/
-            ├── grid.png                    # Main comparison grid
+        └── model_compare_grid_20250119_143022/
+            ├── comparison_grid.png         # Main grid
+            ├── metadata.json               # Configuration info
             └── individual/                 # (if save_individuals=true)
                 ├── image_0000.png
                 ├── image_0001.png
@@ -190,59 +204,60 @@ output/
 
 ## Tips & Tricks
 
-### Performance Optimization
-- Start with fewer combinations to test your settings
-- Use lower resolution for quick iterations
-- Increase resolution in final comparisons
+### Performance
+- Start with few LoRAs and strengths to iterate quickly
+- Use lower resolution/shorter steps for testing
+- Increase for final comparisons
 
-### Grid Layout
-- Grid dimensions are automatically calculated from configurations
-- Number of columns = number of checkpoints
-- Number of rows = total images ÷ number of checkpoints
+### Grid Dimensions
+- Columns = Number of model variations
+- Rows = Number of LoRA group combinations
+- Larger grids are automatically arranged
+
+### CLIP Variations for FLUX
+- Test different T5XXL versions (full vs quantized)
+- Test different CLIP-L versions
+- Test different tokenizers/embeddings
 
 ### Custom Fonts
-- Use True Type Font (.ttf) filenames
-- Place fonts in Windows: `C:\Windows\Fonts`
-- Or specify full path to font file
+- Use .ttf files from your system
+- Windows: Files in `C:\Windows\Fonts` can be referenced by name
+- Or specify full path: `C:\path\to\font.ttf`
 
-### Color Formatting
-- Use hex color codes: `#RRGGBB` (e.g., `#FF0000` for red)
-- Valid examples: `#000000` (black), `#FFFFFF` (white), `#FF6600` (orange)
+### Color Tips
+- Use hex colors: `#RRGGBB`
+- Examples: `#000000` (black), `#FFFFFF` (white), `#FF6600` (orange)
 
 ## Troubleshooting
 
+### "CLIP missing" warning appears
+This is a false alarm in ComfyUI when loading FLUX clip pairs. The CLIP is loading correctly even with the warning. You'll see "Requested to load FluxClipModel_" and "loaded completely" confirming it's working.
+
 ### No images generated
-- Verify all model paths are correct
-- Check that latent input dimensions match your model
-- Ensure positive/negative conditioning inputs are valid
+- Check that all model paths are correct and files exist
+- Verify latent dimensions match your model
+- Ensure positive/negative conditioning are valid
+- Check ComfyUI console for error messages
+
+### Wrong number of combinations
+- Each variation type multiplies combinations: model × vae × clip_variation × lora_group
+- Verify `num_loras` matches the LoRAs you've configured
+- Check that LoRA strengths are valid numbers
 
 ### Grid has wrong dimensions
-- Verify the number of checkpoints matches expected columns
-- Check that all combinations completed successfully
+- Grid rows = number of LoRA groups (OR splits create groups)
+- Grid columns = total combinations ÷ rows
+- Verify your AND/OR combiner settings
 
 ### Labels are cut off
-- Increase `gap_size` or `font_size`
-- Adjust grid title length
-
-### Fonts not loading
-- Use the full path to the .ttf file
-- Ensure font file exists on your system
-- Fall back to "default" system font
-
-## Advanced Usage
-
-### Combining with Other Nodes
-Connect output from Grid Compare to save nodes:
-- Use with VHS (Video Helper Suite) for animated comparisons
-- Connect to Image Composite for additional processing
-- Export to external tools for batch processing
-
-### Batch Processing
-Create multiple comparison workflows in sequence for different model types or prompt variations.
+- Increase `gap_size` between images
+- Reduce `font_size`
+- Shorten custom labels
+- Make grid larger (higher resolution input)
 
 ## Requirements
 
-- ComfyUI (latest master branch recommended)
+- ComfyUI (latest master recommended)
 - Python 3.8+
 - PyTorch (included with ComfyUI)
 - Pillow (included with ComfyUI)
@@ -250,39 +265,27 @@ Create multiple comparison workflows in sequence for different model types or pr
 
 ## License
 
-This project is licensed under the MIT License - see LICENSE file for details.
+MIT License - see LICENSE file for details.
 
 ## Contributing
 
-Contributions are welcome! Please feel free to submit issues and pull requests.
-
-## Support
-
-For issues, questions, or suggestions:
-1. Check the [Troubleshooting](#troubleshooting) section
-2. Search existing issues on the repository
-3. Create a new issue with:
-   - Your ComfyUI version
-   - Your workflow JSON
-   - Error messages from the console
-   - Steps to reproduce
-
-## Roadmap
-
-Planned features for future releases:
-- [ ] Video comparison support
-- [ ] Interactive web UI for result browsing
-- [ ] Advanced statistical analysis
-- [ ] Diff/similarity scoring between comparisons
-- [ ] Preset configurations library
-- [ ] Batch workflow support
+Contributions welcome! Please submit issues and pull requests.
 
 ## Changelog
 
-### Version 1.0.0 (Initial Release)
-- Model Compare Loaders node
-- Model Compare Loaders Advanced node
-- Sampler Compare node
-- Grid Compare node
-- Basic customization options
-- Individual and grid image saving
+### Version 3.0.0 (Current)
+- Complete sampler rewrite - simplified architecture matching standard KSampler
+- FLUX clip pair variation support
+- Fixed LoRA strength application (0.0 properly skips LoRA)
+- Proper model cloning for each iteration
+- Fixed seed behavior for accurate comparison isolation
+- Removed redundant sampler implementations
+- Enhanced documentation for FLUX vs QWEN
+
+### Version 2.x
+- Added FLUX preset support
+- Improved grid visualization
+- Custom label support
+
+### Version 1.0.0
+- Initial release with basic model comparison

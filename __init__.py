@@ -1,15 +1,13 @@
 """
-ComfyUI Model Compare
-A comprehensive custom node for comparing different model configurations side-by-side.
+ComfyUI Model Compare - Simple Edition
+A streamlined custom node for comparing different model configurations side-by-side.
 
 Features:
-- Load and configure multiple checkpoints, VAEs, text encoders, and LoRAs
-- Support for diffusion models (standalone U-Net files)
-- Model-specific pipelines for specialized architectures
-- Generate all combinations of model configurations
-- Sample and compare different configurations in a single workflow
-- Create customizable comparison grids with labels and styling
-- Save individual results and comparison grids
+- Load and configure models with multiple LoRA combinations
+- Support for FLUX and QWEN diffusion models
+- Generate comparison grids with multiple LoRA strengths
+- Create customizable comparison grids with labels
+- Histogram analysis for image comparison
 
 Author: Your Name
 Repository: https://github.com/yourusername/comfyui-model-compare
@@ -18,31 +16,31 @@ License: MIT
 
 from .model_compare_loaders import NODE_CLASS_MAPPINGS as LOADER_MAPPINGS
 from .model_compare_loaders import NODE_DISPLAY_NAME_MAPPINGS as LOADER_DISPLAYS
-from .sampler_compare import NODE_CLASS_MAPPINGS as SAMPLER_MAPPINGS
-from .sampler_compare import NODE_DISPLAY_NAME_MAPPINGS as SAMPLER_DISPLAYS
-from .sampler_specialized import NODE_CLASS_MAPPINGS as SPECIALIZED_MAPPINGS
-from .sampler_specialized import NODE_DISPLAY_NAME_MAPPINGS as SPECIALIZED_DISPLAYS
+from .sampler_compare_simple import NODE_CLASS_MAPPINGS as SAMPLER_SIMPLE_MAPPINGS
+from .sampler_compare_simple import NODE_DISPLAY_NAME_MAPPINGS as SAMPLER_SIMPLE_DISPLAYS
 from .grid_compare import NODE_CLASS_MAPPINGS as GRID_MAPPINGS
 from .grid_compare import NODE_DISPLAY_NAME_MAPPINGS as GRID_DISPLAYS
+from .histogram_analyzer import NODE_CLASS_MAPPINGS as HISTOGRAM_MAPPINGS
+from .histogram_analyzer import NODE_DISPLAY_NAME_MAPPINGS as HISTOGRAM_DISPLAYS
 
-# Merge all node mappings
+# Merge all node mappings - only include the active nodes
 NODE_CLASS_MAPPINGS = {
     **LOADER_MAPPINGS,
-    **SAMPLER_MAPPINGS,
-    **SPECIALIZED_MAPPINGS,
+    **SAMPLER_SIMPLE_MAPPINGS,
     **GRID_MAPPINGS,
+    **HISTOGRAM_MAPPINGS,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     **LOADER_DISPLAYS,
-    **SAMPLER_DISPLAYS,
-    **SPECIALIZED_DISPLAYS,
+    **SAMPLER_SIMPLE_DISPLAYS,
     **GRID_DISPLAYS,
+    **HISTOGRAM_DISPLAYS,
 }
 
 # Required for ComfyUI to recognize this as a valid custom node package
 __all__ = ['NODE_CLASS_MAPPINGS', 'NODE_DISPLAY_NAME_MAPPINGS']
 
 # Version and metadata for ComfyUI Manager
-__version__ = "2.0.0"
+__version__ = "3.0.0"
 WEB_DIRECTORY = "web"  # Web components for dynamic UI updates
