@@ -85,6 +85,14 @@ class SamplerCompareSimple:
         
         print(f"[SamplerCompareSimple] Sampling {len(combinations)} combinations...")
         
+        # Helper for cleaning names
+        def clean_name(name: str) -> str:
+            if "[Diffusion]" in name:
+                name = name.replace("[Diffusion]", "").strip()
+            if name.endswith(".safetensors"):
+                name = name[:-12]
+            return name
+        
         for idx, combo in enumerate(combinations):
             print(f"\n[SamplerCompareSimple] === Combination {idx} ===")
             
@@ -132,10 +140,45 @@ class SamplerCompareSimple:
             all_images.append(image)
             
             # Create label for this combination
-            # Use the last LoRA's display name and strength as the varied parameter
+            label_parts = []
+
+            # 1. Model Label (if multiple models)
+            if len(config.get("model_variations", [])) > 1:
+                # Prioritize custom label, fall back to cleaned name
+                m_label = combo.get("model_label")
+                if not m_label:
+                    m_label = clean_name(combo.get("model", "Unknown"))
+                label_parts.append(m_label)
+
+            # 2. VAE Label (if multiple VAEs)
+            if len(config.get("vae_variations", [])) > 1:
+                v_label = combo.get("vae_label")
+                if not v_label:
+                    v_label = clean_name(combo.get("vae", "Unknown"))
+                label_parts.append(v_label)
+
+            # 3. CLIP Label (if multiple CLIPs)
+            if len(config.get("clip_variations", [])) > 1 and clip_var:
+                c_label = clip_var.get("label")
+                if not c_label:
+                    # Fallback for CLIP name
+                    if clip_var.get("type") == "pair":
+                        c_label = f"{clip_var.get('a')}/{clip_var.get('b')}"
+                    else:
+                        c_label = clip_var.get("model", "CLIP")
+                label_parts.append(c_label)
+
+            # 4. LoRA Label
             if lora_display_names:
+                # Use the last LoRA's display name and strength as the varied parameter
+                # (Preserving existing logic for LoRA labeling)
                 varied_lora_idx = len(lora_display_names) - 1
-                label = f"{lora_display_names[varied_lora_idx]}({lora_strengths[varied_lora_idx]:.2f})"
+                lora_label = f"{lora_display_names[varied_lora_idx]}({lora_strengths[varied_lora_idx]:.2f})"
+                label_parts.append(lora_label)
+            
+            # Construct final label
+            if label_parts:
+                label = " - ".join(label_parts)
             else:
                 label = f"Combination {idx}"
             

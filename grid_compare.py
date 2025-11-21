@@ -241,6 +241,160 @@ class GridCompare:
             "num_cols": len(sorted_strengths),
         }
 
+    def _get_unique_values(self, config: Dict[str, Any]) -> Dict[str, List[Any]]:
+        """Extract unique values for each dimension from config."""
+        # Extract from variations lists to maintain order
+        models = []
+        for m in config.get("model_variations", []):
+            label = m.get("label", "")
+            if not label:
+                label = m["name"].replace("[Diffusion]", "").strip()
+                if label.endswith(".safetensors"): label = label[:-12]
+            models.append({"name": m["name"], "label": label})
+
+        vaes = []
+        for v in config.get("vae_variations", []):
+            if isinstance(v, dict):
+                name = v["name"]
+                label = v.get("label", "")
+                if not label:
+                    label = name
+                    if label.endswith(".safetensors"): label = label[:-12]
+                vaes.append({"name": name, "label": label})
+            else:
+                # Fallback
+                label = v
+                if label.endswith(".safetensors"): label = label[:-12]
+                vaes.append({"name": v, "label": label})
+        
+        # Extract CLIPs - handle both single (QWEN) and pair (FLUX) formats
+        clips = []
+        for c in config.get("clip_variations", []):
+            label = c.get("label", "")
+            if c.get("type") == "pair":
+                name = f"{c['a']}/{c['b']}"
+            else:
+                name = c.get("model", "Unknown")
+            
+            if not label:
+                label = name
+                
+            clips.append({"name": name, "label": label, "data": c})
+            
+        # Extract LoRA Groups and Strengths from combinations
+        # We need to scan combinations to find all unique LoRA groups and their max strength counts
+        lora_groups = []
+        seen_groups = set()
+        max_strengths = 0
+        
+        for combo in config.get("combinations", []):
+            # Create a signature for the LoRA group
+            names = tuple(combo.get("lora_names", []))
+            if names not in seen_groups:
+                seen_groups.add(names)
+                # Create a display label for the group
+                if not names:
+                    label = "No LoRA"
+                else:
+                    # Use display names if available
+                    display_names = combo.get("lora_display_names", names)
+                    label = " + ".join(display_names)
+                
+                lora_groups.append({"names": names, "label": label})
+            
+            # Track max number of strengths (columns)
+            strengths = combo.get("lora_strengths", ())
+            max_strengths = max(max_strengths, len(strengths) if strengths else 1)
+
+        return {
+            "models": models,
+            "vaes": vaes,
+            "clips": clips,
+            "lora_groups": lora_groups,
+            "max_strengths": max_strengths
+        }
+
+    def _organize_nested_data(self, images: List[Image.Image], config: Dict[str, Any], unique_vals: Dict) -> Dict:
+        """
+        Organize images into a nested dictionary structure:
+        data[clip_idx][group_idx][model_idx][vae_idx][strength_idx] = image
+        """
+        data = {}
+        
+        # Map unique values to indices for fast lookup
+        model_to_idx = {m["name"]: i for i, m in enumerate(unique_vals["models"])}
+        vae_to_idx = {v["name"]: i for i, v in enumerate(unique_vals["vaes"])}
+        
+        # CLIP mapping is trickier due to dict structure
+        # We'll rely on the order in unique_vals["clips"] matching config["clip_variations"]
+        # But we need to match the combo's clip_variation to our unique list
+        
+        combinations = config.get("combinations", [])
+        
+        for img_idx, combo in enumerate(combinations):
+            if img_idx >= len(images):
+                break
+                
+            image = images[img_idx]
+            
+            # Get indices
+            model_name = combo.get("model")
+            if model_name not in model_to_idx:
+                continue # Should not happen if config is consistent
+            m_idx = model_to_idx[model_name]
+            
+            vae_name = combo.get("vae")
+            if vae_name not in vae_to_idx:
+                continue
+            v_idx = vae_to_idx[vae_name]
+            
+            # Find CLIP index
+            # We compare the combo's clip_variation dict with our extracted clips
+            c_idx = -1
+            combo_clip = combo.get("clip_variation", {})
+            for i, c in enumerate(unique_vals["clips"]):
+                # Compare relevant fields
+                if c["data"].get("type") == combo_clip.get("type"):
+                    if c["data"].get("type") == "pair":
+                        if c["data"].get("a") == combo_clip.get("a") and c["data"].get("b") == combo_clip.get("b"):
+                            c_idx = i
+                            break
+                    else:
+                        if c["data"].get("model") == combo_clip.get("model"):
+                            c_idx = i
+                            break
+            if c_idx == -1: continue
+            
+            # Find LoRA Group index
+            lora_names = tuple(combo.get("lora_names", []))
+            g_idx = -1
+            for i, g in enumerate(unique_vals["lora_groups"]):
+                if g["names"] == lora_names:
+                    g_idx = i
+                    break
+            if g_idx == -1: continue
+            
+            if c_idx not in data: data[c_idx] = {}
+            if g_idx not in data[c_idx]: data[c_idx][g_idx] = {}
+            if m_idx not in data[c_idx][g_idx]: data[c_idx][g_idx][m_idx] = {}
+            if v_idx not in data[c_idx][g_idx][m_idx]: data[c_idx][g_idx][m_idx][v_idx] = []
+            
+            # Store image and its specific strength label
+            strengths = combo.get("lora_strengths", ())
+            # Generate a short label for the strength column (e.g. "0.1, 1.0")
+            if not strengths:
+                str_label = "-"
+            else:
+                str_label = ", ".join([f"{s:.2f}" for s in strengths])
+                
+            data[c_idx][g_idx][m_idx][v_idx].append({
+                "image": image,
+                "label": str_label,
+                "full_strengths": strengths
+            })
+            
+        return data
+
     def create_grid(
         self,
         images: torch.Tensor,
@@ -301,8 +455,28 @@ class GridCompare:
             # Organize images by LoRA and strength
             organized_data = self._organize_images_by_lora(config, pil_images, label_list)
             
-            # Create grid with proper organization
-            if organized_data["num_rows"] == 0 or organized_data["num_cols"] == 0:
+            # Check if we should use the Nested Grid System
+            # Use nested grid if we have multiple models, VAEs, or CLIPs
+            is_nested = (
+                len(config.get("model_variations", [])) > 1 or
+                len(config.get("vae_variations", [])) > 1 or
+                len(config.get("clip_variations", [])) > 1
+            )
+            
+            if is_nested:
+                print(f"[GridCompare] Detected complex config, using Nested Grid System")
+                grid_image = self._create_nested_grid(
+                    images=pil_images,
+                    config=config,
+                    gap_size=gap_size,
+                    border_color=border_color,
+                    border_width=border_width,
+                    text_color=text_color,
+                    font_size=font_size,
+                    font_name=font_name,
+                    title=grid_title,
+                )
+            elif organized_data["num_rows"] == 0 or organized_data["num_cols"] == 0:
                 # Fallback to simple grid if label parsing failed
                 print(f"[GridCompare] Label parsing failed, creating simple grid")
                 grid_image = self._create_simple_grid(
@@ -551,6 +725,303 @@ class GridCompare:
             grid_img.paste(img, (x, y))
             current_y = y + img_height + gap_size
         
+        return grid_img
+
+    def _create_nested_grid(
+        self,
+        images: List[Image.Image],
+        config: Dict[str, Any],
+        gap_size: int,
+        border_color: str,
+        border_width: int,
+        text_color: str,
+        font_size: int,
+        font_name: str,
+        title: str = "",
+    ) -> Image.Image:
+        """
+        Create a hierarchical nested grid:
+        Cols: Model -> VAE -> Strength
+        Rows: CLIP -> LoRA Group
+        """
+        unique_vals = self._get_unique_values(config)
+        data = self._organize_nested_data(images, config, unique_vals)
+        
+        # --- Calculate Dimensions ---
+        
+        # 1. Determine cell size (from first image)
+        if not images:
+            return Image.new('RGB', (100, 100), color='white')
+        img_width, img_height = images[0].size
+        
+        # 2. Determine number of columns per VAE (max variations)
+        max_cols_per_vae = 1
+        for c_idx in data:
+            for g_idx in data[c_idx]:
+                for m_idx in data[c_idx][g_idx]:
+                    for v_idx in data[c_idx][g_idx][m_idx]:
+                        max_cols_per_vae = max(max_cols_per_vae, len(data[c_idx][g_idx][m_idx][v_idx]))
+        
+        num_models = len(unique_vals["models"])
+        num_vaes = len(unique_vals["vaes"])
+        
+        # Total Grid Columns = Models * VAEs * Max_Strengths
+        total_data_cols = num_models * num_vaes * max_cols_per_vae
+        
+        # 3. Determine Label Widths (Rows)
+        label_font = self._get_font(font_name, int(font_size * 0.8))
+        
+        # CLIP Label Width
+        max_clip_width = 0
+        for c in unique_vals["clips"]:
+            w = len(c["label"]) * 10 # Estimate
+            if label_font:
+                try: w = label_font.getbbox(c["label"])[2]
+                except: pass
+            max_clip_width = max(max_clip_width, w)
+        clip_label_width = max_clip_width + 40
+        
+        # LoRA Group Label Width
+        max_group_width = 0
+        for g in unique_vals["lora_groups"]:
+            # Check if we should show this label
+            # "The Lora name label on the left should only show the lora's that have variations or have the OR operator"
+            # Variations: max_cols_per_vae > 1 (approximation, strictly it's per group)
+            # OR operator: len(unique_vals["lora_groups"]) > 1
+            show_label = (max_cols_per_vae > 1) or (len(unique_vals["lora_groups"]) > 1)
+            if not show_label: continue
+
+            # Wrap text logic estimation
+            label_text = g["label"]
+            # Simple estimation: assume we wrap at ~20 chars? 
+            # Let's just measure the longest word or fixed width
+            w = 200 # Minimum width
+            if label_font:
+                try: w = max(w, label_font.getbbox(label_text)[2])
+                except: pass
+            # Cap width to avoid huge labels
+            w = min(w, 400) 
+            max_group_width = max(max_group_width, w)
+            
+        group_label_width = max_group_width + 40 if max_group_width > 0 else 0
+        
+        total_label_width = clip_label_width + group_label_width
+        
+        # 4. Calculate Header Heights
+        # "The model header column for each base model should be slightly larger font and bold"
+        model_font_size = int(font_size * 1.2)
+        model_header_font = self._get_font(font_name, model_font_size)
+        header_font = self._get_font(font_name, font_size)
+        sub_header_font = self._get_font(font_name, int(font_size * 0.9))
+        small_header_font = self._get_font(font_name, int(font_size * 0.7))
+        
+        model_header_height = model_font_size + 30
+        vae_header_height = int(font_size * 0.9) + 20
+        
+        # "The labels for lora strength should ONLY show for the Lora that has a variation set"
+        show_strength_header = max_cols_per_vae > 1
+        strength_header_height = (int(font_size * 0.7) + 20) if show_strength_header else 0
+        
+        total_header_height = model_header_height + vae_header_height + strength_header_height
+        
+        title_height = (font_size + 30) if title else 0
+        
+        # 5. Calculate Total Size
+        # Rows = CLIPs * LoRA_Groups
+        num_rows = len(unique_vals["clips"]) * len(unique_vals["lora_groups"])
+        
+        # Add extra space for CLIP separators
+        clip_separator_height = gap_size * 2
+        
+        grid_width = total_label_width + total_data_cols * (img_width + gap_size) + gap_size
+        grid_height = title_height + total_header_height + num_rows * (img_height + gap_size) + (len(unique_vals["clips"]) - 1) * clip_separator_height + gap_size
+        
+        # --- Render ---
+        
+        grid_img = Image.new('RGB', (grid_width, grid_height), color=(255, 255, 255))
+        draw = ImageDraw.Draw(grid_img)
+        border_rgb = self._parse_color(border_color)
+        text_rgb = self._parse_color(text_color)
+        
+        current_y = gap_size
+        
+        # Draw Main Title
+        if title:
+            draw.text((grid_width // 2, current_y), title, fill=text_rgb, font=header_font, anchor="mt")
+            current_y += title_height
+            
+        # --- Draw Headers ---
+        
+        # Model Headers
+        model_width = num_vaes * max_cols_per_vae * (img_width + gap_size)
+        for m_i, model_info in enumerate(unique_vals["models"]):
+            x_start = total_label_width + gap_size + m_i * model_width
+            # Center text in the model block
+            center_x = x_start + model_width // 2
+            
+            # Use custom label
+            display_name = model_info["label"]
+            
+            # Draw Bold (simulate by drawing with offset)
+            draw.text((center_x, current_y), display_name, fill=text_rgb, font=model_header_font, anchor="mt")
+            draw.text((center_x+1, current_y), display_name, fill=text_rgb, font=model_header_font, anchor="mt")
+            
+            # Draw separator line (Thick border for models)
+            if border_width > 0:
+                # Draw line at start of model block (except first one maybe?)
+                # "the divide between the first 3 images and 2nd 3 images should have a clear separator"
+                line_x = x_start - (gap_size // 2)
+                if m_i > 0:
+                    draw.line([(line_x, current_y), (line_x, grid_height)], fill=border_rgb, width=border_width * 2)
+                
+        current_y += model_header_height
+        
+        # VAE Headers
+        vae_width = max_cols_per_vae * (img_width + gap_size)
+        for m_i in range(num_models):
+            for v_i, vae_info in enumerate(unique_vals["vaes"]):
+                # Calculate absolute index
+                abs_v_i = m_i * num_vaes + v_i
+                x_start = total_label_width + gap_size + abs_v_i * vae_width
+                center_x = x_start + vae_width // 2
+                
+                display_name = vae_info["label"]
+                
+                draw.text((center_x, current_y), display_name, fill=text_rgb, font=sub_header_font, anchor="mt")
+                
+                # Draw separator line (Normal width for VAEs)
+                if border_width > 0:
+                    line_x = x_start - (gap_size // 2)
+                    # Don't draw over the model separator
+                    if v_i > 0: 
+                        draw.line([(line_x, current_y), (line_x, grid_height)], fill=border_rgb, width=1)
+
+        current_y += vae_header_height
+        
+        # Strength Headers
+        if show_strength_header:
+            for m_i in range(num_models):
+                for v_i in range(num_vaes):
+                    for s_i in range(max_cols_per_vae):
+                        # Find a label for this column index
+                        label = f"Var {s_i+1}"
+                        # Try to find a real label from data
+                        found = False
+                        for c_idx in data:
+                            for g_idx in data[c_idx]:
+                                if m_i in data[c_idx][g_idx] and v_idx in data[c_idx][g_idx][m_idx]:
+                                    items = data[c_idx][g_idx][m_idx][v_idx]
+                                    if s_i < len(items):
+                                        label = items[s_i]["label"]
+                                        found = True
+                                        break
+                            if found: break
+                        
+                        abs_col_i = (m_i * num_vaes * max_cols_per_vae) + (v_i * max_cols_per_vae) + s_i
+                        x_start = total_label_width + gap_size + abs_col_i * (img_width + gap_size)
+                        center_x = x_start + img_width // 2
+                        
+                        draw.text((center_x, current_y), label, fill=text_rgb, font=small_header_font, anchor="mt")
+
+            current_y += strength_header_height
+        
+        # --- Draw Rows and Images ---
+        
+        def draw_multiline_text(draw, text, box, font, fill, anchor="lm"):
+            """Helper to draw multiline text centered vertically in box"""
+            x, y, w, h = box
+            lines = []
+            words = text.split()
+            current_line = []
+            
+            # Simple word wrap
+            for word in words:
+                test_line = ' '.join(current_line + [word])
+                if font.getbbox(test_line)[2] <= w:
+                    current_line.append(word)
+                else:
+                    if current_line:
+                        lines.append(' '.join(current_line))
+                        current_line = [word]
+                    else:
+                        lines.append(word) # Word too long, force split
+                        current_line = []
+            if current_line:
+                lines.append(' '.join(current_line))
+            
+            # Calculate total height
+            line_height = font.getbbox("Ay")[3] + 4
+            total_text_height = len(lines) * line_height
+            
+            start_y = y + (h - total_text_height) // 2
+            
+            for i, line in enumerate(lines):
+                draw.text((x, start_y + i * line_height), line, fill=fill, font=font)
+
+        for c_i, clip_info in enumerate(unique_vals["clips"]):
+            # Draw CLIP Label Area
+            clip_y_start = current_y
+            clip_height = len(unique_vals["lora_groups"]) * (img_height + gap_size)
+            
+            # Draw CLIP Label (Vertical centered in its block)
+            # "clearer definition between the clip rows"
+            # Draw a background or distinct separator
+            if c_i > 0:
+                # Draw separator above this CLIP block
+                sep_y = clip_y_start - (clip_separator_height // 2)
+                draw.line([(0, sep_y), (grid_width, sep_y)], fill=border_rgb, width=border_width * 2)
+            
+            draw.text((gap_size, clip_y_start + clip_height // 2), clip_info["label"], fill=text_rgb, font=label_font, anchor="lm")
+            
+            # Separator between CLIP label and LoRA labels
+            if border_width > 0:
+                 draw.line([(clip_label_width, clip_y_start), (clip_label_width, clip_y_start + clip_height)], fill=border_rgb, width=border_width)
+            
+            for g_i, group_info in enumerate(unique_vals["lora_groups"]):
+                row_y = current_y
+                
+                # Draw LoRA Group Label
+                # Only if we decided to show it
+                if group_label_width > 0:
+                    # "multiline might be tidier"
+                    label_box = (gap_size + clip_label_width + 10, row_y, group_label_width - 20, img_height)
+                    draw_multiline_text(draw, group_info["label"], label_box, label_font, text_rgb)
+                
+                # Draw Images
+                for m_i in range(num_models):
+                    for v_i in range(num_vaes):
+                        # Retrieve images for this cell
+                        cell_images = []
+                        if c_i in data and g_i in data[c_i]:
+                            if m_i in data[c_i][g_i] and v_i in data[c_i][g_i][m_i]:
+                                cell_images = data[c_i][g_i][m_i][v_i]
+                        
+                        for s_i in range(max_cols_per_vae):
+                            abs_col_i = (m_i * num_vaes * max_cols_per_vae) + (v_i * max_cols_per_vae) + s_i
+                            x = total_label_width + gap_size + abs_col_i * (img_width + gap_size)
+                            
+                            if s_i < len(cell_images):
+                                # Draw Image
+                                img = cell_images[s_i]["image"]
+                                grid_img.paste(img, (x, row_y))
+                                
+                                # Border
+                                if border_width > 0:
+                                    for b in range(border_width):
+                                        draw.rectangle(
+                                            [(x - b, row_y - b), (x + img_width + b, row_y + img_height + b)],
+                                            outline=border_rgb,
+                                            width=1,
+                                        )
+                            else:
+                                # Empty cell placeholder?
+                                pass
+                
+                current_y += img_height + gap_size
+            
+            # Add gap after CLIP block
+            current_y += clip_separator_height
+                
         return grid_img
 
     def _create_organized_grid(
