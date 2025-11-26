@@ -197,6 +197,12 @@ class SamplerCompareSimple:
                 torch.cuda.empty_cache()
                 torch.cuda.synchronize()
             
+            # Log available memory after cleanup
+            if torch.cuda.is_available():
+                free_mem = torch.cuda.mem_get_info()[0] / (1024**3)
+                total_mem = torch.cuda.mem_get_info()[1] / (1024**3)
+                print(f"[SamplerCompareSimple] GPU Memory: {free_mem:.2f}GB free / {total_mem:.2f}GB total")
+            
             # 1. Retrieve Models & VAEs
             model_idx = combo.get("model_index", 0)
             model_entry = config["model_variations"][model_idx]
@@ -486,9 +492,20 @@ class SamplerCompareSimple:
             # Aggressive cleanup after each combination to free VRAM
             # This prevents OOM when switching between large models like FLUX variants
             del working_model
-            if 'working_model_low' in dir():
+            if 'working_model_low' in locals():
                 del working_model_low
             del sampled_latent
+            # Also clear current latent if we created a new one for FLUX2
+            if 'current_latent' in locals() and current_latent is not latent:
+                del current_latent
+            # Clear conditioning references
+            if 'current_positive' in locals():
+                del current_positive
+            if 'current_negative' in locals():
+                del current_negative
+            
+            # Force model manager to release everything
+            comfy.model_management.unload_all_models()
             comfy.model_management.cleanup_models()
             comfy.model_management.soft_empty_cache()
             gc.collect()
