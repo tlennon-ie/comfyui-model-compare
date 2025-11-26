@@ -75,9 +75,9 @@ class ModelCompareLoaders:
                      "tooltip": "Secondary CLIP (for Hunyuan Dual CLIP and FLUX Dual CLIP). Not used for FLUX2."},
                 ),
                 "clip_type": (
-                    ["default", "sd", "sdxl", "sd3", "flux", "flux2", "wan", "hunyuan_video", "hunyuan_video_15", "qwen"],
+                    ["default", "sd", "sdxl", "sd3", "flux", "flux2", "wan", "wan22", "hunyuan_video", "hunyuan_video_15", "qwen"],
                     {"default": "default",
-                     "tooltip": "CLIP model type (auto-adjusted based on preset). FLUX2 uses Mistral3 single CLIP"},
+                     "tooltip": "CLIP model type (auto-adjusted based on preset). Use wan22 for High/Low noise model pairing."},
                 ),
                 "clip_device": (
                     ["default", "cpu"],
@@ -164,8 +164,8 @@ class ModelCompareLoaders:
                  "tooltip": f"Variation {i}: Secondary CLIP (Hunyuan/FLUX/WAN Dual CLIP support)"},
             )
             inputs["optional"][f"clip_type_variation_{i}"] = (
-                ["default", "sd", "sdxl", "sd3", "flux", "flux2", "wan", "hunyuan_video", "hunyuan_video_15", "qwen"],
-                {"default": "default", "tooltip": f"Variation {i}: CLIP Type (choose flux2 for single CLIP, flux for dual CLIP)"}
+                ["default", "sd", "sdxl", "sd3", "flux", "flux2", "wan", "wan22", "hunyuan_video", "hunyuan_video_15", "qwen"],
+                {"default": "default", "tooltip": f"Variation {i}: CLIP Type (wan22 enables High/Low noise model pairing)"}
             )
             inputs["optional"][f"clip_device_variation_{i}"] = (
                 ["default", "cpu"],
@@ -510,7 +510,7 @@ class ModelCompareLoaders:
                     resolved_clip_type = c_type
                 
                 # Check if VARIATION's clip_type requires dual CLIP
-                variation_needs_dual_clip = resolved_clip_type in ["flux", "wan", "hunyuan_video", "hunyuan_video_15"]
+                variation_needs_dual_clip = resolved_clip_type in ["flux", "wan", "wan22", "hunyuan_video", "hunyuan_video_15"]
                 
                 # Load dual CLIP only if THIS VARIATION's clip_type requires it AND secondary CLIP provided
                 if variation_needs_dual_clip and c_name_2 != "NONE":
@@ -646,6 +646,7 @@ class ModelCompareLoaders:
             "flux": getattr(comfy.sd.CLIPType, "FLUX", comfy.sd.CLIPType.STABLE_DIFFUSION),
             "flux2": getattr(comfy.sd.CLIPType, "FLUX2", comfy.sd.CLIPType.STABLE_DIFFUSION),
             "wan": getattr(comfy.sd.CLIPType, "WAN", getattr(comfy.sd.CLIPType, "FLUX", comfy.sd.CLIPType.STABLE_DIFFUSION)),
+            "wan22": getattr(comfy.sd.CLIPType, "WAN", getattr(comfy.sd.CLIPType, "FLUX", comfy.sd.CLIPType.STABLE_DIFFUSION)),  # Same CLIP as wan
             "hunyuan_video": getattr(comfy.sd.CLIPType, "HUNYUAN_VIDEO", comfy.sd.CLIPType.STABLE_DIFFUSION),
             "hunyuan_video_15": getattr(comfy.sd.CLIPType, "HUNYUAN_VIDEO_15", comfy.sd.CLIPType.STABLE_DIFFUSION),
             "qwen": getattr(comfy.sd.CLIPType, "QWEN_IMAGE", comfy.sd.CLIPType.STABLE_DIFFUSION),
