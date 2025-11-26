@@ -79,6 +79,11 @@ class ModelCompareLoaders:
                     {"default": "default",
                      "tooltip": "CLIP model type (auto-adjusted based on preset). FLUX2 uses Mistral3 single CLIP"},
                 ),
+                "clip_device": (
+                    ["default", "cpu"],
+                    {"default": "default",
+                     "tooltip": "Device for base CLIP model. Use 'cpu' to reduce VRAM usage when comparing large models."},
+                ),
                 "num_diffusion_models": ("INT", {
                     "default": 1,
                     "min": 1,
@@ -161,6 +166,10 @@ class ModelCompareLoaders:
             inputs["optional"][f"clip_type_variation_{i}"] = (
                 ["default", "sd", "sdxl", "sd3", "flux", "flux2", "wan", "hunyuan_video", "hunyuan_video_15", "qwen"],
                 {"default": "default", "tooltip": f"Variation {i}: CLIP Type (choose flux2 for single CLIP, flux for dual CLIP)"}
+            )
+            inputs["optional"][f"clip_device_variation_{i}"] = (
+                ["default", "cpu"],
+                {"default": "default", "tooltip": f"Variation {i}: Device for CLIP model. Use 'cpu' to reduce VRAM."}
             )
             
             # VAE variation i
@@ -414,6 +423,14 @@ class ModelCompareLoaders:
         dual_clip_presets = ["HUNYUAN_VIDEO", "HUNYUAN_VIDEO_15", "FLUX"]
         base_needs_dual_clip = preset in dual_clip_presets
         
+        # Get base CLIP device setting
+        clip_device = kwargs.get("clip_device", "default")
+        base_clip_model_options = {}
+        if clip_device == "cpu":
+            base_clip_model_options["load_device"] = torch.device("cpu")
+            base_clip_model_options["offload_device"] = torch.device("cpu")
+            print(f"[ModelCompareLoaders] Loading base CLIP on CPU to save VRAM")
+        
         if base_entry["baked_clip"]:
             base_clip_obj = base_entry["baked_clip"]
         elif clip_model != "NONE":
@@ -423,10 +440,10 @@ class ModelCompareLoaders:
             # Load base CLIP with correct configuration
             if base_needs_dual_clip and clip_model_2 != "NONE":
                  path2 = folder_paths.get_full_path("clip", clip_model_2)
-                 base_clip_obj = comfy.sd.load_clip(ckpt_paths=[path, path2], embedding_directory=folder_paths.get_folder_paths("embeddings"), clip_type=self._get_clip_type_enum(current_clip_type))
+                 base_clip_obj = comfy.sd.load_clip(ckpt_paths=[path, path2], embedding_directory=folder_paths.get_folder_paths("embeddings"), clip_type=self._get_clip_type_enum(current_clip_type), model_options=base_clip_model_options)
             else:
                  # Single CLIP for everything else (including FLUX2)
-                 base_clip_obj = comfy.sd.load_clip(ckpt_paths=[path], embedding_directory=folder_paths.get_folder_paths("embeddings"), clip_type=self._get_clip_type_enum(current_clip_type))
+                 base_clip_obj = comfy.sd.load_clip(ckpt_paths=[path], embedding_directory=folder_paths.get_folder_paths("embeddings"), clip_type=self._get_clip_type_enum(current_clip_type), model_options=base_clip_model_options)
         
         clip_variations = []
         
@@ -451,11 +468,19 @@ class ModelCompareLoaders:
             c_name = kwargs.get(f"clip_model_variation_{i}", "NONE")
             c_name_2 = kwargs.get(f"clip_model_variation_{i}_2", "NONE")
             c_type = kwargs.get(f"clip_type_variation_{i}", "default")
+            c_device = kwargs.get(f"clip_device_variation_{i}", "default")
             
             if c_name != "NONE":
                 # Load variation CLIP
                 path = folder_paths.get_full_path("clip", c_name)
                 c_obj = None
+                
+                # Build model_options for device
+                var_clip_model_options = {}
+                if c_device == "cpu":
+                    var_clip_model_options["load_device"] = torch.device("cpu")
+                    var_clip_model_options["offload_device"] = torch.device("cpu")
+                    print(f"[ModelCompareLoaders] Loading CLIP variation {i} on CPU to save VRAM")
                 
                 # Determine if THIS VARIATION needs dual CLIP based on its OWN clip_type, not the base preset
                 # Resolve clip_type: if "default", infer from its associated model's preset
@@ -490,10 +515,10 @@ class ModelCompareLoaders:
                 # Load dual CLIP only if THIS VARIATION's clip_type requires it AND secondary CLIP provided
                 if variation_needs_dual_clip and c_name_2 != "NONE":
                     path2 = folder_paths.get_full_path("clip", c_name_2)
-                    c_obj = comfy.sd.load_clip(ckpt_paths=[path, path2], embedding_directory=folder_paths.get_folder_paths("embeddings"), clip_type=self._get_clip_type_enum(c_type))
+                    c_obj = comfy.sd.load_clip(ckpt_paths=[path, path2], embedding_directory=folder_paths.get_folder_paths("embeddings"), clip_type=self._get_clip_type_enum(c_type), model_options=var_clip_model_options)
                 else:
                     # Single CLIP for all others (including FLUX2 variations)
-                    c_obj = comfy.sd.load_clip(ckpt_paths=[path], embedding_directory=folder_paths.get_folder_paths("embeddings"), clip_type=self._get_clip_type_enum(c_type))
+                    c_obj = comfy.sd.load_clip(ckpt_paths=[path], embedding_directory=folder_paths.get_folder_paths("embeddings"), clip_type=self._get_clip_type_enum(c_type), model_options=var_clip_model_options)
                 
                 # Append with correct structure based on CLIP type
                 if variation_needs_dual_clip and c_name_2 != "NONE":

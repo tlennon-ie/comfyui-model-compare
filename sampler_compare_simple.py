@@ -491,28 +491,42 @@ class SamplerCompareSimple:
             
             # Aggressive cleanup after each combination to free VRAM
             # This prevents OOM when switching between large models like FLUX variants
-            del working_model
-            if 'working_model_low' in locals():
-                del working_model_low
-            del sampled_latent
-            # Also clear current latent if we created a new one for FLUX2
-            if 'current_latent' in locals() and current_latent is not latent:
-                del current_latent
-            # Clear conditioning references
-            if 'current_positive' in locals():
-                del current_positive
-            if 'current_negative' in locals():
-                del current_negative
-            
-            # Force model manager to release everything
-            comfy.model_management.unload_all_models()
-            comfy.model_management.cleanup_models()
-            comfy.model_management.soft_empty_cache()
-            gc.collect()
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-                torch.cuda.synchronize()
-            print(f"[SamplerCompareSimple] Memory cleanup complete for combination {idx + 1}")
+            # Wrap in try/except because FLUX2's partial loading can cause issues during cleanup
+            try:
+                # Delete local references first
+                if 'working_model' in locals():
+                    del working_model
+                if 'working_model_low' in locals():
+                    del working_model_low
+                if 'sampled_latent' in locals():
+                    del sampled_latent
+                # Also clear current latent if we created a new one for FLUX2
+                if 'current_latent' in locals() and current_latent is not latent:
+                    del current_latent
+                # Clear conditioning references
+                if 'current_positive' in locals():
+                    del current_positive
+                if 'current_negative' in locals():
+                    del current_negative
+                
+                # Force model manager to release everything
+                comfy.model_management.unload_all_models()
+                comfy.model_management.cleanup_models()
+                comfy.model_management.soft_empty_cache()
+                gc.collect()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                    torch.cuda.synchronize()
+                print(f"[SamplerCompareSimple] Memory cleanup complete for combination {idx + 1}")
+            except Exception as cleanup_err:
+                print(f"[SamplerCompareSimple] Warning: Cleanup error (continuing anyway): {cleanup_err}")
+                # Still try basic cleanup
+                gc.collect()
+                if torch.cuda.is_available():
+                    try:
+                        torch.cuda.empty_cache()
+                    except:
+                        pass
         
         # Concatenate - handle different image sizes by resizing to match first image
         if not all_images:
