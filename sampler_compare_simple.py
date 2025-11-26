@@ -184,24 +184,53 @@ class SamplerCompareSimple:
                 
             return patched_model
         
+        # Track previous combination's configuration for smart offloading
+        # Only offload when model/VAE/CLIP/LoRA changes, not when just prompt changes
+        prev_model_idx = None
+        prev_vae_name = None
+        prev_clip_key = None
+        prev_lora_key = None
+        
+        def get_combo_key(combo):
+            """Generate a key representing the model/VAE/CLIP/LoRA configuration"""
+            model_idx = combo.get("model_index", 0)
+            vae_name = combo.get("vae_name", "")
+            clip_var = combo.get("clip_variation", {})
+            clip_key = clip_var.get("model", "") if clip_var.get("type") == "single" else f"{clip_var.get('a', '')}+{clip_var.get('b', '')}"
+            lora_names = combo.get("lora_names", [])
+            lora_strengths = combo.get("lora_strengths", ())
+            lora_key = str(list(zip(lora_names, lora_strengths)))
+            return (model_idx, vae_name, clip_key, lora_key)
+        
         for idx, combo in enumerate(combinations):
             print(f"\n[SamplerCompareSimple] === Combination {idx + 1}/{len(combinations)} ===")
             
-            # Aggressive GPU memory cleanup before loading new models
-            # This is critical when switching between large models like FLUX variants
-            comfy.model_management.unload_all_models()
-            comfy.model_management.cleanup_models()
-            comfy.model_management.soft_empty_cache()
-            gc.collect()
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-                torch.cuda.synchronize()
+            # Smart offloading: only cleanup when model/VAE/CLIP/LoRA changes
+            current_key = get_combo_key(combo)
+            prev_key = (prev_model_idx, prev_vae_name, prev_clip_key, prev_lora_key)
             
-            # Log available memory after cleanup
-            if torch.cuda.is_available():
-                free_mem = torch.cuda.mem_get_info()[0] / (1024**3)
-                total_mem = torch.cuda.mem_get_info()[1] / (1024**3)
-                print(f"[SamplerCompareSimple] GPU Memory: {free_mem:.2f}GB free / {total_mem:.2f}GB total")
+            needs_offload = idx == 0 or current_key != prev_key
+            
+            if needs_offload:
+                if idx > 0:
+                    print(f"[SamplerCompareSimple] Model config changed - offloading previous models")
+                # Aggressive GPU memory cleanup before loading new models
+                # This is critical when switching between large models like FLUX variants
+                comfy.model_management.unload_all_models()
+                comfy.model_management.cleanup_models()
+                comfy.model_management.soft_empty_cache()
+                gc.collect()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                    torch.cuda.synchronize()
+                
+                # Log available memory after cleanup
+                if torch.cuda.is_available():
+                    free_mem = torch.cuda.mem_get_info()[0] / (1024**3)
+                    total_mem = torch.cuda.mem_get_info()[1] / (1024**3)
+                    print(f"[SamplerCompareSimple] GPU Memory: {free_mem:.2f}GB free / {total_mem:.2f}GB total")
+            else:
+                print(f"[SamplerCompareSimple] Same model config as previous - skipping offload (only prompt changed)")
             
             # 1. Retrieve Models & VAEs
             model_idx = combo.get("model_index", 0)
@@ -489,44 +518,63 @@ class SamplerCompareSimple:
             all_labels.append(label)
             print(f"[SamplerCompareSimple] Label: {label}")
             
-            # Aggressive cleanup after each combination to free VRAM
-            # This prevents OOM when switching between large models like FLUX variants
-            # Wrap in try/except because FLUX2's partial loading can cause issues during cleanup
-            try:
-                # Delete local references first
-                if 'working_model' in locals():
-                    del working_model
-                if 'working_model_low' in locals():
-                    del working_model_low
+            # Update tracking for smart offloading
+            prev_model_idx, prev_vae_name, prev_clip_key, prev_lora_key = current_key
+            
+            # Check if NEXT combination uses different models - if so, cleanup now
+            # If only prompt changes, keep models loaded for faster inference
+            next_needs_offload = False
+            if idx + 1 < len(combinations):
+                next_key = get_combo_key(combinations[idx + 1])
+                next_needs_offload = next_key != current_key
+            else:
+                # Last combination - always cleanup
+                next_needs_offload = True
+            
+            if next_needs_offload:
+                # Aggressive cleanup after each combination to free VRAM
+                # This prevents OOM when switching between large models like FLUX variants
+                # Wrap in try/except because FLUX2's partial loading can cause issues during cleanup
+                try:
+                    # Delete local references first
+                    if 'working_model' in locals():
+                        del working_model
+                    if 'working_model_low' in locals():
+                        del working_model_low
+                    if 'sampled_latent' in locals():
+                        del sampled_latent
+                    # Also clear current latent if we created a new one for FLUX2
+                    if 'current_latent' in locals() and current_latent is not latent:
+                        del current_latent
+                    # Clear conditioning references
+                    if 'current_positive' in locals():
+                        del current_positive
+                    if 'current_negative' in locals():
+                        del current_negative
+                    
+                    # Force model manager to release everything
+                    comfy.model_management.unload_all_models()
+                    comfy.model_management.cleanup_models()
+                    comfy.model_management.soft_empty_cache()
+                    gc.collect()
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                        torch.cuda.synchronize()
+                    print(f"[SamplerCompareSimple] Memory cleanup complete for combination {idx + 1}")
+                except Exception as cleanup_err:
+                    print(f"[SamplerCompareSimple] Warning: Cleanup error (continuing anyway): {cleanup_err}")
+                    # Still try basic cleanup
+                    gc.collect()
+                    if torch.cuda.is_available():
+                        try:
+                            torch.cuda.empty_cache()
+                        except:
+                            pass
+            else:
+                # Only prompt changed - keep models loaded, just cleanup the sampled latent
                 if 'sampled_latent' in locals():
                     del sampled_latent
-                # Also clear current latent if we created a new one for FLUX2
-                if 'current_latent' in locals() and current_latent is not latent:
-                    del current_latent
-                # Clear conditioning references
-                if 'current_positive' in locals():
-                    del current_positive
-                if 'current_negative' in locals():
-                    del current_negative
-                
-                # Force model manager to release everything
-                comfy.model_management.unload_all_models()
-                comfy.model_management.cleanup_models()
-                comfy.model_management.soft_empty_cache()
-                gc.collect()
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
-                    torch.cuda.synchronize()
-                print(f"[SamplerCompareSimple] Memory cleanup complete for combination {idx + 1}")
-            except Exception as cleanup_err:
-                print(f"[SamplerCompareSimple] Warning: Cleanup error (continuing anyway): {cleanup_err}")
-                # Still try basic cleanup
-                gc.collect()
-                if torch.cuda.is_available():
-                    try:
-                        torch.cuda.empty_cache()
-                    except:
-                        pass
+                print(f"[SamplerCompareSimple] Keeping models loaded (next combo uses same config)")
         
         # Concatenate - handle different image sizes by resizing to match first image
         if not all_images:

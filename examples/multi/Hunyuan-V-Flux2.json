@@ -1,0 +1,718 @@
+{
+  "id": "206ae337-e8fa-453b-9993-f51827c4d468",
+  "revision": 0,
+  "last_node_id": 36,
+  "last_link_id": 110,
+  "nodes": [
+    {
+      "id": 9,
+      "type": "ShowText|pysssss",
+      "pos": [
+        1660,
+        360
+      ],
+      "size": [
+        390,
+        170
+      ],
+      "flags": {},
+      "order": 6,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "text",
+          "type": "STRING",
+          "link": 109
+        }
+      ],
+      "outputs": [
+        {
+          "name": "STRING",
+          "shape": 6,
+          "type": "STRING",
+          "links": null
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfyui-custom-scripts",
+        "ver": "1.2.5",
+        "Node name for S&R": "ShowText|pysssss",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "input_ue_unconnectable": {},
+          "version": "7.4.1"
+        }
+      },
+      "widgets_values": [
+        "HY1.5\nFluxDev2-FP8"
+      ],
+      "color": "#232",
+      "bgcolor": "#353"
+    },
+    {
+      "id": 4,
+      "type": "EmptyLatentImage",
+      "pos": [
+        210,
+        350
+      ],
+      "size": [
+        270,
+        106
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "LATENT",
+          "type": "LATENT",
+          "links": [
+            108
+          ]
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.3.72",
+        "Node name for S&R": "EmptyLatentImage",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "input_ue_unconnectable": {},
+          "version": "7.4.1"
+        }
+      },
+      "widgets_values": [
+        1024,
+        1024,
+        1
+      ],
+      "color": "#323",
+      "bgcolor": "#535"
+    },
+    {
+      "id": 11,
+      "type": "PreviewImage",
+      "pos": [
+        1020,
+        -80
+      ],
+      "size": [
+        590,
+        600
+      ],
+      "flags": {},
+      "order": 4,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 99
+        }
+      ],
+      "outputs": [],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.3.72",
+        "Node name for S&R": "PreviewImage",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "input_ue_unconnectable": {},
+          "version": "7.4.1"
+        }
+      },
+      "widgets_values": []
+    },
+    {
+      "id": 5,
+      "type": "PreviewImage",
+      "pos": [
+        2120,
+        -80
+      ],
+      "size": [
+        980,
+        710
+      ],
+      "flags": {},
+      "order": 7,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 88
+        }
+      ],
+      "outputs": [],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.3.72",
+        "Node name for S&R": "PreviewImage",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "input_ue_unconnectable": {},
+          "version": "7.4.1"
+        }
+      },
+      "widgets_values": []
+    },
+    {
+      "id": 1,
+      "type": "PromptCompare",
+      "pos": [
+        -970,
+        -80
+      ],
+      "size": [
+        400,
+        260
+      ],
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "prompt_config",
+          "type": "PROMPT_COMPARE_CONFIG",
+          "links": [
+            92
+          ]
+        }
+      ],
+      "properties": {
+        "aux_id": "tlennon-ie/comfyui-model-compare",
+        "ver": "f6290d2aabf69bf92f3c624bfa298594b7409dcf",
+        "Node name for S&R": "PromptCompare",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "input_ue_unconnectable": {},
+          "version": "7.4.1"
+        }
+      },
+      "widgets_values": [
+        1,
+        "An extreme macro close-up of a iridescent jewel beetle resting on a vibrant green moss patch. The focus is razor-sharp on the beetle’s compound eye, revealing individual geometric facets. The shell of the beetle has a metallic color-shift finish (green to purple). Tiny spherical dew drops are clinging to the moss filaments, acting as lenses that refract the background. Lighting is soft and diffused natural daylight. Shallow depth of field with creamy bokeh in the background. High texture detail, sub-surface scattering on the moss.",
+        "",
+        "A cinematic wide shot of a dystopian street market in a futuristic Neo-Tokyo at night. The scene is drenched in heavy rain and neon light. In the center, a cyborg mechanic with a transparent synthetic arm is repairing a hovering motorcycle. The lighting is dominated by teal and magenta neon signs reflecting off the wet asphalt and the metallic surfaces of the bike. Atmospheric steam rises from street vents, diffusing the light (volumetric fog). Shot on a 35mm anamorphic lens, slight chromatic aberration, high contrast, cinematic color grading, photorealistic 8k render.",
+        "",
+        "An epic fantasy landscape featuring towering limestone pillars floating in the sky, connected by massive ancient vines and waterfalls cascading into the clouds below. A small, lone figure in a red cloak stands on a cliff edge in the foreground for scale. The lighting is \"Golden Hour,\" casting long, dramatic shadows and bathing the rock faces in warm orange light while the shadows remain cool blue. The style is reminiscent of romantic oil paintings but with photorealistic detail. Volumetric clouds, dreamlike atmosphere, wide-angle lens composition.",
+        "",
+        "A harsh, gritty portrait of an elderly coal miner, staring directly into the lens. His face is covered in soot and dust, accentuating deep wrinkles and pores. He wears a battered headlamp that emits a weak, warm beam, while the ambient light is cool and dim. His eyes are piercingly blue, contrasting with the grime. Every individual grey whisker in his beard is visible. The skin texture is highly detailed, showing weathering and sun damage. Rembrandtesque lighting, 85mm portrait lens, sharp focus, raw and unpolished aesthetic.",
+        "",
+        "A surreal artistic composition of a human head dissolving into a splash of colorful liquid marble and flowers. The face is serene and made of white porcelain, but the top of the head is exploding into swirling paint (blue, gold, and pink) and blooming peonies. The background is a solid matte pastel blue. The lighting is studio softbox lighting, creating smooth gradients on the porcelain and glistening highlights on the liquid. High-concept art, 3D render style, pristine and clean composition.",
+        "",
+        "A minimalist brutalist living room interior featuring raw concrete walls and a large circular window overlooking a foggy forest. The room contains a single mid-century modern orange velvet armchair and a glass coffee table. Soft, overcast light pours through the window, creating soft shadows and a moody atmosphere. The texture of the concrete is rough and porous, contrasting with the plush velvet. Symmetrical composition, architectural photography, cool color temperature, 24mm wide lens.",
+        "",
+        "A dynamic freeze-frame action shot of a samurai warrior mid-strike in a snowy bamboo forest. The samurai is wearing traditional black armor, and his katana is cutting through a falling bamboo stalk, sending splinters and snow flying. There is motion blur on the sword tip, but the warrior's face is in sharp focus. Snowflakes are suspended in the air. The lighting is high-key and overcast, with low contrast to emphasize the red blood on the blade. High shutter speed simulation, dramatic angle from below.",
+        "",
+        "A found-footage style photograph taken in a long, abandoned hospital hallway. The perspective is slightly tilted (Dutch angle). The lighting comes from a single flickering fluorescent tube at the far end, casting long, eerie shadows. The walls are peeling green paint, and the floor is checkered black and white tile covered in debris. A shadowy, indistinct figure stands at the very end of the hall. The image has heavy film grain, slight vignetting, and a greenish color cast, evoking a 1990s analog horror aesthetic. Flash photography effect.",
+        "",
+        "Professional commercial food photography of a gourmet double cheeseburger. The burger is smashed-style with crispy edges, melting cheddar cheese, dripping sauce, and fresh lettuce on a glossy brioche bun. Smoke and steam are gently rising from the patty. The background is dark charcoal to make the food pop. Lighting is a three-point setup with a rim light to accentuate the steam and the glaze on the bun. Macro focus, high saturation, mouth-watering texture, 4k advertising quality.",
+        "",
+        "A full-body shot of a majestic lion that is half-organic, half-machine. The left side of the lion is natural with thick, golden fur and a fierce eye. The right side is complex exposed machinery, gears, pistons, and fiber-optic cables glowing blue. The lion is prowling through tall savanna grass at twilight. The lighting highlights the contrast between the soft fur and the cold, hard metal. The metal surfaces reflect the purple and orange hues of the sunset. Concept art style, highly detailed, photorealistic rendering.",
+        "",
+        null
+      ],
+      "color": "#232",
+      "bgcolor": "#353"
+    },
+    {
+      "id": 28,
+      "type": "GridCompare",
+      "pos": [
+        1660,
+        -80
+      ],
+      "size": [
+        400,
+        400
+      ],
+      "flags": {},
+      "order": 5,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 104
+        },
+        {
+          "name": "config",
+          "type": "MODEL_COMPARE_CONFIG",
+          "link": 103
+        },
+        {
+          "name": "labels",
+          "type": "STRING",
+          "widget": {
+            "name": "labels"
+          },
+          "link": 102
+        }
+      ],
+      "outputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "links": [
+            88
+          ]
+        },
+        {
+          "name": "save_path",
+          "type": "STRING",
+          "links": null
+        }
+      ],
+      "properties": {
+        "aux_id": "tlennon-ie/comfyui-model-compare",
+        "ver": "b661739629095fb1a3412fc173e18a20e2782941",
+        "Node name for S&R": "GridCompare",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "input_ue_unconnectable": {},
+          "version": "7.4.1"
+        }
+      },
+      "widgets_values": [
+        "FLUXCompare",
+        "QwenFLUXCompare",
+        "QwenEdit2509 vs Flux 2 Dev",
+        10,
+        "#000000",
+        2,
+        "#000000",
+        40,
+        "arial.ttf",
+        true,
+        false,
+        true,
+        true,
+        true
+      ]
+    },
+    {
+      "id": 31,
+      "type": "SamplerCompareSimple",
+      "pos": [
+        560,
+        -80
+      ],
+      "size": [
+        400,
+        586
+      ],
+      "flags": {},
+      "order": 3,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "config",
+          "type": "MODEL_COMPARE_CONFIG",
+          "link": 100
+        },
+        {
+          "name": "model",
+          "type": "MODEL",
+          "link": 101
+        },
+        {
+          "name": "vae",
+          "type": "VAE",
+          "link": 105
+        },
+        {
+          "name": "positive_cond",
+          "type": "CONDITIONING",
+          "link": 106
+        },
+        {
+          "name": "negative_cond",
+          "type": "CONDITIONING",
+          "link": 107
+        },
+        {
+          "name": "latent",
+          "type": "LATENT",
+          "link": 108
+        }
+      ],
+      "outputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "links": [
+            99,
+            104
+          ]
+        },
+        {
+          "name": "config",
+          "type": "MODEL_COMPARE_CONFIG",
+          "links": [
+            103
+          ]
+        },
+        {
+          "name": "labels",
+          "type": "STRING",
+          "links": [
+            102,
+            109
+          ]
+        }
+      ],
+      "properties": {
+        "aux_id": "tlennon-ie/comfyui-model-compare",
+        "ver": "846c094ae8a9a6caa0ba0065f68e26e8a604c194",
+        "Node name for S&R": "SamplerCompareSimple",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "input_ue_unconnectable": {},
+          "version": "7.4.1"
+        }
+      },
+      "widgets_values": [
+        "FLUX2",
+        20,
+        1,
+        "euler",
+        "simple",
+        1,
+        523823008598280,
+        "randomize",
+        0,
+        15,
+        15,
+        30,
+        7,
+        8,
+        3,
+        3,
+        4,
+        null
+      ]
+    },
+    {
+      "id": 30,
+      "type": "ModelCompareLoaders",
+      "pos": [
+        -510,
+        -80
+      ],
+      "size": [
+        630,
+        594
+      ],
+      "flags": {},
+      "order": 2,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "prompt_config",
+          "shape": 7,
+          "type": "PROMPT_COMPARE_CONFIG",
+          "link": 92
+        }
+      ],
+      "outputs": [
+        {
+          "name": "config",
+          "type": "MODEL_COMPARE_CONFIG",
+          "links": [
+            100
+          ]
+        },
+        {
+          "name": "base_model",
+          "type": "MODEL",
+          "links": [
+            101
+          ]
+        },
+        {
+          "name": "base_vae",
+          "type": "VAE",
+          "links": [
+            105
+          ]
+        },
+        {
+          "name": "positive_cond",
+          "type": "CONDITIONING",
+          "links": [
+            106
+          ]
+        },
+        {
+          "name": "negative_cond",
+          "type": "CONDITIONING",
+          "links": [
+            107
+          ]
+        }
+      ],
+      "properties": {
+        "aux_id": "tlennon-ie/comfyui-model-compare",
+        "ver": "846c094ae8a9a6caa0ba0065f68e26e8a604c194",
+        "Node name for S&R": "ModelCompareLoaders",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "input_ue_unconnectable": {},
+          "version": "7.4.1"
+        }
+      },
+      "widgets_values": [
+        "HUNYUAN_VIDEO_15",
+        "[Diffusion] hunyuanvideo1.5_720p_t2v_fp16.safetensors",
+        false,
+        "HY1.5",
+        "NONE",
+        "hunyuanvideo15_vae_fp16.safetensors",
+        "byt5_small_glyphxl_fp16.safetensors",
+        "qwen_2.5_vl_7b_fp8_scaled.safetensors",
+        "hunyuan_video_15",
+        "default",
+        2,
+        2,
+        2,
+        0,
+        "[Diffusion] extra\\flux2_dev_fp8mixed.safetensors",
+        "FluxDev2-FP8",
+        false,
+        "NONE",
+        "extra\\mistral_3_small_flux2_fp8.safetensors",
+        "t5xxl_fp8_e4m3fn.safetensors",
+        "flux2",
+        "cpu",
+        "flux2-vae.safetensors",
+        "[Diffusion] extra\\flux2_dev_fp8mixed.safetensors",
+        "FluxDev2-FP8",
+        false,
+        "NONE",
+        "extra\\mistral_3_small_flux2_fp8.safetensors",
+        "NONE",
+        "flux2",
+        "cpu",
+        "flux2-vae.safetensors",
+        "NONE",
+        "",
+        false,
+        "NONE",
+        "NONE",
+        "NONE",
+        "default",
+        "default",
+        "NONE",
+        "NONE",
+        "",
+        false,
+        "NONE",
+        "NONE",
+        "NONE",
+        "default",
+        "default",
+        "NONE",
+        "NONE",
+        "1.0",
+        "",
+        "NONE",
+        "1.0",
+        "",
+        "+",
+        "NONE",
+        "1.0",
+        "",
+        "NONE",
+        "1.0",
+        "",
+        "+",
+        "NONE",
+        "1.0",
+        "",
+        "NONE",
+        "1.0",
+        "",
+        "+",
+        "NONE",
+        "1.0",
+        "",
+        "NONE",
+        "1.0",
+        "",
+        "+",
+        "NONE",
+        "1.0",
+        "",
+        "NONE",
+        "1.0",
+        "",
+        "+",
+        "NONE",
+        "1.0",
+        "",
+        "NONE",
+        "1.0",
+        "",
+        "+",
+        "NONE",
+        "1.0",
+        "",
+        "NONE",
+        "1.0",
+        "",
+        "+",
+        "NONE",
+        "1.0",
+        "",
+        "NONE",
+        "1.0",
+        "",
+        "+",
+        "NONE",
+        "1.0",
+        "",
+        "NONE",
+        "1.0",
+        "",
+        "+",
+        "NONE",
+        "1.0",
+        "",
+        "NONE",
+        "1.0",
+        "",
+        null
+      ]
+    }
+  ],
+  "links": [
+    [
+      88,
+      28,
+      0,
+      5,
+      0,
+      "IMAGE"
+    ],
+    [
+      92,
+      1,
+      0,
+      30,
+      0,
+      "PROMPT_COMPARE_CONFIG"
+    ],
+    [
+      99,
+      31,
+      0,
+      11,
+      0,
+      "IMAGE"
+    ],
+    [
+      100,
+      30,
+      0,
+      31,
+      0,
+      "MODEL_COMPARE_CONFIG"
+    ],
+    [
+      101,
+      30,
+      1,
+      31,
+      1,
+      "MODEL"
+    ],
+    [
+      102,
+      31,
+      2,
+      28,
+      2,
+      "STRING"
+    ],
+    [
+      103,
+      31,
+      1,
+      28,
+      1,
+      "MODEL_COMPARE_CONFIG"
+    ],
+    [
+      104,
+      31,
+      0,
+      28,
+      0,
+      "IMAGE"
+    ],
+    [
+      105,
+      30,
+      2,
+      31,
+      2,
+      "VAE"
+    ],
+    [
+      106,
+      30,
+      3,
+      31,
+      3,
+      "CONDITIONING"
+    ],
+    [
+      107,
+      30,
+      4,
+      31,
+      4,
+      "CONDITIONING"
+    ],
+    [
+      108,
+      4,
+      0,
+      31,
+      5,
+      "LATENT"
+    ],
+    [
+      109,
+      31,
+      2,
+      9,
+      0,
+      "STRING"
+    ]
+  ],
+  "groups": [],
+  "config": {},
+  "extra": {
+    "ue_links": [],
+    "links_added_by_ue": [],
+    "ds": {
+      "scale": 0.7627768444385572,
+      "offset": [
+        1070,
+        180
+      ]
+    },
+    "frontendVersion": "1.30.6",
+    "VHS_latentpreview": false,
+    "VHS_latentpreviewrate": 0,
+    "VHS_MetadataImage": true,
+    "VHS_KeepIntermediate": true
+  },
+  "version": 0.4
+}

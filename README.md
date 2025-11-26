@@ -99,16 +99,27 @@ The key difference: Model Compare Loaders handles **all** model loading and gene
 ## Example Workflows
 
 ### FLUX 1 vs FLUX 2
-*[FLUX workflow placeholder - add workflow.json and workflow.png to examples/flux/]*
+Compare FLUX Dev 1 against FLUX Dev 2 with their respective VAEs and CLIPs.
+
+![FLUX Compare Workflow](examples/flux/flux-compare-workflow.png)
+
+📥 [Download Workflow JSON](examples/flux/flux-compare-workflow.json)
+
+### Hunyuan vs FLUX 2 (Cross-Model)
+Compare different model architectures side-by-side.
+
+![Hunyuan vs FLUX2](examples/multi/Hunyuan-V-Flux2.png)
+
+📥 [Download Workflow JSON](examples/multi/Hunyuan-V-Flux2.json)
 
 ### SDXL Model Comparison  
-*[SDXL workflow placeholder - add workflow.json and workflow.png to examples/sdxl/]*
+*[Coming soon - add workflow.json and workflow.png to examples/sdxl/]*
 
 ### WAN 2.1/2.2 Comparison
-*[WAN workflow placeholder - add workflow.json and workflow.png to examples/wan/]*
+*[Coming soon - add workflow.json and workflow.png to examples/wan/]*
 
 ### Hunyuan Video
-*[Hunyuan workflow placeholder - add workflow.json and workflow.png to examples/hunyuan/]*
+*[Coming soon - add workflow.json and workflow.png to examples/hunyuan/]*
 
 ## Key Features
 
