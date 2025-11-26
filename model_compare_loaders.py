@@ -119,7 +119,9 @@ class ModelCompareLoaders:
             },
         }
 
+        # Add variations grouped by number (variation 1 all fields, then variation 2, etc.)
         for i in range(1, 5):
+            # Diffusion model variation i
             inputs["optional"][f"diffusion_model_variation_{i}"] = (
                 ["NONE"] + combined_models,
                 {"default": "NONE",
@@ -144,7 +146,30 @@ class ModelCompareLoaders:
                 {"default": "NONE",
                  "tooltip": f"Variation {i}: Low Noise model (WAN 2.2)"},
             )
+            
+            # CLIP variation i
+            inputs["optional"][f"clip_model_variation_{i}"] = (
+                ["NONE"] + clip_models,
+                {"default": "NONE",
+                 "tooltip": f"Variation {i}: Primary CLIP (independent of base baked_vae_clip)"},
+            )
+            inputs["optional"][f"clip_model_variation_{i}_2"] = (
+                ["NONE"] + clip_models,
+                {"default": "NONE",
+                 "tooltip": f"Variation {i}: Secondary CLIP (Hunyuan/FLUX/WAN Dual CLIP support)"},
+            )
+            inputs["optional"][f"clip_type_variation_{i}"] = (
+                ["default", "sd", "sdxl", "sd3", "flux", "flux2", "wan", "hunyuan_video", "hunyuan_video_15", "qwen"],
+                {"default": "default", "tooltip": f"Variation {i}: CLIP Type (choose flux2 for single CLIP, flux for dual CLIP)"}
+            )
+            
+            # VAE variation i
+            inputs["optional"][f"vae_variation_{i}"] = (
+                ["NONE"] + vaes,
+                {"default": "NONE", "tooltip": f"VAE Variation {i} (independent of base baked_vae_clip - set baked_vae_clip_variation_{i} toggle)"}
+            )
         
+        # LoRA fields (separate section after variations)
         for i in range(10):
             inputs["optional"][f"lora_{i}"] = (
                 ["NONE"] + loras,
@@ -196,27 +221,6 @@ class ModelCompareLoaders:
                     ["+", " "],
                     {"default": "+", "tooltip": "Combine with next LoRA (+ for AND, space for OR)"}
                 )
-
-        for i in range(1, 5):
-            inputs["optional"][f"clip_model_variation_{i}"] = (
-                ["NONE"] + clip_models,
-                {"default": "NONE",
-                 "tooltip": f"Variation {i}: Primary CLIP (independent of base baked_vae_clip)"},
-            )
-            inputs["optional"][f"clip_model_variation_{i}_2"] = (
-                ["NONE"] + clip_models,
-                {"default": "NONE",
-                 "tooltip": f"Variation {i}: Secondary CLIP (Hunyuan/FLUX/WAN Dual CLIP support)"},
-            )
-            inputs["optional"][f"clip_type_variation_{i}"] = (
-                ["default", "sd", "sdxl", "sd3", "flux", "flux2", "wan", "hunyuan_video", "hunyuan_video_15", "qwen"],
-                {"default": "default", "tooltip": f"Variation {i}: CLIP Type (choose flux2 for single CLIP, flux for dual CLIP)"}
-            )
-        for i in range(1, 5):
-            inputs["optional"][f"vae_variation_{i}"] = (
-                ["NONE"] + vaes,
-                {"default": "NONE", "tooltip": f"VAE Variation {i} (independent of base baked_vae_clip - set baked_vae_clip_variation_{i} toggle)"}
-            )
 
         return inputs
 
