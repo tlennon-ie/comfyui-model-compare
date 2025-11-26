@@ -1,11 +1,8 @@
 // Model Compare Web Extension
 // Adds "Update Inputs" button to Model Compare nodes and handles dynamic visibility
 
-console.log("[ModelCompare] model_compare.js loaded");
-
 function chainCallback(object, property, callback) {
     if (object == undefined) {
-        console.error("[ModelCompare] Tried to add callback to non-existant object");
         return;
     }
     if (property in object) {
@@ -28,29 +25,22 @@ function tryRegisterExtension() {
 
     if (window.comfyAPI && window.comfyAPI.app && window.comfyAPI.app.app) {
         const app = window.comfyAPI.app.app;
-        console.log("[ModelCompare] Found ComfyApp at window.comfyAPI.app.app");
         registerExtension(app);
         return;
     }
 
     if (registerAttempts < maxAttempts) {
         setTimeout(tryRegisterExtension, 50);
-    } else {
-        console.error("[ModelCompare] Failed to find proper app after " + maxAttempts + " attempts");
     }
 }
 
 function registerExtension(app) {
-    console.log("[ModelCompare] Registering extension with app object");
-
     app.registerExtension({
         name: "comfyui-model-compare",
 
         async beforeRegisterNodeDef(nodeType, nodeData, app) {
             // --- ModelCompareLoaders Logic ---
             if (nodeData.name === "ModelCompareLoaders") {
-                console.log("[ModelCompare] Setting up ModelCompareLoaders");
-
                 chainCallback(nodeType.prototype, "configure", function (info) {
                     setTimeout(() => {
                         if (this.size) {
@@ -88,13 +78,9 @@ function registerExtension(app) {
                             const isFLUX = preset === "FLUX";
                             const isHUNYUAN = preset === "HUNYUAN_VIDEO";
 
-                            let hiddenCount = 0;
-                            let visibleCount = 0;
-
                             self.widgets.forEach((widget) => {
                                 if (!widget.name) {
                                     widget.computeSize = widget.origComputeSize;
-                                    visibleCount++;
                                     return;
                                 }
 
@@ -106,7 +92,6 @@ function registerExtension(app) {
 
                                 if (alwaysShow.includes(widget.name) || widget.type === "button") {
                                     widget.computeSize = widget.origComputeSize;
-                                    visibleCount++;
                                     return;
                                 }
 
@@ -219,10 +204,8 @@ function registerExtension(app) {
 
                                 if (shouldShow) {
                                     widget.computeSize = widget.origComputeSize;
-                                    visibleCount++;
                                 } else {
                                     widget.computeSize = () => [0, -4];
-                                    hiddenCount++;
                                 }
                             });
 
@@ -276,14 +259,16 @@ function registerExtension(app) {
 
             // --- PromptCompare Logic ---
             if (nodeData.name === "PromptCompare") {
-                console.log("[ModelCompare] Setting up PromptCompare");
-
                 chainCallback(nodeType.prototype, "configure", function (info) {
                     setTimeout(() => {
                         if (this.size) {
                             this.size[0] = 400;
                         }
-                    }, 10);
+                        // Trigger visibility update after configure
+                        if (this._updatePromptVisibility) {
+                            this._updatePromptVisibility();
+                        }
+                    }, 50);
                 });
 
                 chainCallback(nodeType.prototype, "onNodeCreated", function () {
@@ -291,43 +276,48 @@ function registerExtension(app) {
                         const self = this;
                         const appRef = app;
 
-                        self.widgets.forEach((w) => {
-                            if (!w.origComputeSize) {
-                                w.origComputeSize = w.computeSize;
-                            }
-                        });
+                        // Store origComputeSize for all widgets
+                        const ensureOrigComputeSize = () => {
+                            self.widgets.forEach((w) => {
+                                if (!w.origComputeSize) {
+                                    if (typeof w.computeSize === 'function') {
+                                        w.origComputeSize = w.computeSize;
+                                    } else {
+                                        w.origComputeSize = () => [200, 60]; // Default for text widgets
+                                    }
+                                }
+                            });
+                        };
 
                         const updatePromptVisibility = () => {
-                            const getVal = (n, d) => {
-                                const w = self.widgets.find((x) => x.name === n);
-                                return w ? w.value : d;
-                            };
-
-                            const num_prompt_variations = parseInt(getVal("num_prompt_variations", 1), 10);
-                            console.log("[ModelCompare] PromptCompare num_prompt_variations:", num_prompt_variations);
-
-                            const alwaysShow = ["positive_prompt_1", "negative_prompt_1", "num_prompt_variations"];
+                            ensureOrigComputeSize();
+                            
+                            const numWidget = self.widgets.find((x) => x.name === "num_prompt_variations");
+                            const num_prompt_variations = numWidget ? parseInt(numWidget.value, 10) : 1;
 
                             self.widgets.forEach((widget) => {
                                 if (!widget.name || widget.type === "button") {
-                                    widget.computeSize = widget.origComputeSize;
+                                    if (widget.origComputeSize) {
+                                        widget.computeSize = widget.origComputeSize;
+                                    }
                                     return;
                                 }
 
-                                if (alwaysShow.includes(widget.name)) {
+                                // Always show prompt 1 and the slider
+                                if (widget.name === "num_prompt_variations" || 
+                                    widget.name === "positive_prompt_1" || 
+                                    widget.name === "negative_prompt_1") {
                                     widget.computeSize = widget.origComputeSize;
                                     return;
                                 }
 
                                 let shouldShow = false;
 
+                                // Check for positive_prompt_N or negative_prompt_N
                                 if (widget.name.startsWith("positive_prompt_") || widget.name.startsWith("negative_prompt_")) {
                                     const parts = widget.name.split("_");
                                     const num = parseInt(parts[parts.length - 1], 10);
                                     shouldShow = num <= num_prompt_variations;
-                                    if (!shouldShow) {
-                                        console.log(`[ModelCompare] Hiding ${widget.name} (num=${num}, max=${num_prompt_variations})`);
-                                    }
                                 }
 
                                 if (shouldShow) {
@@ -348,41 +338,40 @@ function registerExtension(app) {
                             }
                         };
 
-                        const triggerWidgets = ["num_prompt_variations"];
+                        // Store the function on the node for later access
+                        self._updatePromptVisibility = updatePromptVisibility;
 
-                        triggerWidgets.forEach(name => {
-                            const w = self.widgets.find(w => w.name === name);
-                            if (w) {
-                                const originalCallback = w.callback;
-                                w.callback = function (value) {
-                                    if (originalCallback) originalCallback.call(this, value);
-                                    updatePromptVisibility();
-                                };
-                            }
-                        });
+                        // Add callback to num_prompt_variations widget
+                        const numWidget = self.widgets.find(w => w.name === "num_prompt_variations");
+                        if (numWidget) {
+                            const originalCallback = numWidget.callback;
+                            numWidget.callback = function (value) {
+                                if (originalCallback) originalCallback.call(this, value);
+                                updatePromptVisibility();
+                            };
+                        }
 
-                        // Add Update Inputs button and save its origComputeSize
+                        // Add Update Inputs button
                         const updateBtn = this.addWidget("button", "Update Inputs", null, () => {
                             updatePromptVisibility();
                         });
                         if (updateBtn && !updateBtn.origComputeSize) {
-                            updateBtn.origComputeSize = updateBtn.computeSize;
+                            updateBtn.origComputeSize = updateBtn.computeSize || (() => [200, 30]);
                         }
 
+                        // Initial visibility update with delay to ensure widgets are ready
                         setTimeout(() => {
                             updatePromptVisibility();
-                        }, 50);
+                        }, 100);
 
                     } catch (e) {
-                        console.error("[ModelCompare] Error in PromptCompare onNodeCreated:", e);
+                        // Silent fail
                     }
                 });
             }
 
             // --- SamplerCompareSimple Logic ---
             if (nodeData.name === "SamplerCompareSimple") {
-                console.log("[ModelCompare] Setting up SamplerCompareSimple");
-
                 chainCallback(nodeType.prototype, "configure", function (info) {
                     setTimeout(() => {
                         if (this.size) {
@@ -474,15 +463,13 @@ function registerExtension(app) {
                         }, 100);
 
                     } catch (e) {
-                        console.error("[ModelCompare] Error in Sampler onNodeCreated:", e);
+                        // Silent fail
                     }
                 });
             }
 
             // --- GridCompare Logic ---
             if (nodeData.name === "GridCompare") {
-                console.log("[ModelCompare] Setting up GridCompare");
-
                 chainCallback(nodeType.prototype, "configure", function (info) {
                     setTimeout(() => {
                         if (this.size) {
@@ -493,8 +480,6 @@ function registerExtension(app) {
             }
         }
     });
-
-    console.log("[ModelCompare] Extension registered successfully");
 }
 
 tryRegisterExtension();
