@@ -108,7 +108,9 @@ function registerExtension(app) {
                                     shouldShow = true;
                                 }
                                 else if (widget.name === "diffusion_model_low") {
-                                    shouldShow = isWAN22;
+                                    // Show for WAN2.2 preset OR if base clip_type is wan22
+                                    const baseClipType = getVal("clip_type", "default");
+                                    shouldShow = isWAN22 || baseClipType === "wan22";
                                 }
                                 else if (widget.name === "vae") {
                                     shouldShow = !baked_vae_clip;
@@ -118,7 +120,9 @@ function registerExtension(app) {
                                 }
                                 else if (widget.name === "clip_model_2") {
                                     // Show second CLIP only for dual-CLIP presets/types
-                                    const needsDualClip = ["flux", "wan", "hunyuan_video", "hunyuan_video_15"].includes(preset.toLowerCase());
+                                    const baseClipType = getVal("clip_type", "default");
+                                    const needsDualClip = ["flux", "wan", "wan22", "hunyuan_video", "hunyuan_video_15"].includes(preset.toLowerCase()) ||
+                                                          ["flux", "wan", "wan22", "hunyuan_video", "hunyuan_video_15"].includes(baseClipType);
                                     shouldShow = needsDualClip && !baked_vae_clip;
                                 }
 
@@ -137,7 +141,10 @@ function registerExtension(app) {
 
                                     if (num < num_diffusion_models) {
                                         if (isLow) {
-                                            shouldShow = isWAN22;
+                                            // Show _low field if preset is WAN2.2 OR this variation's clip_type is wan22
+                                            const varClipTypeWidget = self.widgets.find(w => w.name === `clip_type_variation_${num}`);
+                                            const varClipType = varClipTypeWidget ? varClipTypeWidget.value : "default";
+                                            shouldShow = isWAN22 || varClipType === "wan22";
                                         } else if (isLabel) {
                                             shouldShow = true; // Always show label for visible variations
                                         } else {
@@ -171,7 +178,7 @@ function registerExtension(app) {
                                             resolvedClipType = preset.toLowerCase();
                                         }
                                         
-                                        const dualClipTypes = ["flux", "wan", "hunyuan_video", "hunyuan_video_15"];
+                                        const dualClipTypes = ["flux", "wan", "wan22", "hunyuan_video", "hunyuan_video_15"];
                                         const needsDualClip = dualClipTypes.includes(resolvedClipType);
                                         
                                         if (isSecondary) {
@@ -197,7 +204,9 @@ function registerExtension(app) {
 
                                     if (loraNum < num_loras) {
                                         if (widget.name.includes("_low")) {
-                                            shouldShow = isWAN22;
+                                            // Show _low LoRA if preset is WAN2.2 OR base clip_type is wan22
+                                            const baseClipType = getVal("clip_type", "default");
+                                            shouldShow = isWAN22 || baseClipType === "wan22";
                                         } else if (widget.name.includes("combiner")) {
                                             shouldShow = loraNum < (num_loras - 1);
                                         } else {
