@@ -108,9 +108,10 @@ function registerExtension(app) {
                                     shouldShow = true;
                                 }
                                 else if (widget.name === "diffusion_model_low") {
-                                    // Show for WAN2.2 preset OR if base clip_type is wan22
+                                    // Show for WAN2.2 ONLY if base clip_type is wan22
+                                    // DO NOT inherit from global preset - base model controls its own LOW field
                                     const baseClipType = getVal("clip_type", "default");
-                                    shouldShow = isWAN22 || baseClipType === "wan22";
+                                    shouldShow = baseClipType === "wan22";
                                 }
                                 else if (widget.name === "vae") {
                                     shouldShow = !baked_vae_clip;
@@ -144,10 +145,11 @@ function registerExtension(app) {
 
                                     if (num < num_diffusion_models) {
                                         if (isLow) {
-                                            // Show _low field if preset is WAN2.2 OR this variation's clip_type is wan22
+                                            // Show _low field ONLY if this variation's own clip_type is wan22
+                                            // DO NOT inherit from global preset - each variation controls its own LOW field
                                             const varClipTypeWidget = self.widgets.find(w => w.name === `clip_type_variation_${num}`);
                                             const varClipType = varClipTypeWidget ? varClipTypeWidget.value : "default";
-                                            shouldShow = isWAN22 || varClipType === "wan22";
+                                            shouldShow = varClipType === "wan22";
                                         } else if (isLabel) {
                                             shouldShow = true; // Always show label for visible variations
                                         } else {
@@ -216,31 +218,6 @@ function registerExtension(app) {
                                         } else {
                                             shouldShow = true;
                                         }
-                                    }
-                                }
-                                
-                                // --- FPS Fields (Video Models) ---
-                                else if (widget.name === "fps") {
-                                    // Show base FPS for video presets
-                                    const videoPresets = ["WAN2.1", "WAN2.2", "HUNYUAN_VIDEO", "HUNYUAN_VIDEO_15"];
-                                    shouldShow = videoPresets.includes(preset);
-                                }
-                                else if (widget.name.startsWith("fps_variation_")) {
-                                    // Show FPS for each video model variation
-                                    const num = parseInt(widget.name.split("_")[2]);
-                                    if (num < num_diffusion_models) {
-                                        // Check if this variation's clip_type is a video type
-                                        const varClipTypeWidget = self.widgets.find(w => w.name === `clip_type_variation_${num}`);
-                                        const varClipType = varClipTypeWidget ? varClipTypeWidget.value : "default";
-                                        
-                                        let resolvedType = varClipType;
-                                        if (resolvedType === "default") {
-                                            resolvedType = preset.toLowerCase();
-                                        }
-                                        
-                                        const videoTypes = ["wan", "wan22", "hunyuan_video", "hunyuan_video_15"];
-                                        const videoPresets = ["wan2.1", "wan2.2", "hunyuan_video", "hunyuan_video_15"];
-                                        shouldShow = videoTypes.includes(resolvedType) || videoPresets.includes(resolvedType);
                                     }
                                 }
 
@@ -518,6 +495,265 @@ function registerExtension(app) {
                             this.size[0] = 400;
                         }
                     }, 10);
+                });
+            }
+
+            // --- SamplingConfigChain Logic ---
+            if (nodeData.name === "SamplingConfigChain") {
+                chainCallback(nodeType.prototype, "configure", function (info) {
+                    setTimeout(() => {
+                        if (this.size) {
+                            this.size[0] = 400;
+                        }
+                    }, 10);
+                });
+
+                chainCallback(nodeType.prototype, "onNodeCreated", function () {
+                    try {
+                        const self = this;
+                        const appRef = app;
+
+                        // Store original computeSize for all widgets
+                        self.widgets.forEach((w) => {
+                            if (!w.origComputeSize) {
+                                if (typeof w.computeSize === 'function') {
+                                    w.origComputeSize = w.computeSize;
+                                } else {
+                                    w.origComputeSize = () => [200, 20];
+                                }
+                            }
+                        });
+
+                        const updateConfigVisibility = () => {
+                            const configTypeWidget = self.widgets.find(w => w.name === "config_type");
+                            const configType = configTypeWidget ? configTypeWidget.value : "STANDARD";
+
+                            // Define which config type shows which fields
+                            const isQWEN = configType === "QWEN";
+                            const isWAN21 = configType === "WAN2.1";
+                            const isWAN22 = configType === "WAN2.2";
+                            const isHUNYUAN = configType === "HUNYUAN_VIDEO" || configType === "HUNYUAN_VIDEO_15";
+                            const isFLUX = configType === "FLUX" || configType === "FLUX2";
+                            const isVideo = isWAN21 || isWAN22 || isHUNYUAN;
+
+                            // Common fields always shown
+                            const alwaysShow = [
+                                "config", "variation_index", "config_type",
+                                "seed", "seed_control", "steps", "cfg",
+                                "sampler_name", "scheduler", "denoise"
+                            ];
+
+                            self.widgets.forEach((widget) => {
+                                if (!widget.name) return;
+
+                                let shouldShow = false;
+
+                                // Always show common fields
+                                if (alwaysShow.includes(widget.name)) {
+                                    shouldShow = true;
+                                }
+                                // QWEN fields
+                                else if (widget.name.startsWith("qwen_")) {
+                                    shouldShow = isQWEN;
+                                }
+                                // WAN 2.1 fields
+                                else if (widget.name === "wan_shift") {
+                                    shouldShow = isWAN21;
+                                }
+                                // WAN 2.2 fields
+                                else if (widget.name.startsWith("wan22_")) {
+                                    shouldShow = isWAN22;
+                                }
+                                // Hunyuan fields
+                                else if (widget.name === "hunyuan_shift") {
+                                    shouldShow = isHUNYUAN;
+                                }
+                                // FLUX fields
+                                else if (widget.name === "flux_guidance") {
+                                    shouldShow = isFLUX;
+                                }
+                                // FPS for video models
+                                else if (widget.name === "fps") {
+                                    shouldShow = isVideo;
+                                }
+
+                                // Apply visibility
+                                if (shouldShow) {
+                                    if (widget.origComputeSize) {
+                                        widget.computeSize = widget.origComputeSize;
+                                    } else {
+                                        widget.computeSize = () => [200, 20];
+                                    }
+                                } else {
+                                    widget.computeSize = () => [0, -4];
+                                }
+                            });
+
+                            // Resize node
+                            if (self.size) {
+                                self.setSize(self.computeSize());
+                            }
+                            self.size[0] = 400;
+
+                            if (appRef && appRef.graph) {
+                                appRef.graph.setDirtyCanvas(true, true);
+                            }
+                        };
+
+                        // Hook config_type widget change
+                        const configTypeWidget = self.widgets.find(w => w.name === "config_type");
+                        if (configTypeWidget) {
+                            const originalCallback = configTypeWidget.callback;
+                            configTypeWidget.callback = function (value) {
+                                if (originalCallback) originalCallback.call(this, value);
+                                updateConfigVisibility();
+                            };
+                        }
+
+                        // Add update button
+                        this.addWidget("button", "Update Inputs", null, () => {
+                            updateConfigVisibility();
+                        });
+
+                        // Initial visibility update
+                        setTimeout(() => {
+                            updateConfigVisibility();
+                        }, 100);
+
+                    } catch (e) {
+                        console.error("[SamplingConfigChain] Error:", e);
+                    }
+                });
+            }
+
+            // --- LoraCompare Logic ---
+            if (nodeData.name === "LoraCompare") {
+                chainCallback(nodeType.prototype, "configure", function (info) {
+                    setTimeout(() => {
+                        if (this.size) {
+                            this.size[0] = 500;
+                        }
+                    }, 10);
+                });
+
+                chainCallback(nodeType.prototype, "onNodeCreated", function () {
+                    try {
+                        const self = this;
+                        const appRef = app;
+
+                        // Store original computeSize for all widgets
+                        self.widgets.forEach((w) => {
+                            if (!w.origComputeSize) {
+                                if (typeof w.computeSize === 'function') {
+                                    w.origComputeSize = w.computeSize;
+                                } else {
+                                    w.origComputeSize = () => [200, 20];
+                                }
+                            }
+                        });
+
+                        const updateLoraVisibility = () => {
+                            const numLorasWidget = self.widgets.find(w => w.name === "num_loras");
+                            const loraModeWidget = self.widgets.find(w => w.name === "lora_mode");
+                            
+                            const numLoras = numLorasWidget ? parseInt(numLorasWidget.value, 10) : 1;
+                            const loraMode = loraModeWidget ? loraModeWidget.value : "SINGLE";
+                            const isHighLow = loraMode === "HIGH_LOW_PAIR";
+
+                            // Always show these
+                            const alwaysShow = ["num_loras", "lora_mode"];
+
+                            self.widgets.forEach((widget) => {
+                                if (!widget.name) return;
+
+                                let shouldShow = false;
+
+                                // Always show control fields
+                                if (alwaysShow.includes(widget.name) || widget.type === "button") {
+                                    shouldShow = true;
+                                }
+                                // LoRA slot fields
+                                else if (widget.name.startsWith("lora_")) {
+                                    // Parse lora_N or lora_N_something
+                                    const match = widget.name.match(/^lora_(\d+)(_(.+))?$/);
+                                    if (match) {
+                                        const loraNum = parseInt(match[1], 10);
+                                        const suffix = match[3] || ""; // strengths, label, low, low_strengths, low_label, combinator
+                                        
+                                        // Show if within num_loras
+                                        if (loraNum < numLoras) {
+                                            if (suffix === "" || suffix === "strengths" || suffix === "label") {
+                                                // Primary LoRA fields always shown when slot is active
+                                                shouldShow = true;
+                                            }
+                                            else if (suffix === "low" || suffix === "low_strengths" || suffix === "low_label") {
+                                                // LOW fields only shown in HIGH_LOW_PAIR mode
+                                                shouldShow = isHighLow;
+                                            }
+                                            else if (suffix === "combinator") {
+                                                // Combinator shown if there's another LoRA after this
+                                                shouldShow = loraNum < numLoras - 1;
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // Apply visibility
+                                if (shouldShow) {
+                                    if (widget.origComputeSize) {
+                                        widget.computeSize = widget.origComputeSize;
+                                    } else {
+                                        widget.computeSize = () => [200, 20];
+                                    }
+                                } else {
+                                    widget.computeSize = () => [0, -4];
+                                }
+                            });
+
+                            // Resize node
+                            if (self.size) {
+                                self.setSize(self.computeSize());
+                            }
+                            self.size[0] = 500;
+
+                            if (appRef && appRef.graph) {
+                                appRef.graph.setDirtyCanvas(true, true);
+                            }
+                        };
+
+                        // Hook num_loras widget change
+                        const numLorasWidget = self.widgets.find(w => w.name === "num_loras");
+                        if (numLorasWidget) {
+                            const originalCallback = numLorasWidget.callback;
+                            numLorasWidget.callback = function (value) {
+                                if (originalCallback) originalCallback.call(this, value);
+                                updateLoraVisibility();
+                            };
+                        }
+
+                        // Hook lora_mode widget change
+                        const loraModeWidget = self.widgets.find(w => w.name === "lora_mode");
+                        if (loraModeWidget) {
+                            const originalCallback = loraModeWidget.callback;
+                            loraModeWidget.callback = function (value) {
+                                if (originalCallback) originalCallback.call(this, value);
+                                updateLoraVisibility();
+                            };
+                        }
+
+                        // Add update button
+                        this.addWidget("button", "Update Inputs", null, () => {
+                            updateLoraVisibility();
+                        });
+
+                        // Initial visibility update
+                        setTimeout(() => {
+                            updateLoraVisibility();
+                        }, 100);
+
+                    } catch (e) {
+                        console.error("[LoraCompare] Error:", e);
+                    }
                 });
             }
         }

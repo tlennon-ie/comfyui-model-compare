@@ -1,9 +1,12 @@
 """
 Simple Model Compare Sampler - Works like standard KSampler but handles multiple model comparisons.
 Supports FLUX, QWEN, WAN, and Checkpoints.
+
+LAZY LOADING: Models are loaded on-demand per combination to minimize VRAM usage.
 """
 
 import gc
+import hashlib
 import torch
 import folder_paths
 import comfy.sd
@@ -11,14 +14,13 @@ import comfy.utils
 import comfy.sample
 import comfy.samplers
 import comfy.model_management
-from typing import List, Dict, Tuple, Any
+from typing import List, Dict, Tuple, Any, Optional
 from comfy_extras.nodes_model_advanced import ModelSamplingSD3, ModelSamplingAuraFlow, RescaleCFG, ModelSamplingFlux
 
 class SamplerCompareSimple:
     """
-    Simple sampler for model comparison.
-    Takes a config with multiple LoRA/Model combinations and samples each one.
-    Supports WAN 2.2 High/Low noise sampling.
+    Simple sampler for model comparison with LAZY LOADING.
+    Models are loaded on-demand and unloaded when config changes.
     """
     
     RETURN_TYPES = ("IMAGE", "MODEL_COMPARE_CONFIG", "STRING")
@@ -38,10 +40,6 @@ class SamplerCompareSimple:
         return {
             "required": {
                 "config": ("MODEL_COMPARE_CONFIG",),
-                "model": ("MODEL",),
-                "vae": ("VAE",),
-                "positive_cond": ("CONDITIONING",),
-                "negative_cond": ("CONDITIONING",),
                 "latent": ("LATENT",),
                 "preset": (["STANDARD", "SDXL", "PONY", "WAN2.1", "WAN2.2", "HUNYUAN_VIDEO", "HUNYUAN_VIDEO_15", "QWEN", "FLUX", "FLUX2"], {
                     "default": "STANDARD",
@@ -67,16 +65,149 @@ class SamplerCompareSimple:
                 # Flux
                 "flux_guidance": ("FLOAT", {"default": 4.0, "min": 0.0, "max": 100.0, "step": 0.1, "tooltip": "Guidance for Flux/Flux2"}),
             },
-            "optional": {}
+            "optional": {
+                "video_latent": ("LATENT", {
+                    "tooltip": "Optional video latent for video models"
+                }),
+            }
         }
+
+    # ===== LAZY LOADING HELPERS =====
+    
+    def _get_clip_type_enum(self, clip_type_str: str):
+        """Convert clip_type string to CLIPType enum."""
+        import comfy.sd
+        mapping = {
+            "sd": comfy.sd.CLIPType.STABLE_DIFFUSION,
+            "sdxl": getattr(comfy.sd.CLIPType, "STABLE_DIFFUSION", comfy.sd.CLIPType.STABLE_DIFFUSION),
+            "sd3": getattr(comfy.sd.CLIPType, "SD3", comfy.sd.CLIPType.STABLE_DIFFUSION),
+            "flux": getattr(comfy.sd.CLIPType, "FLUX", comfy.sd.CLIPType.STABLE_DIFFUSION),
+            "flux2": getattr(comfy.sd.CLIPType, "FLUX2", comfy.sd.CLIPType.STABLE_DIFFUSION),
+            "wan": getattr(comfy.sd.CLIPType, "WAN", getattr(comfy.sd.CLIPType, "FLUX", comfy.sd.CLIPType.STABLE_DIFFUSION)),
+            "wan22": getattr(comfy.sd.CLIPType, "WAN", getattr(comfy.sd.CLIPType, "FLUX", comfy.sd.CLIPType.STABLE_DIFFUSION)),
+            "hunyuan_video": getattr(comfy.sd.CLIPType, "HUNYUAN_VIDEO", comfy.sd.CLIPType.STABLE_DIFFUSION),
+            "hunyuan_video_15": getattr(comfy.sd.CLIPType, "HUNYUAN_VIDEO_15", comfy.sd.CLIPType.STABLE_DIFFUSION),
+            "qwen": getattr(comfy.sd.CLIPType, "QWEN_IMAGE", comfy.sd.CLIPType.STABLE_DIFFUSION),
+        }
+        key = clip_type_str.upper().replace("_", "")
+        if hasattr(comfy.sd.CLIPType, key):
+            return getattr(comfy.sd.CLIPType, key)
+        return mapping.get(clip_type_str, comfy.sd.CLIPType.STABLE_DIFFUSION)
+    
+    def _load_model(self, model_entry: Dict) -> Tuple[Any, Any]:
+        """Lazy load a model from stored path."""
+        model_obj = None
+        model_low_obj = None
+        
+        model_path = model_entry.get("model_path")
+        model_type = model_entry.get("model_type")
+        
+        if not model_path:
+            return None, None
+        
+        print(f"[SamplerCompareSimple] Loading model: {model_path}")
+        
+        if model_type == "checkpoint":
+            out = comfy.sd.load_checkpoint_guess_config(
+                model_path, output_vae=True, output_clip=True,
+                embedding_directory=folder_paths.get_folder_paths("embeddings")
+            )
+            model_obj = out[0]
+            if model_entry.get("use_baked_vae_clip"):
+                model_entry["_baked_clip"] = out[1]
+                model_entry["_baked_vae"] = out[2]
+        elif model_type == "diffusion":
+            model_obj = comfy.sd.load_diffusion_model(model_path, model_options={})
+        
+        model_low_path = model_entry.get("model_low_path")
+        if model_low_path:
+            print(f"[SamplerCompareSimple] Loading low noise model: {model_low_path}")
+            model_low_obj = comfy.sd.load_diffusion_model(model_low_path, model_options={})
+        
+        return model_obj, model_low_obj
+    
+    def _load_vae(self, vae_name: str, config: Dict, model_entry: Dict) -> Any:
+        """Lazy load a VAE."""
+        if vae_name == "__baked__":
+            return model_entry.get("_baked_vae")
+        if vae_name == "NONE" or not vae_name:
+            return None
+        
+        vae_paths = config.get("vae_paths", {})
+        vae_path = vae_paths.get(vae_name)
+        if not vae_path:
+            return None
+        
+        print(f"[SamplerCompareSimple] Loading VAE: {vae_path}")
+        return comfy.sd.VAE(sd=comfy.utils.load_torch_file(vae_path))
+    
+    def _load_clip(self, clip_var: Dict, config: Dict, model_entry: Dict) -> Any:
+        """Lazy load a CLIP."""
+        if not clip_var:
+            return None
+        
+        clip_type = clip_var.get("type")
+        clip_type_str = clip_var.get("clip_type", "sd")
+        device = clip_var.get("device", "default")
+        
+        model_options = {}
+        if device == "cpu":
+            model_options["load_device"] = torch.device("cpu")
+            model_options["offload_device"] = torch.device("cpu")
+        
+        if clip_type == "baked":
+            return model_entry.get("_baked_clip")
+        elif clip_type == "pair":
+            path_a = clip_var.get("a_path")
+            path_b = clip_var.get("b_path")
+            if path_a and path_b:
+                return comfy.sd.load_clip(
+                    ckpt_paths=[path_a, path_b],
+                    embedding_directory=folder_paths.get_folder_paths("embeddings"),
+                    clip_type=self._get_clip_type_enum(clip_type_str),
+                    model_options=model_options
+                )
+        elif clip_type == "single":
+            path = clip_var.get("model_path")
+            if path:
+                return comfy.sd.load_clip(
+                    ckpt_paths=[path],
+                    embedding_directory=folder_paths.get_folder_paths("embeddings"),
+                    clip_type=self._get_clip_type_enum(clip_type_str),
+                    model_options=model_options
+                )
+        return None
+    
+    def _unload_current(self):
+        """Unload all models and free VRAM."""
+        comfy.model_management.unload_all_models()
+        comfy.model_management.cleanup_models()
+        comfy.model_management.soft_empty_cache()
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    
+    def _get_combo_key(self, combo: Dict) -> str:
+        """Generate unique key for combination based on model/VAE/CLIP/LoRA."""
+        model_idx = combo.get("model_index", 0)
+        vae_name = combo.get("vae_name", "")
+        clip_var = combo.get("clip_variation", {})
+        clip_key = clip_var.get("model", "") if clip_var.get("type") == "single" else f"{clip_var.get('a', '')}+{clip_var.get('b', '')}"
+        lora_names = combo.get("lora_names", [])
+        lora_strengths = combo.get("lora_strengths", ())
+        lora_key = str(list(zip(lora_names, lora_strengths)))
+        return f"{model_idx}|{vae_name}|{clip_key}|{lora_key}"
+
+    def _decode_latent(self, latent_out: Dict, vae) -> torch.Tensor:
+        """Decode latent to image using VAE."""
+        from nodes import VAEDecode
+        vae_decode = VAEDecode()
+        (image,) = vae_decode.decode(vae, latent_out)
+        return image
 
     def sample_all_combinations(
         self,
         config: Dict[str, Any],
-        model,
-        vae,
-        positive_cond,
-        negative_cond,
         latent,
         preset: str,
         steps: int,
@@ -94,9 +225,10 @@ class SamplerCompareSimple:
         qwen_shift: float = 3.0,
         qwen_cfg_norm: float = 3.0,
         flux_guidance: float = 3.5,
+        video_latent: Optional[Dict] = None,
     ) -> Tuple[torch.Tensor, str]:
         """
-        Sample each combination in config.
+        Sample each combination with LAZY LOADING.
         """
         from nodes import common_ksampler
         
@@ -164,10 +296,10 @@ class SamplerCompareSimple:
                  patched_model = ModelSamplingSD3().patch(patched_model, shift)[0]
                  
             elif preset_name == "WAN2.2":
-                # Apply ModelSamplingSD3
-                # High noise uses 'shift', Low noise uses 'shift_low'
-                s = shift_low if is_low_noise else shift
-                patched_model = ModelSamplingSD3().patch(patched_model, s)[0]
+                # Apply ModelSamplingSD3 with shift=5.0 for WAN 2.2
+                # WAN 2.2 uses shift=5.0 (NOT 8.0 like WAN 2.1!)
+                wan22_shift = 5.0
+                patched_model = ModelSamplingSD3().patch(patched_model, wan22_shift)[0]
                 
             elif preset_name == "QWEN":
                 # Apply ModelSamplingAuraFlow and RescaleCFG
@@ -184,189 +316,134 @@ class SamplerCompareSimple:
                 
             return patched_model
         
-        # Track previous combination's configuration for smart offloading
-        # Only offload when model/VAE/CLIP/LoRA changes, not when just prompt changes
-        prev_model_idx = None
-        prev_vae_name = None
-        prev_clip_key = None
-        prev_lora_key = None
-        
-        def get_combo_key(combo):
-            """Generate a key representing the model/VAE/CLIP/LoRA configuration"""
-            model_idx = combo.get("model_index", 0)
-            vae_name = combo.get("vae_name", "")
-            clip_var = combo.get("clip_variation", {})
-            clip_key = clip_var.get("model", "") if clip_var.get("type") == "single" else f"{clip_var.get('a', '')}+{clip_var.get('b', '')}"
-            lora_names = combo.get("lora_names", [])
-            lora_strengths = combo.get("lora_strengths", ())
-            lora_key = str(list(zip(lora_names, lora_strengths)))
-            return (model_idx, vae_name, clip_key, lora_key)
+        # Track currently loaded resources for smart unloading
+        current_model = None
+        current_model_low = None
+        current_vae = None
+        current_clip = None
+        current_key = None
+        current_model_entry = None
         
         for idx, combo in enumerate(combinations):
             print(f"\n[SamplerCompareSimple] === Combination {idx + 1}/{len(combinations)} ===")
             
             # Smart offloading: only cleanup when model/VAE/CLIP/LoRA changes
-            current_key = get_combo_key(combo)
-            prev_key = (prev_model_idx, prev_vae_name, prev_clip_key, prev_lora_key)
+            new_key = self._get_combo_key(combo)
+            needs_reload = current_key is None or new_key != current_key
             
-            needs_offload = idx == 0 or current_key != prev_key
-            
-            if needs_offload:
-                if idx > 0:
-                    print(f"[SamplerCompareSimple] Model config changed - offloading previous models")
-                # Aggressive GPU memory cleanup before loading new models
-                # This is critical when switching between large models like FLUX variants
-                comfy.model_management.unload_all_models()
-                comfy.model_management.cleanup_models()
-                comfy.model_management.soft_empty_cache()
-                gc.collect()
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
-                    torch.cuda.synchronize()
+            if needs_reload:
+                if current_key is not None:
+                    print(f"[SamplerCompareSimple] Model config changed - unloading previous models")
+                    self._unload_current()
                 
-                # Log available memory after cleanup
-                if torch.cuda.is_available():
-                    free_mem = torch.cuda.mem_get_info()[0] / (1024**3)
-                    total_mem = torch.cuda.mem_get_info()[1] / (1024**3)
-                    print(f"[SamplerCompareSimple] GPU Memory: {free_mem:.2f}GB free / {total_mem:.2f}GB total")
+                # Get model entry
+                model_idx = combo.get("model_index", 0)
+                current_model_entry = config["model_variations"][model_idx]
+                
+                # LAZY LOAD: Model
+                current_model, current_model_low = self._load_model(current_model_entry)
+                if current_model is None:
+                    print(f"[SamplerCompareSimple] ERROR: Failed to load model")
+                    continue
+                
+                # LAZY LOAD: VAE
+                vae_name = combo.get("vae_name", "NONE")
+                current_vae = self._load_vae(vae_name, config, current_model_entry)
+                
+                # LAZY LOAD: CLIP
+                clip_var = combo.get("clip_variation")
+                current_clip = self._load_clip(clip_var, config, current_model_entry)
+                
+                current_key = new_key
             else:
-                print(f"[SamplerCompareSimple] Same model config as previous - skipping offload (only prompt changed)")
-            
-            # 1. Retrieve Models & VAEs
-            model_idx = combo.get("model_index", 0)
-            model_entry = config["model_variations"][model_idx]
-            
-            # Determine which VAE to use
-            current_vae = vae # Default to input VAE
-            
-            if model_entry.get("baked_vae"):
-                current_vae = model_entry["baked_vae"]
-                print(f"[SamplerCompareSimple] Using Baked VAE from model")
-            else:
-                vae_name = combo.get("vae_name")
-                if vae_name and "vae_map" in config and vae_name in config["vae_map"]:
-                    current_vae = config["vae_map"][vae_name]
-                    print(f"[SamplerCompareSimple] Using VAE: {vae_name}")
+                print(f"[SamplerCompareSimple] Same model config - reusing loaded models")
+                model_idx = combo.get("model_index", 0)
             
             # Determine if this model is FLUX2 (needs different latent sizing)
-            # FLUX2 uses 16x compression vs 8x for FLUX/SDXL
             is_flux2_model = False
-            model_obj = model_entry.get("model_obj")
-            if model_obj:
-                try:
-                    latent_format = model_obj.get_model_object("latent_format")
-                    if latent_format and latent_format.latent_channels == 128:
-                        is_flux2_model = True
-                        print(f"[SamplerCompareSimple] Detected FLUX2 model (128 latent channels)")
-                except:
-                    pass
+            try:
+                latent_format = current_model.get_model_object("latent_format")
+                if latent_format and latent_format.latent_channels == 128:
+                    is_flux2_model = True
+                    print(f"[SamplerCompareSimple] Detected FLUX2 model (128 latent channels)")
+            except:
+                pass
             
             # Create appropriate latent for this model
-            # For FLUX2: halve the spatial dimensions since it uses 16x compression
             current_latent = latent
             if is_flux2_model and latent_channels != 128:
-                # Input latent is standard (4 or 16 channels with 8x compression)
-                # Need to create FLUX2-compatible latent at half spatial resolution
                 device = comfy.model_management.intermediate_device()
                 flux2_latent = torch.zeros(
                     [latent_image.shape[0], 128, latent_image.shape[2] // 2, latent_image.shape[3] // 2],
                     device=device
                 )
                 current_latent = {"samples": flux2_latent}
-                print(f"[SamplerCompareSimple] Created FLUX2 latent: {flux2_latent.shape} for {latent_width}x{latent_height} output")
+                print(f"[SamplerCompareSimple] Created FLUX2 latent: {flux2_latent.shape}")
             elif not is_flux2_model and latent_channels == 128:
-                # Input latent is FLUX2 (128 channels with 16x compression)
-                # Need to create standard latent at double spatial resolution
                 device = comfy.model_management.intermediate_device()
                 std_latent = torch.zeros(
                     [latent_image.shape[0], 4, latent_image.shape[2] * 2, latent_image.shape[3] * 2],
                     device=device
                 )
                 current_latent = {"samples": std_latent}
-                print(f"[SamplerCompareSimple] Created standard latent: {std_latent.shape} for {latent_width}x{latent_height} output")
+                print(f"[SamplerCompareSimple] Created standard latent: {std_latent.shape}")
             
-            # 2. Prepare Models (Clone & Apply LoRAs)
+            # Clone and apply patches
+            working_model = current_model
+            if hasattr(working_model, 'clone'):
+                working_model = working_model.clone()
             
-            # Base/High Model
-            working_model = model_entry["model_obj"]
-            if hasattr(working_model, 'clone'): working_model = working_model.clone()
-            
-            # Apply Patches (Shift, etc.)
             working_model = apply_model_patches(working_model, preset, latent_width=latent_width, latent_height=latent_height)
             
-            # 2B. Handle CLIP Variations & Prompt Variations
-            # Always re-encode conditioning with THIS combo's CLIP object
-            # This is critical when comparing different model types (e.g., FLUX2 vs FLUX)
-            # as they have incompatible CLIP architectures
-            current_positive = positive_cond
-            current_negative = negative_cond
+            # Encode conditioning with CLIP
+            current_positive = [[torch.zeros((1, 77, 768)), {}]]
+            current_negative = [[torch.zeros((1, 77, 768)), {}]]
             
-            # Get CLIP variation info
             clip_var = combo.get("clip_variation")
-            if clip_var:
-                clip_type = clip_var.get("type", "unknown")
-                if clip_type == "pair":
-                    clip_label = f"{clip_var.get('a', 'unknown')} + {clip_var.get('b', 'unknown')}"
-                else:
-                    clip_label = clip_var.get("model", "unknown")
-                print(f"[SamplerCompareSimple] Using CLIP: {clip_label}")
+            if current_clip and clip_var:
+                pos_text = combo.get("prompt_positive", "")
+                neg_text = combo.get("prompt_negative", "")
                 
-                # ALWAYS re-encode conditioning with THIS combo's CLIP object
-                # Each model variation has its own CLIP and they may have different architectures
-                clip_obj = clip_var.get("clip_obj")
-                if clip_obj:
-                    # Use prompt text directly from the combo (populated by loaders)
-                    pos_text = combo.get("prompt_positive", "")
-                    neg_text = combo.get("prompt_negative", "")
+                try:
+                    tokens = current_clip.tokenize(pos_text)
+                    if preset in ["FLUX", "FLUX2"]:
+                        current_positive = current_clip.encode_from_tokens_scheduled(tokens, add_dict={"guidance": flux_guidance})
+                    else:
+                        current_positive = current_clip.encode_from_tokens_scheduled(tokens)
                     
-                    try:
-                        # Re-encode with this combo's CLIP
-                        tokens = clip_obj.tokenize(pos_text)
-                        # Add guidance for FLUX models
-                        if preset in ["FLUX", "FLUX2"]:
-                            current_positive = clip_obj.encode_from_tokens_scheduled(tokens, add_dict={"guidance": flux_guidance})
-                        else:
-                            current_positive = clip_obj.encode_from_tokens_scheduled(tokens)
-                        
-                        tokens = clip_obj.tokenize(neg_text)
-                        if preset in ["FLUX", "FLUX2"]:
-                            current_negative = clip_obj.encode_from_tokens_scheduled(tokens, add_dict={"guidance": flux_guidance})
-                        else:
-                            current_negative = clip_obj.encode_from_tokens_scheduled(tokens)
-                        
-                        # Safe truncation for debug message
-                        prompt_preview = pos_text[:50] if pos_text else "(empty)"
-                        print(f"[SamplerCompareSimple] Encoded conditioning with combo's CLIP (prompt: '{prompt_preview}...')")
-                    except Exception as e:
-                        print(f"[SamplerCompareSimple] Warning: Failed to encode with combo CLIP: {e}")
-                        import traceback
-                        traceback.print_exc()
-                else:
-                    print(f"[SamplerCompareSimple] Warning: No clip_obj in clip_variation, using pre-encoded conditioning")
-            else:
-                print(f"[SamplerCompareSimple] Using pre-encoded conditioning (no clip_variation)")
+                    tokens = current_clip.tokenize(neg_text)
+                    if preset in ["FLUX", "FLUX2"]:
+                        current_negative = current_clip.encode_from_tokens_scheduled(tokens, add_dict={"guidance": flux_guidance})
+                    else:
+                        current_negative = current_clip.encode_from_tokens_scheduled(tokens)
+                    
+                    prompt_preview = pos_text[:50] if pos_text else "(empty)"
+                    print(f"[SamplerCompareSimple] Encoded conditioning (prompt: '{prompt_preview}...')")
+                except Exception as e:
+                    print(f"[SamplerCompareSimple] Warning: Failed to encode conditioning: {e}")
+                    import traceback
+                    traceback.print_exc()
+            
             # Apply LoRAs
             lora_names = combo.get("lora_names", [])
             lora_strengths = combo.get("lora_strengths", ())
             if lora_names:
                 working_model = self._apply_loras(working_model, lora_names, lora_strengths)
 
-            # Low Model (WAN 2.2 only)
+            # Low Model (WAN 2.2 only) - use lazy loaded model
             working_model_low = None
-            if is_wan_2_2:
-                working_model_low = model_entry.get("model_low_obj")
-                if working_model_low:
-                    if hasattr(working_model_low, 'clone'): working_model_low = working_model_low.clone()
-                    
-                    # Apply Patches to Low Model
-                    working_model_low = apply_model_patches(working_model_low, preset, is_low_noise=True, latent_width=latent_width, latent_height=latent_height)
-                    
-                    l_names_low = combo.get("lora_names_low", [])
-                    l_strengths_low = combo.get("lora_strengths_low", ())
-                    if l_names_low:
-                        working_model_low = self._apply_loras(working_model_low, l_names_low, l_strengths_low)
-                else:
-                    print("[SamplerCompareSimple] WARNING: WAN 2.2 preset selected but no Low Noise model found!")
+            if is_wan_2_2 and current_model_low:
+                working_model_low = current_model_low
+                if hasattr(working_model_low, 'clone'):
+                    working_model_low = working_model_low.clone()
+                
+                # Apply Patches to Low Model
+                working_model_low = apply_model_patches(working_model_low, preset, is_low_noise=True, latent_width=latent_width, latent_height=latent_height)
+                
+                l_names_low = combo.get("lora_names_low", [])
+                l_strengths_low = combo.get("lora_strengths_low", ())
+                if l_names_low:
+                    working_model_low = self._apply_loras(working_model_low, l_names_low, l_strengths_low)
 
             # 3. Sampling
             
@@ -374,32 +451,30 @@ class SamplerCompareSimple:
             
             if is_wan_2_2 and working_model_low:
                 # WAN 2.2 2-Stage Sampling
-                # Stage 1: High noise model (coarse detail) from start to midpoint
-                # Stage 2: Low noise model (fine detail) from midpoint to end
+                # Based on reference workflow:
+                # - Phase 1 (High Noise): add_noise=enable, return_with_leftover_noise=enable
+                # - Phase 2 (Low Noise): add_noise=disable, return_with_leftover_noise=disable
+                # - Split at 50% of steps
+                # - Shift = 5.0 for BOTH models (NOT 8.0 like WAN 2.1!)
                 
-                # Use absolute steps directly
-                start_step_1 = wan_high_start
-                end_step_1 = wan_high_end
-                start_step_2 = wan_low_start
-                end_step_2 = wan_low_end
+                # Calculate 50% split point
+                mid_step = steps // 2
                 
-                print(f"[SamplerCompareSimple] WAN 2.2 Sampling: High ({start_step_1}-{end_step_1}) -> Low ({start_step_2}-{end_step_2})")
+                print(f"[SamplerCompareSimple] WAN 2.2 Sampling: High (0-{mid_step}) -> Low ({mid_step}-{steps})")
                 print(f"  Total steps: {steps}, Denoise: {denoise}")
+                print(f"  NOTE: WAN 2.2 requires shift=5.0, make sure your shift is set correctly!")
                 
                 try:
-                    # For WAN 2.2, we need to use KSamplerAdvanced for proper control
-                    # Import KSamplerAdvanced  
                     from nodes import KSamplerAdvanced
-                    
-                    # Stage 1: High Noise Model (from start to midpoint)
-                    print(f"  Stage 1: High Noise Model (steps {start_step_1} to {end_step_1})")
-                    
-                    # KSamplerAdvanced parameters: model, seed, steps, cfg, sampler, scheduler, positive, negative, latent, 
-                    #                               add_noise, noise_seed, start_at_step, end_at_step
                     k_sampler = KSamplerAdvanced()
+                    
+                    # Stage 1: High Noise Model (steps 0 to mid_step)
+                    # add_noise=enable, return_with_leftover_noise=enable
+                    print(f"  Stage 1: High Noise Model (steps 0 to {mid_step})")
                     samples_1_tuple = k_sampler.sample(
                         model=working_model,
-                        seed=seed,
+                        add_noise="enable",
+                        noise_seed=seed,
                         steps=steps,
                         cfg=cfg,
                         sampler_name=sampler_name,
@@ -407,31 +482,30 @@ class SamplerCompareSimple:
                         positive=current_positive,
                         negative=current_negative,
                         latent_image=current_latent,
-                        add_noise="enable",
-                        noise_seed=seed,
-                        start_at_step=start_step_1,
-                        end_at_step=end_step_1
+                        start_at_step=0,
+                        end_at_step=mid_step,
+                        return_with_leftover_noise="enable"
                     )
                     samples_1 = samples_1_tuple[0]
                     print(f"  Stage 1 complete: output shape {samples_1['samples'].shape}")
                     
-                    # Stage 2: Low Noise Model (from midpoint to end)
-                    # Use output from Stage 1 as input, don't add noise
-                    print(f"  Stage 2: Low Noise Model (steps {start_step_2} to {end_step_2})")
+                    # Stage 2: Low Noise Model (steps mid_step to end)
+                    # add_noise=disable, return_with_leftover_noise=disable
+                    print(f"  Stage 2: Low Noise Model (steps {mid_step} to {steps})")
                     samples_2_tuple = k_sampler.sample(
                         model=working_model_low,
-                        seed=seed,
+                        add_noise="disable",
+                        noise_seed=seed,
                         steps=steps,
                         cfg=cfg,
                         sampler_name=sampler_name,
                         scheduler=scheduler,
                         positive=current_positive,
                         negative=current_negative,
-                        latent_image=samples_1,  # Use Stage 1 output
-                        add_noise="disable",  # Don't add new noise
-                        noise_seed=seed,
-                        start_at_step=start_step_2,
-                        end_at_step=end_step_2
+                        latent_image=samples_1,
+                        start_at_step=mid_step,
+                        end_at_step=steps,
+                        return_with_leftover_noise="disable"
                     )
                     samples_2 = samples_2_tuple[0]
                     print(f"  Stage 2 complete: output shape {samples_2['samples'].shape}")
@@ -469,6 +543,9 @@ class SamplerCompareSimple:
             
             # 4. Decode
             print(f"[SamplerCompareSimple] Decoding...")
+            if current_vae is None:
+                print(f"[SamplerCompareSimple] ERROR: No VAE loaded for decoding")
+                continue
             image = self._decode_latent(sampled_latent, current_vae)
             all_images.append(image)
             
@@ -477,23 +554,19 @@ class SamplerCompareSimple:
             is_grouped = config.get("is_grouped", False)
             
             # Use display_name if available, otherwise fall back to name
-            model_display = model_entry.get("display_name", model_entry["name"])
+            model_display = current_model_entry.get("display_name", current_model_entry["name"])
             
             if is_grouped:
-                # In grouped mode, just show the model name as the primary identifier
-                # VAE and CLIP are implied by the group
                 label_parts.append(clean_name(model_display))
             else:
-                # In non-grouped mode, show all varying parts
                 if len(config.get("model_variations", [])) > 1:
                     label_parts.append(clean_name(model_display))
                 
-                if len(config.get("vae_variations", [])) > 1 and not model_entry.get("baked_vae"):
+                if len(config.get("vae_variations", [])) > 1:
                     label_parts.append(clean_name(combo.get("vae_name", "")))
                     
                 clip_var = combo.get("clip_variation")
                 if len(config.get("clip_variations", [])) > 1 and clip_var:
-                    # Use new dict structure with type/a/b/model keys
                     clip_type = clip_var.get("type", "unknown")
                     if clip_type == "pair":
                         label_parts.append(f"{clean_name(clip_var.get('a'))}+{clean_name(clip_var.get('b'))}")
@@ -503,12 +576,9 @@ class SamplerCompareSimple:
             lora_names = combo.get("lora_names", [])
             lora_strengths = combo.get("lora_strengths", [])
             if lora_names:
-                # Show last varied LoRA
                 idx_l = len(lora_names) - 1
                 label_parts.append(f"{lora_names[idx_l]}({lora_strengths[idx_l]:.2f})")
             
-            # For grouped mode, don't add prompt to label - grid handles prompt display
-            # For non-grouped mode, add short prompt indicator
             prompt_variations = config.get("prompt_variations", [])
             if len(prompt_variations) > 1 and not is_grouped:
                 prompt_idx = combo.get("prompt_index", 1)
@@ -517,64 +587,9 @@ class SamplerCompareSimple:
             label = " - ".join(label_parts) if label_parts else f"Combo {idx}"
             all_labels.append(label)
             print(f"[SamplerCompareSimple] Label: {label}")
-            
-            # Update tracking for smart offloading
-            prev_model_idx, prev_vae_name, prev_clip_key, prev_lora_key = current_key
-            
-            # Check if NEXT combination uses different models - if so, cleanup now
-            # If only prompt changes, keep models loaded for faster inference
-            next_needs_offload = False
-            if idx + 1 < len(combinations):
-                next_key = get_combo_key(combinations[idx + 1])
-                next_needs_offload = next_key != current_key
-            else:
-                # Last combination - always cleanup
-                next_needs_offload = True
-            
-            if next_needs_offload:
-                # Aggressive cleanup after each combination to free VRAM
-                # This prevents OOM when switching between large models like FLUX variants
-                # Wrap in try/except because FLUX2's partial loading can cause issues during cleanup
-                try:
-                    # Delete local references first
-                    if 'working_model' in locals():
-                        del working_model
-                    if 'working_model_low' in locals():
-                        del working_model_low
-                    if 'sampled_latent' in locals():
-                        del sampled_latent
-                    # Also clear current latent if we created a new one for FLUX2
-                    if 'current_latent' in locals() and current_latent is not latent:
-                        del current_latent
-                    # Clear conditioning references
-                    if 'current_positive' in locals():
-                        del current_positive
-                    if 'current_negative' in locals():
-                        del current_negative
-                    
-                    # Force model manager to release everything
-                    comfy.model_management.unload_all_models()
-                    comfy.model_management.cleanup_models()
-                    comfy.model_management.soft_empty_cache()
-                    gc.collect()
-                    if torch.cuda.is_available():
-                        torch.cuda.empty_cache()
-                        torch.cuda.synchronize()
-                    print(f"[SamplerCompareSimple] Memory cleanup complete for combination {idx + 1}")
-                except Exception as cleanup_err:
-                    print(f"[SamplerCompareSimple] Warning: Cleanup error (continuing anyway): {cleanup_err}")
-                    # Still try basic cleanup
-                    gc.collect()
-                    if torch.cuda.is_available():
-                        try:
-                            torch.cuda.empty_cache()
-                        except:
-                            pass
-            else:
-                # Only prompt changed - keep models loaded, just cleanup the sampled latent
-                if 'sampled_latent' in locals():
-                    del sampled_latent
-                print(f"[SamplerCompareSimple] Keeping models loaded (next combo uses same config)")
+        
+        # Final cleanup
+        self._unload_current()
         
         # Concatenate - handle different image sizes by resizing to match first image
         if not all_images:
@@ -617,15 +632,26 @@ class SamplerCompareSimple:
             lora_data = comfy.utils.load_torch_file(lora_path, safe_load=True)
             working_model, _ = comfy.sd.load_lora_for_models(working_model, None, lora_data, strength, strength)
         return working_model
-    
-    @staticmethod
-    def _decode_latent(latent_dict, vae):
-        """Decode latent samples to image using VAE."""
-        samples = latent_dict["samples"] if isinstance(latent_dict, dict) else latent_dict
-        image = vae.decode(samples)
-        if image.dim() == 5: image = image[:, 0:1, :, :, :] # Take first frame
-        if image.dim() == 5: image = image.squeeze(1)
-        return image
+
+    @classmethod
+    def IS_CHANGED(cls, config, latent, preset, steps, cfg, sampler_name, scheduler, seed, denoise, **kwargs):
+        """
+        Compute a hash to determine if re-execution is needed.
+        """
+        # Add defensive checks for None
+        combos = config.get("combinations", []) if config else []
+        combo_str = str([(c.get("model_index"), c.get("vae_name"), c.get("prompt_positive", "")) for c in combos])
+        params = f"{preset}|{seed}|{steps}|{cfg}|{sampler_name}|{scheduler}|{denoise}"
+        latent_shape = str(latent.get("samples").shape) if isinstance(latent, dict) and latent else "unknown"
+        
+        hash_input = f"{combo_str}|{params}|{latent_shape}"
+        for key in sorted(kwargs.keys()):
+            val = kwargs[key]
+            if isinstance(val, (str, int, float, bool)):
+                hash_input += f"|{key}:{val}"
+        
+        return hashlib.md5(hash_input.encode()).hexdigest()
+
 
 # Node class mappings
 NODE_CLASS_MAPPINGS = {

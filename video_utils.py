@@ -187,9 +187,16 @@ def create_video_grid(
     quality: int = 23,
     font_size: int = 20,
     bg_color: Tuple[int, int, int] = (32, 32, 32),
+    # New styling parameters to match image grid
+    text_color: str = "#FFFFFF",
+    border_color: str = "#000000",
+    border_width: int = 2,
+    font_name: str = "default",
+    grid_title: str = "",
+    positive_prompt: str = "",
 ) -> bool:
     """
-    Create a video grid from multiple video sequences.
+    Create a video grid from multiple video sequences with styling matching image grid.
     
     For sequences of different lengths, shorter videos will freeze on last frame.
     For sequences with different FPS, they are normalized to the max FPS.
@@ -207,7 +214,13 @@ def create_video_grid(
         codec: Video codec
         quality: Quality setting
         font_size: Font size for labels
-        bg_color: Background color
+        bg_color: Background color tuple (R, G, B)
+        text_color: Hex color for text
+        border_color: Hex color for borders
+        border_width: Border width in pixels
+        font_name: Font name for labels
+        grid_title: Title to show at top of grid
+        positive_prompt: Positive prompt to show at bottom
     
     Returns:
         True if successful
@@ -218,12 +231,33 @@ def create_video_grid(
         print("[VideoUtils] No videos provided!")
         return False
     
+    # Parse colors from hex
+    def hex_to_rgb(hex_color: str) -> Tuple[int, int, int]:
+        hex_color = hex_color.lstrip('#')
+        return tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
+    
+    text_rgb = hex_to_rgb(text_color) if text_color.startswith('#') else (255, 255, 255)
+    border_rgb = hex_to_rgb(border_color) if border_color.startswith('#') else (0, 0, 0)
+    
     num_videos = len(video_frames_list)
     grid_rows = (num_videos + grid_cols - 1) // grid_cols
     
+    # Calculate space for title and prompt
+    title_height = font_size + 20 if grid_title else 0
+    prompt_height = 0
+    if positive_prompt:
+        # Estimate prompt height (wrap text)
+        prompt_font_size = max(12, font_size // 2)
+        num_prompt_lines = max(1, len(positive_prompt) // 80 + 1)  # Approx 80 chars per line
+        prompt_height = prompt_font_size * num_prompt_lines + 30
+    
     # Calculate grid dimensions
     grid_width = grid_cols * (cell_size[0] + padding) + padding
-    grid_height = grid_rows * (cell_size[1] + label_height + padding) + padding
+    grid_height = (
+        title_height +
+        grid_rows * (cell_size[1] + label_height + padding) + padding +
+        prompt_height
+    )
     
     # Find max frame count and normalize FPS
     max_fps = max(fps_list) if fps_list else 24
@@ -242,14 +276,27 @@ def create_video_grid(
     
     print(f"[VideoUtils] Creating video grid: {grid_cols}x{grid_rows}, {total_output_frames} frames at {max_fps} FPS")
     
-    # Try to load a font
-    try:
-        font = ImageFont.truetype("arial.ttf", font_size)
-    except:
-        try:
-            font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", font_size)
-        except:
-            font = ImageFont.load_default()
+    # Load fonts
+    def load_font(name: str, size: int):
+        if name != "default":
+            try:
+                font_dir = "C:\\Windows\\Fonts" if os.name == 'nt' else "/usr/share/fonts"
+                font_path = os.path.join(font_dir, name)
+                if os.path.exists(font_path):
+                    return ImageFont.truetype(font_path, size)
+            except:
+                pass
+        # Fallback fonts
+        for fallback in ["arial.ttf", "Arial.ttf", "DejaVuSans.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"]:
+            try:
+                return ImageFont.truetype(fallback, size)
+            except:
+                continue
+        return ImageFont.load_default()
+    
+    font = load_font(font_name, font_size)
+    title_font = load_font(font_name, font_size + 10)
+    prompt_font = load_font(font_name, max(12, font_size // 2))
     
     # Generate grid frames
     grid_frames = []
@@ -258,6 +305,13 @@ def create_video_grid(
         # Create grid background
         grid_img = Image.new('RGB', (grid_width, grid_height), bg_color)
         draw = ImageDraw.Draw(grid_img)
+        
+        # Draw title at top
+        if grid_title:
+            bbox = draw.textbbox((0, 0), grid_title, font=title_font)
+            title_width = bbox[2] - bbox[0]
+            title_x = (grid_width - title_width) // 2
+            draw.text((title_x, 10), grid_title, fill=text_rgb, font=title_font)
         
         # Time position in seconds
         time_pos = frame_idx / max_fps
@@ -282,9 +336,18 @@ def create_video_grid(
             # Resize frame to cell size
             frame_resized = frame.resize(cell_size, Image.Resampling.LANCZOS)
             
-            # Calculate position
+            # Calculate position (offset by title height)
             x = padding + col * (cell_size[0] + padding)
-            y = padding + row * (cell_size[1] + label_height + padding)
+            y = title_height + padding + row * (cell_size[1] + label_height + padding)
+            
+            # Draw border around cell
+            if border_width > 0:
+                draw.rectangle(
+                    [x - border_width, y + label_height - border_width,
+                     x + cell_size[0] + border_width, y + label_height + cell_size[1] + border_width],
+                    outline=border_rgb,
+                    width=border_width
+                )
             
             # Paste frame
             grid_img.paste(frame_resized, (x, y + label_height))
@@ -292,14 +355,45 @@ def create_video_grid(
             # Draw label
             label = labels[vid_idx] if vid_idx < len(labels) else f"Video {vid_idx + 1}"
             # Truncate label if too long
-            if len(label) > 30:
-                label = label[:27] + "..."
+            max_label_len = max(20, cell_size[0] // (font_size // 2))
+            if len(label) > max_label_len:
+                label = label[:max_label_len - 3] + "..."
             
-            # Center label
+            # Center label above cell
             bbox = draw.textbbox((0, 0), label, font=font)
             text_width = bbox[2] - bbox[0]
             text_x = x + (cell_size[0] - text_width) // 2
-            draw.text((text_x, y + 5), label, fill=(255, 255, 255), font=font)
+            draw.text((text_x, y + 5), label, fill=text_rgb, font=font)
+        
+        # Draw positive prompt at bottom
+        if positive_prompt:
+            prompt_y = grid_height - prompt_height + 10
+            # Word wrap prompt
+            words = positive_prompt.split()
+            lines = []
+            current_line = ""
+            max_line_width = grid_width - 40
+            
+            for word in words:
+                test_line = f"{current_line} {word}".strip()
+                bbox = draw.textbbox((0, 0), test_line, font=prompt_font)
+                if bbox[2] - bbox[0] <= max_line_width:
+                    current_line = test_line
+                else:
+                    if current_line:
+                        lines.append(current_line)
+                    current_line = word
+            if current_line:
+                lines.append(current_line)
+            
+            # Draw "Positive Prompt:" label
+            draw.text((20, prompt_y), "Positive Prompt:", fill=text_rgb, font=prompt_font)
+            prompt_y += prompt_font.size + 5
+            
+            # Draw wrapped prompt text
+            for line in lines[:3]:  # Limit to 3 lines
+                draw.text((20, prompt_y), line, fill=text_rgb, font=prompt_font)
+                prompt_y += prompt_font.size + 2
         
         grid_frames.append(grid_img)
     

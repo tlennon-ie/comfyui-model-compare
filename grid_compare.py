@@ -639,6 +639,11 @@ class GridCompare:
                 video_quality=video_quality,
                 gap_size=gap_size,
                 font_size=font_size,
+                text_color=text_color,
+                border_color=border_color,
+                border_width=border_width,
+                font_name=font_name,
+                show_positive_prompt=show_positive_prompt,
             )
 
         # Convert PIL back to tensor for output
@@ -1761,6 +1766,11 @@ class GridCompare:
         video_quality: int,
         gap_size: int,
         font_size: int,
+        text_color: str = "#000000",
+        border_color: str = "#000000",
+        border_width: int = 2,
+        font_name: str = "default",
+        show_positive_prompt: bool = False,
     ) -> str:
         """
         Create a video grid from multi-frame outputs.
@@ -1871,7 +1881,14 @@ class GridCompare:
         # Remove extension for create_video_grid (it adds it)
         video_path_base = video_path.rsplit('.', 1)[0]
         
-        # Create video grid
+        # Get positive prompt for display
+        positive_prompt = ""
+        if show_positive_prompt:
+            prompt_variations = config.get("prompt_variations", [])
+            if prompt_variations:
+                positive_prompt = prompt_variations[0].get("positive", "")
+        
+        # Create video grid with styling matching image grid
         success = create_video_grid(
             video_frames_list=video_frames_list,
             labels=video_labels,
@@ -1885,6 +1902,13 @@ class GridCompare:
             codec=video_codec,
             quality=video_quality,
             font_size=font_size,
+            # New styling parameters to match image grid
+            text_color=text_color,
+            border_color=border_color,
+            border_width=border_width,
+            font_name=font_name,
+            grid_title=grid_title,
+            positive_prompt=positive_prompt,
         )
         
         if success:
@@ -1893,6 +1917,27 @@ class GridCompare:
         else:
             print("[GridCompare] Failed to create video grid")
             return ""
+
+    @classmethod
+    def IS_CHANGED(cls, images, config, labels, save_location, grid_title, **kwargs):
+        """
+        Compute a hash to determine if re-execution is needed.
+        """
+        import hashlib
+        
+        # Hash key inputs - add defensive checks for None
+        combo_count = len(config.get("combinations", [])) if config else 0
+        img_shape = str(images.shape) if hasattr(images, 'shape') else "unknown"
+        
+        hash_input = f"{combo_count}|{img_shape}|{labels}|{save_location}|{grid_title}"
+        
+        # Add relevant kwargs
+        for key in sorted(kwargs.keys()):
+            val = kwargs[key]
+            if isinstance(val, (str, int, float, bool)):
+                hash_input += f"|{key}:{val}"
+        
+        return hashlib.md5(hash_input.encode()).hexdigest()
 
 
 # Node mappings

@@ -1,6 +1,9 @@
 """
 Video Preview Node
 Preview video output in ComfyUI UI.
+
+NOTE: ComfyUI's UI uses {"images": [...], "animated": (True,)} format for video preview.
+The "video" key is NOT recognized by the standard ComfyUI preview widget.
 """
 
 import os
@@ -15,7 +18,7 @@ import json
 class VideoPreview:
     """
     Preview video files in the ComfyUI interface.
-    Similar to Preview Image but for video files created by Grid Compare.
+    Uses the animated image format for video display.
     """
 
     @classmethod
@@ -54,16 +57,13 @@ class VideoPreview:
     ) -> Tuple[str, Any]:
         """
         Preview video in the ComfyUI UI.
-        Returns the video path and passes through images.
+        Uses the animated image format for video display.
         """
-        result = {
-            "ui": {},
-        }
+        result_ui = {}
         
         if video_path and os.path.exists(video_path):
             # Get video info for UI display
             filename = os.path.basename(video_path)
-            subfolder = os.path.dirname(video_path)
             
             # Make path relative to output directory
             output_dir = folder_paths.get_output_directory()
@@ -72,17 +72,20 @@ class VideoPreview:
             else:
                 subfolder = ""
             
-            result["ui"]["video"] = [{
+            # Use "images" key with "animated" flag for video preview in UI
+            # This is the correct format for ComfyUI's preview widget
+            result_ui["images"] = [{
                 "filename": filename,
                 "subfolder": subfolder,
                 "type": "output",
-                "format": video_path.rsplit('.', 1)[-1] if '.' in video_path else "mp4",
             }]
+            # Mark as animated content (video)
+            result_ui["animated"] = (True,)
             
-            print(f"[VideoPreview] Previewing: {video_path}")
+            print(f"[VideoPreview] Previewing video: {video_path}")
         else:
             print(f"[VideoPreview] No video file at: {video_path}")
-            result["ui"]["text"] = ["No video file found"]
+            result_ui["text"] = ["No video file found"]
         
         # Pass through images if provided
         output_images = images
@@ -90,13 +93,13 @@ class VideoPreview:
             # Create a small placeholder tensor
             output_images = torch.zeros((1, 64, 64, 3))
         
-        return {"ui": result["ui"], "result": (video_path, output_images)}
+        return {"ui": result_ui, "result": (video_path, output_images)}
 
 
 class VideoGridPreview:
     """
     Combined preview for both image and video grids from Grid Compare.
-    Shows image grid in standard preview and provides video path for external viewing.
+    Shows image grid in standard preview and provides video info for display.
     """
 
     @classmethod
@@ -139,13 +142,33 @@ class VideoGridPreview:
     ) -> Tuple[torch.Tensor, str, str]:
         """
         Preview both image and video grids.
-        Shows the image grid in standard ComfyUI preview.
+        If video_path is provided, shows video using animated format.
+        Otherwise shows the image grid in standard ComfyUI preview.
         """
         result_ui = {}
         
-        # Process images for preview
-        if images is not None and images.numel() > 0:
-            # Convert to list of preview images
+        # Check if we have a video to display
+        if video_path and os.path.exists(video_path):
+            # Video preview takes priority - use animated images format
+            filename = os.path.basename(video_path)
+            output_dir = folder_paths.get_output_directory()
+            
+            if video_path.startswith(output_dir):
+                subfolder = os.path.relpath(os.path.dirname(video_path), output_dir)
+            else:
+                subfolder = ""
+            
+            # Use images key with animated flag for video
+            result_ui["images"] = [{
+                "filename": filename,
+                "subfolder": subfolder,
+                "type": "output",
+            }]
+            result_ui["animated"] = (True,)
+            print(f"[VideoGridPreview] Video preview: {video_path}")
+            
+        elif images is not None and images.numel() > 0:
+            # Fall back to image preview
             previews = []
             for i in range(images.shape[0]):
                 img = images[i]
@@ -166,24 +189,6 @@ class VideoGridPreview:
                 })
             
             result_ui["images"] = previews
-        
-        # Add video info if available
-        if video_path and os.path.exists(video_path):
-            filename = os.path.basename(video_path)
-            output_dir = folder_paths.get_output_directory()
-            
-            if video_path.startswith(output_dir):
-                subfolder = os.path.relpath(os.path.dirname(video_path), output_dir)
-            else:
-                subfolder = ""
-            
-            result_ui["video"] = [{
-                "filename": filename,
-                "subfolder": subfolder,
-                "type": "output",
-                "format": video_path.rsplit('.', 1)[-1] if '.' in video_path else "mp4",
-            }]
-            print(f"[VideoGridPreview] Video available: {video_path}")
         
         # Log info
         if image_path:

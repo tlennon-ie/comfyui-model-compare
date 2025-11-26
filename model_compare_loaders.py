@@ -1,10 +1,15 @@
 """
 Model Compare Loaders Node
+
+LAZY LOADING: This loader stores paths/configurations only.
+Actual model loading is deferred to the sampler for memory efficiency.
 """
 
+import hashlib
 import folder_paths
 import comfy.sd
 import comfy.utils
+import comfy.model_management
 import torch
 import os
 import time
@@ -31,9 +36,9 @@ class ModelCompareLoaders:
 
         inputs = {
             "required": {
-                "preset": (["STANDARD", "SDXL", "PONY", "WAN2.1", "WAN2.2", "HUNYUAN_VIDEO", "HUNYUAN_VIDEO_15", "QWEN", "FLUX", "FLUX2"], {
+                "preset": (["STANDARD", "SDXL", "PONY", "WAN2.1", "WAN2.2", "HUNYUAN_VIDEO", "HUNYUAN_VIDEO_15", "QWEN", "FLUX", "FLUX2", "Z_IMAGE"], {
                     "default": "STANDARD",
-                    "tooltip": "Model preset - determines available configuration options and sampling behavior. FLUX = dual CLIPs, FLUX2 = single CLIP"
+                    "tooltip": "Model preset - determines available configuration options and sampling behavior. FLUX = dual CLIPs, FLUX2 = single CLIP, Z_IMAGE = Lumina2 with QWEN3-4B"
                 }),
                 "diffusion_model": (
                     ["NONE"] + combined_models,
@@ -75,9 +80,9 @@ class ModelCompareLoaders:
                      "tooltip": "Secondary CLIP (for Hunyuan Dual CLIP and FLUX Dual CLIP). Not used for FLUX2."},
                 ),
                 "clip_type": (
-                    ["default", "sd", "sdxl", "sd3", "flux", "flux2", "wan", "wan22", "hunyuan_video", "hunyuan_video_15", "qwen"],
+                    ["default", "sd", "sdxl", "sd3", "flux", "flux2", "wan", "wan22", "hunyuan_video", "hunyuan_video_15", "qwen", "lumina2"],
                     {"default": "default",
-                     "tooltip": "CLIP model type (auto-adjusted based on preset). Use wan22 for High/Low noise model pairing."},
+                     "tooltip": "CLIP model type (auto-adjusted based on preset). Use wan22 for High/Low noise model pairing. lumina2 for Z Image model."},
                 ),
                 "clip_device": (
                     ["default", "cpu"],
@@ -108,26 +113,10 @@ class ModelCompareLoaders:
                     "display": "slider",
                     "tooltip": "Number of CLIP variations",
                 }),
-                "num_loras": ("INT", {
-                    "default": 1,
-                    "min": 0,
-                    "max": 10,
-                    "step": 1,
-                    "display": "slider",
-                    "tooltip": "Number of LoRA combinations to test",
-                }),
             },
             "optional": {
                 "prompt_config": ("PROMPT_COMPARE_CONFIG", {
                     "tooltip": "Optional: Connect PromptCompare node to compare multiple prompts"
-                }),
-                # Video model FPS settings (shown for video presets)
-                "fps": ("INT", {
-                    "default": 24,
-                    "min": 1,
-                    "max": 120,
-                    "step": 1,
-                    "tooltip": "FPS for base video model output. Common: WAN=16, Hunyuan=24, HY1.5=24"
                 }),
             },
         }
@@ -172,8 +161,8 @@ class ModelCompareLoaders:
                  "tooltip": f"Variation {i}: Secondary CLIP (Hunyuan/FLUX/WAN Dual CLIP support)"},
             )
             inputs["optional"][f"clip_type_variation_{i}"] = (
-                ["default", "sd", "sdxl", "sd3", "flux", "flux2", "wan", "wan22", "hunyuan_video", "hunyuan_video_15", "qwen"],
-                {"default": "default", "tooltip": f"Variation {i}: CLIP Type (wan22 enables High/Low noise model pairing)"}
+                ["default", "sd", "sdxl", "sd3", "flux", "flux2", "wan", "wan22", "hunyuan_video", "hunyuan_video_15", "qwen", "lumina2"],
+                {"default": "default", "tooltip": f"Variation {i}: CLIP Type (wan22 enables High/Low noise model pairing, lumina2 for Z Image)"}
             )
             inputs["optional"][f"clip_device_variation_{i}"] = (
                 ["default", "cpu"],
@@ -185,73 +174,23 @@ class ModelCompareLoaders:
                 ["NONE"] + vaes,
                 {"default": "NONE", "tooltip": f"VAE Variation {i} (independent of base baked_vae_clip - set baked_vae_clip_variation_{i} toggle)"}
             )
-            
-            # FPS for video model variations
-            inputs["optional"][f"fps_variation_{i}"] = ("INT", {
-                "default": 24,
-                "min": 1,
-                "max": 120,
-                "step": 1,
-                "tooltip": f"Variation {i}: FPS for video output. Common: WAN=16, Hunyuan=24, HY1.5=24"
-            })
         
-        # LoRA fields (separate section after variations)
-        for i in range(10):
-            inputs["optional"][f"lora_{i}"] = (
-                ["NONE"] + loras,
-                {"default": "NONE",
-                 "tooltip": "LoRA model (High Noise for WAN 2.2)"},
-            )
-            inputs["optional"][f"lora_{i}_strengths"] = (
-                "STRING",
-                {
-                    "default": "1.0",
-                    "multiline": False,
-                    "tooltip": "Comma-separated strength values",
-                },
-            )
-            inputs["optional"][f"lora_{i}_customlabel"] = (
-                "STRING",
-                {
-                    "default": "",
-                    "multiline": False,
-                    "tooltip": "Custom label",
-                },
-            )
-            
-            inputs["optional"][f"lora_{i}_low"] = (
-                ["NONE"] + loras,
-                {"default": "NONE",
-                 "tooltip": "Low Noise LoRA (WAN 2.2 only)",
-                },
-            )
-            inputs["optional"][f"lora_{i}_low_strengths"] = (
-                "STRING",
-                {
-                    "default": "1.0",
-                    "multiline": False,
-                    "tooltip": "Strength for Low Noise LoRA",
-                },
-            )
-            inputs["optional"][f"lora_{i}_low_customlabel"] = (
-                "STRING",
-                {
-                    "default": "",
-                    "multiline": False,
-                    "tooltip": "Custom label for Low Noise LoRA",
-                },
-            )
-            
-            if i < 9:
-                inputs["optional"][f"lora_combiner_{i}"] = (
-                    ["+", " "],
-                    {"default": "+", "tooltip": "Combine with next LoRA (+ for AND, space for OR)"}
-                )
+        # LoRA variation inputs (connect LoRA Compare nodes per model variation)
+        # Base model LoRA
+        inputs["optional"]["lora_config"] = ("LORA_COMPARE_CONFIG", {
+            "tooltip": "LoRA configuration for base model (connect from LoRA Compare node)"
+        })
+        
+        # Variation LoRAs
+        for i in range(1, 5):
+            inputs["optional"][f"lora_config_variation_{i}"] = ("LORA_COMPARE_CONFIG", {
+                "tooltip": f"LoRA configuration for variation {i} (connect from LoRA Compare node)"
+            })
 
         return inputs
 
-    RETURN_TYPES = ("MODEL_COMPARE_CONFIG", "MODEL", "VAE", "CONDITIONING", "CONDITIONING")
-    RETURN_NAMES = ("config", "base_model", "base_vae", "positive_cond", "negative_cond")
+    RETURN_TYPES = ("MODEL_COMPARE_CONFIG",)
+    RETURN_NAMES = ("config",)
     FUNCTION = "load_models"
     CATEGORY = "loaders"
 
@@ -287,7 +226,7 @@ class ModelCompareLoaders:
             return "unknown", selector_value
 
     def load_models(self, preset, diffusion_model, baked_vae_clip, diffusion_model_low, vae, clip_model, clip_model_2, clip_type,
-               num_diffusion_models, num_vae_variations, num_clip_variations, num_loras,
+               num_diffusion_models, num_vae_variations, num_clip_variations,
                prompt_config=None,
                **kwargs):
         
@@ -306,6 +245,8 @@ class ModelCompareLoaders:
                 current_clip_type = "hunyuan_video"
             elif preset == "HUNYUAN_VIDEO_15":
                 current_clip_type = "hunyuan_video_15"
+            elif preset == "Z_IMAGE":
+                current_clip_type = "lumina2"
             else:
                 current_clip_type = "sd"
 
@@ -338,7 +279,10 @@ class ModelCompareLoaders:
             return current_clip_type
         
         def load_model_entry(name_high, name_low, use_baked, current_clip_type, is_base=False, var_clip_type=None):
-            """Load a model entry with optional low noise model for WAN 2.2.
+            """Create model entry storing paths for lazy loading.
+            
+            LAZY LOADING: No models are loaded here - only paths are stored.
+            The sampler will load models on-demand per combination.
             
             Args:
                 name_high: High noise model name
@@ -348,52 +292,32 @@ class ModelCompareLoaders:
                 is_base: Whether this is the base model (affects auto-detection)
                 var_clip_type: Explicit clip_type for variations (to detect WAN 2.2 variations)
             """
-            entry = {"name": name_high, "model_obj": None, "model_low_obj": None, "baked_vae": None, "baked_clip": None}
+            entry = {
+                "name": name_high, 
+                "model_path": None,       # Path for lazy loading
+                "model_low_path": None,   # Path for lazy loading (WAN 2.2)
+                "model_type": None,       # "checkpoint" or "diffusion"
+                "use_baked_vae_clip": use_baked,
+                "baked_vae": None,        # Only populated if checkpoint with use_baked=True
+                "baked_clip": None,       # Only populated if checkpoint with use_baked=True
+            }
             
             type_high, path_high = self._parse_model_selector(name_high)
+            entry["model_type"] = type_high
             
             if type_high == "checkpoint":
-                # Load Checkpoint
-                ckpt_path = folder_paths.get_full_path("checkpoints", path_high)
-                out = comfy.sd.load_checkpoint_guess_config(ckpt_path, output_vae=True, output_clip=True, embedding_directory=folder_paths.get_folder_paths("embeddings"))
-                entry["model_obj"] = out[0]
-                entry["baked_clip"] = out[1]
-                entry["baked_vae"] = out[2]
-                
-                # Auto-detect CLIP type from model
-                if is_base:
-                    detected = detect_model_clip_type(entry["model_obj"], current_clip_type)
-                    if detected != current_clip_type:
-                        print(f"[ModelCompareLoaders] Auto-detected CLIP type: {detected} for model {name_high}")
-                        current_clip_type = detected
-                
-                if not use_baked:
-                    entry["baked_vae"] = None
-                    entry["baked_clip"] = None
-                    
+                entry["model_path"] = folder_paths.get_full_path("checkpoints", path_high)
             elif type_high == "diffusion":
-                # Load Diffusion Model with proper model options
-                diff_path = folder_paths.get_full_path("diffusion_models", path_high)
-                # Use empty dict - ComfyUI will auto-detect and apply optimal settings
-                model_options = {}
-                entry["model_obj"] = comfy.sd.load_diffusion_model(diff_path, model_options=model_options)
+                entry["model_path"] = folder_paths.get_full_path("diffusion_models", path_high)
                 
-                # Auto-detect CLIP type from model
-                if is_base:
-                    detected = detect_model_clip_type(entry["model_obj"], current_clip_type)
-                    if detected != current_clip_type:
-                        print(f"[ModelCompareLoaders] Auto-detected CLIP type: {detected} for model {name_high}")
-                        current_clip_type = detected
-                
-                # Load Low Noise Model if WAN 2.2
+                # Store Low Noise Model path if WAN 2.2
                 # Check: preset is WAN2.2 OR variation's clip_type is wan22
                 is_wan22 = preset == "WAN2.2" or var_clip_type == "wan22"
                 if is_wan22 and name_low != "NONE":
                     type_low, path_low = self._parse_model_selector(name_low)
                     if type_low == "diffusion":
-                        diff_low_path = folder_paths.get_full_path("diffusion_models", path_low)
-                        entry["model_low_obj"] = comfy.sd.load_diffusion_model(diff_low_path, model_options={})
-                        print(f"[ModelCompareLoaders] Loaded WAN 2.2 low noise model: {path_low}")
+                        entry["model_low_path"] = folder_paths.get_full_path("diffusion_models", path_low)
+                        print(f"[ModelCompareLoaders] Stored WAN 2.2 low noise model path: {path_low}")
             
             return entry
 
@@ -405,8 +329,6 @@ class ModelCompareLoaders:
             base_entry["display_name"] = base_label
         else:
             base_entry["display_name"] = base_entry["name"]
-        # Store FPS for video models
-        base_entry["fps"] = kwargs.get("fps", 24)
         model_variations.append(base_entry)
         
         # Variation Models
@@ -425,61 +347,42 @@ class ModelCompareLoaders:
                     var_entry["display_name"] = var_label
                 else:
                     var_entry["display_name"] = var_entry["name"]
-                # Store FPS for video models
-                var_entry["fps"] = kwargs.get(f"fps_variation_{i}", 24)
                 model_variations.append(var_entry)
 
-        # 3. Load VAEs
-        vae_map = {} # Map name to VAE object
+        # 3. Store VAE paths (LAZY LOADING - no VAEs loaded here)
+        vae_paths = {}  # Map name to path for lazy loading
         
-        def get_vae_obj(name):
-            if name in vae_map: return vae_map[name]
-            if name == "NONE": return None
+        def get_vae_path(name):
+            """Get path for VAE - does NOT load it."""
+            if name in vae_paths: 
+                return vae_paths[name]
+            if name == "NONE": 
+                return None
             path = folder_paths.get_full_path("vae", name)
-            v = comfy.sd.VAE(sd=comfy.utils.load_torch_file(path))
-            vae_map[name] = v
-            return v
+            vae_paths[name] = path
+            return path
 
-        base_vae_obj = None
-        if base_entry["baked_vae"]:
-            base_vae_obj = base_entry["baked_vae"]
+        # Store base VAE path
+        base_vae_name = vae if vae != "NONE" else None
+        if base_entry.get("use_baked_vae_clip") and base_entry["model_type"] == "checkpoint":
+            base_vae_name = "__baked__"  # Special marker for baked VAE
         elif vae != "NONE":
-            base_vae_obj = get_vae_obj(vae)
+            get_vae_path(vae)  # Store path in map
             
-        vae_variations = [{"name": vae}]
+        vae_variations = [{"name": vae if vae != "NONE" else "__baked__" if base_entry.get("use_baked_vae_clip") else "NONE"}]
         for i in range(1, num_vae_variations):
             v_name = kwargs.get(f"vae_variation_{i}", "NONE")
             if v_name != "NONE":
-                get_vae_obj(v_name) # Ensure loaded
+                get_vae_path(v_name)  # Store path in map
                 vae_variations.append({"name": v_name})
 
-        # 4. Load CLIPs
-        base_clip_obj = None
+        # 4. Store CLIP configurations (LAZY LOADING - no CLIPs loaded here)
         # Determine if BASE preset needs dual CLIP based on its OWN clip_type
         dual_clip_presets = ["HUNYUAN_VIDEO", "HUNYUAN_VIDEO_15", "FLUX"]
         base_needs_dual_clip = preset in dual_clip_presets
         
         # Get base CLIP device setting
         clip_device = kwargs.get("clip_device", "default")
-        base_clip_model_options = {}
-        if clip_device == "cpu":
-            base_clip_model_options["load_device"] = torch.device("cpu")
-            base_clip_model_options["offload_device"] = torch.device("cpu")
-            print(f"[ModelCompareLoaders] Loading base CLIP on CPU to save VRAM")
-        
-        if base_entry["baked_clip"]:
-            base_clip_obj = base_entry["baked_clip"]
-        elif clip_model != "NONE":
-            # Standard CLIP loading
-            path = folder_paths.get_full_path("clip", clip_model)
-            
-            # Load base CLIP with correct configuration
-            if base_needs_dual_clip and clip_model_2 != "NONE":
-                 path2 = folder_paths.get_full_path("clip", clip_model_2)
-                 base_clip_obj = comfy.sd.load_clip(ckpt_paths=[path, path2], embedding_directory=folder_paths.get_folder_paths("embeddings"), clip_type=self._get_clip_type_enum(current_clip_type), model_options=base_clip_model_options)
-            else:
-                 # Single CLIP for everything else (including FLUX2)
-                 base_clip_obj = comfy.sd.load_clip(ckpt_paths=[path], embedding_directory=folder_paths.get_folder_paths("embeddings"), clip_type=self._get_clip_type_enum(current_clip_type), model_options=base_clip_model_options)
         
         clip_variations = []
         
@@ -497,23 +400,33 @@ class ModelCompareLoaders:
             }
             base_resolved_clip_type = preset_to_clip_type.get(preset, "sd")
         
-        # Add base CLIP config
-        if base_needs_dual_clip:
+        # Add base CLIP config - paths only, no loading
+        if base_entry.get("use_baked_vae_clip") and base_entry["model_type"] == "checkpoint":
+            # Baked CLIP from checkpoint
+            clip_variations.append({
+                "type": "baked",
+                "clip_type": base_resolved_clip_type,
+                "device": clip_device,
+            })
+        elif base_needs_dual_clip:
             # FLUX style - dual CLIP pair
             clip_variations.append({
                 "type": "pair",
                 "a": clip_model,
                 "b": clip_model_2,
-                "clip_obj": base_clip_obj,
-                "clip_type": base_resolved_clip_type,  # Store for sampler model type detection
+                "a_path": folder_paths.get_full_path("clip", clip_model) if clip_model != "NONE" else None,
+                "b_path": folder_paths.get_full_path("clip", clip_model_2) if clip_model_2 != "NONE" else None,
+                "clip_type": base_resolved_clip_type,
+                "device": clip_device,
             })
         else:
             # FLUX2, QWEN, etc - single CLIP
             clip_variations.append({
                 "type": "single",
                 "model": clip_model,
-                "clip_obj": base_clip_obj,
-                "clip_type": base_resolved_clip_type,  # Store for sampler model type detection
+                "model_path": folder_paths.get_full_path("clip", clip_model) if clip_model != "NONE" else None,
+                "clip_type": base_resolved_clip_type,
+                "device": clip_device,
             })
 
         for i in range(1, num_clip_variations):
@@ -523,16 +436,8 @@ class ModelCompareLoaders:
             c_device = kwargs.get(f"clip_device_variation_{i}", "default")
             
             if c_name != "NONE":
-                # Load variation CLIP
+                # Store variation CLIP path - no loading
                 path = folder_paths.get_full_path("clip", c_name)
-                c_obj = None
-                
-                # Build model_options for device
-                var_clip_model_options = {}
-                if c_device == "cpu":
-                    var_clip_model_options["load_device"] = torch.device("cpu")
-                    var_clip_model_options["offload_device"] = torch.device("cpu")
-                    print(f"[ModelCompareLoaders] Loading CLIP variation {i} on CPU to save VRAM")
                 
                 # Determine if THIS VARIATION needs dual CLIP based on its OWN clip_type, not the base preset
                 # Resolve clip_type: if "default", infer from its associated model's preset
@@ -565,56 +470,42 @@ class ModelCompareLoaders:
                 # Dual CLIP: FLUX, Hunyuan Video, Hunyuan 1.5 (NOT WAN 2.1, NOT WAN 2.2)
                 variation_needs_dual_clip = resolved_clip_type in ["flux", "hunyuan_video", "hunyuan_video_15"]
                 
-                # Load dual CLIP only if THIS VARIATION's clip_type requires it AND secondary CLIP provided
+                # Store paths only - no loading
                 if variation_needs_dual_clip and c_name_2 != "NONE":
                     path2 = folder_paths.get_full_path("clip", c_name_2)
-                    c_obj = comfy.sd.load_clip(ckpt_paths=[path, path2], embedding_directory=folder_paths.get_folder_paths("embeddings"), clip_type=self._get_clip_type_enum(c_type), model_options=var_clip_model_options)
-                else:
-                    # Single CLIP for all others (including FLUX2 variations)
-                    c_obj = comfy.sd.load_clip(ckpt_paths=[path], embedding_directory=folder_paths.get_folder_paths("embeddings"), clip_type=self._get_clip_type_enum(c_type), model_options=var_clip_model_options)
-                
-                # Append with correct structure based on CLIP type
-                if variation_needs_dual_clip and c_name_2 != "NONE":
                     clip_variations.append({
                         "type": "pair",
                         "a": c_name,
                         "b": c_name_2,
-                        "clip_obj": c_obj,
-                        "clip_type": resolved_clip_type,  # Store for sampler model type detection
+                        "a_path": path,
+                        "b_path": path2,
+                        "clip_type": resolved_clip_type,
+                        "device": c_device,
                     })
                 else:
                     clip_variations.append({
                         "type": "single",
                         "model": c_name,
-                        "clip_obj": c_obj,
-                        "clip_type": resolved_clip_type,  # Store for sampler model type detection
+                        "model_path": path,
+                        "clip_type": resolved_clip_type,
+                        "device": c_device,
                     })
 
-        # 5. Load LoRAs
-        loras_list = []
-        for i in range(num_loras):
-            l_name = kwargs.get(f"lora_{i}", "NONE")
-            if l_name != "NONE":
-                l_strengths = kwargs.get(f"lora_{i}_strengths", "1.0")
-                l_label = kwargs.get(f"lora_{i}_customlabel", "")
-                
-                l_data = {
-                    "name": l_name,
-                    "strengths": self._parse_strengths(l_strengths),
-                    "display_name": l_label if l_label else l_name
-                }
-                
-                # WAN 2.2 Low Noise LoRA
-                if preset == "WAN2.2":
-                    l_low = kwargs.get(f"lora_{i}_low", "NONE")
-                    l_low_str = kwargs.get(f"lora_{i}_low_strengths", "1.0")
-                    l_low_lbl = kwargs.get(f"lora_{i}_low_customlabel", "")
-                    
-                    l_data["name_low"] = l_low
-                    l_data["strengths_low"] = self._parse_strengths(l_low_str)
-                    l_data["display_name_low"] = l_low_lbl if l_low_lbl else l_low
-                
-                loras_list.append(l_data)
+        # 5. Store LoRA configs per model variation
+        # Base model LoRA config
+        lora_configs = []
+        base_lora_config = kwargs.get("lora_config", None)
+        lora_configs.append(base_lora_config)
+        
+        # Variation LoRA configs
+        for i in range(1, 5):
+            var_lora_config = kwargs.get(f"lora_config_variation_{i}", None)
+            lora_configs.append(var_lora_config)
+        
+        # Count how many LoRA configs are provided
+        num_lora_configs = sum(1 for c in lora_configs if c is not None)
+        if num_lora_configs > 0:
+            print(f"[ModelCompareLoaders] {num_lora_configs} LoRA configuration(s) connected")
 
         # 6. Integrate Prompt Config if provided
         prompt_variations = []
@@ -624,7 +515,7 @@ class ModelCompareLoaders:
 
         # 7. Compute Combinations
         combinations = self._compute_combinations(
-            model_variations, vae_variations, clip_variations, loras_list, preset, prompt_variations
+            model_variations, vae_variations, clip_variations, lora_configs, preset, prompt_variations
         )
 
         # Determine if this is a "grouped" comparison (Model+VAE+CLIP are paired, not cross-product)
@@ -638,55 +529,20 @@ class ModelCompareLoaders:
         config = {
             "preset": preset,
             "combinations": combinations,
-            "model_variations": model_variations, # Contains objects
-            "vae_map": vae_map,
+            "model_variations": model_variations,  # Contains paths, not objects
+            "vae_paths": vae_paths,  # Map name to path for lazy loading
             "vae_variations": vae_variations,
-            "clip_variations": clip_variations,
-            "loras": loras_list,
-            "prompt_variations": prompt_variations,  # NEW: Prompt variations
+            "clip_variations": clip_variations,  # Contains paths and config, not objects
+            "lora_configs": lora_configs,  # Per-variation LoRA configs from LoRA Compare nodes
+            "prompt_variations": prompt_variations,  # Prompt variations
             "is_grouped": is_grouped,  # Flag for grid to use simple grouped layout
             "num_model_groups": num_models,  # Number of model groups (for grid layout)
         }
 
-        # Encode conditioning for the first prompt variation if available
-        # Just pass through whatever encode() returns - it handles the format correctly
-        positive_cond = [[torch.zeros((1, 77, 768)), {}]]  # Default empty
-        negative_cond = [[torch.zeros((1, 77, 768)), {}]]
-        
-        if prompt_variations and len(prompt_variations) > 0 and base_clip_obj:
-            first_prompt = prompt_variations[0]
-            try:
-                # Handle FLUX dual-CLIP tokenization specially
-                if base_needs_dual_clip and clip_model_2 != "NONE":
-                    # For FLUX with dual CLIP, tokenize the prompt for both CLIPs like the standard node
-                    # Always encode, even if prompt is empty (to get proper empty conditioning with pooled_output)
-                    pos_text = first_prompt.get("positive", "")
-                    tokens = base_clip_obj.tokenize(pos_text)
-                    positive_cond = base_clip_obj.encode_from_tokens_scheduled(tokens, add_dict={"guidance": 3.5})
-                    
-                    neg_text = first_prompt.get("negative", "")
-                    tokens = base_clip_obj.tokenize(neg_text)
-                    negative_cond = base_clip_obj.encode_from_tokens_scheduled(tokens, add_dict={"guidance": 3.5})
-                else:
-                    # Standard single-CLIP encoding for FLUX2, SDXL, etc.
-                    # Always encode, even if prompt is empty
-                    pos_text = first_prompt.get("positive", "")
-                    tokens = base_clip_obj.tokenize(pos_text)
-                    positive_cond = base_clip_obj.encode_from_tokens_scheduled(tokens)
-                    
-                    neg_text = first_prompt.get("negative", "")
-                    tokens = base_clip_obj.tokenize(neg_text)
-                    negative_cond = base_clip_obj.encode_from_tokens_scheduled(tokens)
-                
-                print(f"[ModelCompareLoaders] Encoded conditioning from prompt variations")
-            except Exception as e:
-                print(f"[ModelCompareLoaders] Warning: Failed to encode conditioning: {e}")
-                import traceback
-                traceback.print_exc()
-                print(f"[ModelCompareLoaders] Using empty conditioning tensors")
-
-        # Return base objects for standard connection if needed (fallback)
-        return (config, base_entry["model_obj"], base_vae_obj, positive_cond, negative_cond)
+        # LAZY LOADING: All model/VAE/CLIP loading deferred to sampler
+        # Config only contains paths and configurations
+        print(f"[ModelCompareLoaders] Config prepared with {len(combinations)} combinations (LAZY LOADING)")
+        return (config,)
 
     def _get_clip_type_enum(self, clip_type_str):
         """
@@ -705,6 +561,7 @@ class ModelCompareLoaders:
             "hunyuan_video": getattr(comfy.sd.CLIPType, "HUNYUAN_VIDEO", comfy.sd.CLIPType.STABLE_DIFFUSION),
             "hunyuan_video_15": getattr(comfy.sd.CLIPType, "HUNYUAN_VIDEO_15", comfy.sd.CLIPType.STABLE_DIFFUSION),
             "qwen": getattr(comfy.sd.CLIPType, "QWEN_IMAGE", comfy.sd.CLIPType.STABLE_DIFFUSION),
+            "lumina2": getattr(comfy.sd.CLIPType, "LUMINA2", comfy.sd.CLIPType.STABLE_DIFFUSION),
         }
         
         # Try direct attribute lookup first for any other types
@@ -714,12 +571,6 @@ class ModelCompareLoaders:
             
         return mapping.get(clip_type_str, comfy.sd.CLIPType.STABLE_DIFFUSION)
 
-    def _parse_strengths(self, strength_str):
-        try:
-            return [float(x.strip()) for x in strength_str.split(",")]
-        except:
-            return [1.0]
-
     def _compute_combinations(self, models, vaes, clips, loras, preset, prompt_variations=None):
         """
         Compute combinations with GROUPING support and PROMPT variations.
@@ -728,6 +579,11 @@ class ModelCompareLoaders:
         - Model variation 0 (base) paired with VAE variation 0 + CLIP variation 0
         - Model variation 1 paired with VAE variation 1 + CLIP variation 1
         - etc.
+        
+        NEW LORA SYSTEM:
+        - lora_configs is a list of per-variation LoRA configurations
+        - Each model variation has its own LoRA config (or None)
+        - LoRA configs contain list of LoRAs with strength variations
         
         NEW PROMPT SYSTEM:
         - Each model/vae/clip combo is tested with each prompt variation
@@ -748,48 +604,60 @@ class ModelCompareLoaders:
         num_vaes = len(vaes)
         num_clips = len(clips)
         
-        # 4. LoRA Combinations
-        lora_options = []
-        for i, lora in enumerate(loras):
-            opts = []
-            # High strengths
-            strs = lora["strengths"]
-            # Low strengths (WAN 2.2)
-            strs_low = lora.get("strengths_low", [])
+        def get_lora_combos_for_config(lora_config):
+            """Generate all LoRA strength combinations from a LoRA config."""
+            if lora_config is None:
+                return [{"loras": [], "display": "No LoRA"}]
             
-            # Match lengths
-            if len(strs_low) < len(strs):
-                strs_low = strs_low + [strs_low[-1]] * (len(strs) - len(strs_low)) if strs_low else [1.0]*len(strs)
+            loras = lora_config.get("loras", [])
+            if not loras:
+                return [{"loras": [], "display": "No LoRA"}]
             
-            for s_h, s_l in zip(strs, strs_low):
-                opts.append({
-                    "name": lora["name"],
-                    "strength": s_h,
-                    "name_low": lora.get("name_low"),
-                    "strength_low": s_l,
-                    "display": lora["display_name"]
-                })
-            lora_options.append(opts)
+            # Build options for each LoRA
+            lora_options = []
+            for lora in loras:
+                opts = []
+                strengths = lora.get("strengths", [1.0])
+                low_strengths = lora.get("low_strengths", strengths)  # Default to same as high
+                
+                # Match lengths
+                if len(low_strengths) < len(strengths):
+                    low_strengths = low_strengths + [low_strengths[-1] if low_strengths else 1.0] * (len(strengths) - len(low_strengths))
+                
+                for s_h, s_l in zip(strengths, low_strengths):
+                    opts.append({
+                        "name": lora["name"],
+                        "path": lora["path"],
+                        "strength": s_h,
+                        "label": lora.get("label", lora["name"]),
+                        "mode": lora.get("mode", "SINGLE"),
+                        "low_name": lora.get("low_name"),
+                        "low_path": lora.get("low_path"),
+                        "low_strength": s_l,
+                        "low_label": lora.get("low_label", lora.get("low_name", "")),
+                        "combinator": lora.get("combinator", "+"),
+                    })
+                lora_options.append(opts)
             
-        if not lora_options:
-            lora_combos = [([], [], [], [])] # names, strengths, names_low, strengths_low
-        else:
+            # Generate all strength combinations
             lora_combos = []
             for prod in itertools.product(*lora_options):
-                names = []
-                strengths = []
-                names_low = []
-                strengths_low = []
+                combo_loras = list(prod)
+                # Build display name from labels and combinators
+                display_parts = []
+                for i, l in enumerate(combo_loras):
+                    display_parts.append(f"{l['label']}:{l['strength']}")
+                    if l.get("mode") == "HIGH_LOW_PAIR" and l.get("low_name"):
+                        display_parts[-1] += f"/{l['low_label']}:{l['low_strength']}"
+                    if i < len(combo_loras) - 1:
+                        display_parts.append(l.get("combinator", "+"))
                 
-                for item in prod:
-                    if item["name"] != "NONE":
-                        names.append(item["name"])
-                        strengths.append(item["strength"])
-                        if preset == "WAN2.2":
-                            names_low.append(item["name_low"])
-                            strengths_low.append(item["strength_low"])
-                
-                lora_combos.append((names, strengths, names_low, strengths_low))
+                lora_combos.append({
+                    "loras": combo_loras,
+                    "display": " ".join(display_parts) if display_parts else "No LoRA"
+                })
+            
+            return lora_combos if lora_combos else [{"loras": [], "display": "No LoRA"}]
 
         # Generate final combinations with GROUPING
         # Each model index is paired with corresponding VAE and CLIP indices
@@ -804,24 +672,59 @@ class ModelCompareLoaders:
             v_name = vaes[v_idx]["name"] if num_vaes > 0 else "NONE"
             c_clip = clips[c_idx] if num_clips > 0 else None
             
+            # Get LoRA config for this model variation (or reuse last valid one)
+            lora_config = None
+            for i in range(m_idx, -1, -1):
+                if i < len(lora_configs) and lora_configs[i] is not None:
+                    lora_config = lora_configs[i]
+                    break
+            
+            # Generate LoRA combinations for this variation
+            lora_combos = get_lora_combos_for_config(lora_config)
+            
             # For each LoRA combination, create one combo per model group
-            for l_names, l_strs, l_names_low, l_strs_low in lora_combos:
+            for lora_combo in lora_combos:
                 # For each prompt variation
                 for prompt_var in prompt_variations:
                     combos.append({
                         "model_index": m_idx,
                         "vae_name": v_name,
                         "clip_variation": c_clip,
-                        "lora_names": l_names,
-                        "lora_strengths": l_strs,
-                        "lora_names_low": l_names_low,
-                        "lora_strengths_low": l_strs_low,
-                        "prompt_index": prompt_var.get("index", 1),  # NEW
-                        "prompt_positive": prompt_var.get("positive", ""),  # NEW
-                        "prompt_negative": prompt_var.get("negative", ""),  # NEW
+                        "lora_config": lora_combo,  # Contains list of LoRAs with strengths
+                        "prompt_index": prompt_var.get("index", 1),
+                        "prompt_positive": prompt_var.get("positive", ""),
+                        "prompt_negative": prompt_var.get("negative", ""),
                     })
                         
         return combos
+
+    @classmethod
+    def IS_CHANGED(cls, **kwargs):
+        """
+        Compute a hash of all inputs to determine if re-execution is needed.
+        This prevents unnecessary re-runs when workflow is queued without changes.
+        """
+        # Build a string representation of all inputs
+        items_to_hash = []
+        
+        # Add all kwargs to the hash
+        for key in sorted(kwargs.keys()):
+            val = kwargs[key]
+            # Skip config objects (they're outputs)
+            if key == "prompt_config" and val is not None:
+                # For prompt_config, hash its contents
+                items_to_hash.append(f"{key}:{str(val)}")
+            elif isinstance(val, (str, int, float, bool)):
+                items_to_hash.append(f"{key}:{val}")
+            elif isinstance(val, (list, tuple)):
+                items_to_hash.append(f"{key}:{str(val)}")
+            elif val is None:
+                items_to_hash.append(f"{key}:None")
+        
+        # Create hash of all items
+        hash_input = "|".join(items_to_hash)
+        return hashlib.md5(hash_input.encode()).hexdigest()
+
 
 # Node class mappings
 NODE_CLASS_MAPPINGS = {
