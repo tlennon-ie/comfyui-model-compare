@@ -120,9 +120,12 @@ function registerExtension(app) {
                                 }
                                 else if (widget.name === "clip_model_2") {
                                     // Show second CLIP only for dual-CLIP presets/types
+                                    // Dual CLIP: FLUX, Hunyuan Video, Hunyuan 1.5 (NOT WAN 2.1, NOT WAN 2.2)
                                     const baseClipType = getVal("clip_type", "default");
-                                    const needsDualClip = ["flux", "wan", "wan22", "hunyuan_video", "hunyuan_video_15"].includes(preset.toLowerCase()) ||
-                                                          ["flux", "wan", "wan22", "hunyuan_video", "hunyuan_video_15"].includes(baseClipType);
+                                    const dualClipPresets = ["flux", "hunyuan_video", "hunyuan_video_15"];
+                                    const dualClipTypes = ["flux", "hunyuan_video", "hunyuan_video_15"];
+                                    const needsDualClip = dualClipPresets.includes(preset.toLowerCase()) ||
+                                                          dualClipTypes.includes(baseClipType);
                                     shouldShow = needsDualClip && !baked_vae_clip;
                                 }
 
@@ -178,7 +181,8 @@ function registerExtension(app) {
                                             resolvedClipType = preset.toLowerCase();
                                         }
                                         
-                                        const dualClipTypes = ["flux", "wan", "wan22", "hunyuan_video", "hunyuan_video_15"];
+                                        // Dual CLIP types: FLUX, Hunyuan Video, Hunyuan 1.5 (NOT WAN 2.1, NOT WAN 2.2)
+                                        const dualClipTypes = ["flux", "hunyuan_video", "hunyuan_video_15"];
                                         const needsDualClip = dualClipTypes.includes(resolvedClipType);
                                         
                                         if (isSecondary) {
