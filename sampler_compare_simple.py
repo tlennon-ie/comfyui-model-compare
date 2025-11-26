@@ -184,7 +184,14 @@ class SamplerCompareSimple:
             return patched_model
         
         for idx, combo in enumerate(combinations):
-            print(f"\n[SamplerCompareSimple] === Combination {idx} ===")
+            print(f"\n[SamplerCompareSimple] === Combination {idx + 1}/{len(combinations)} ===")
+            
+            # Free GPU memory before loading new models
+            # This is critical when switching between large models like FLUX variants
+            comfy.model_management.unload_all_models()
+            comfy.model_management.soft_empty_cache()
+            import gc
+            gc.collect()
             
             # 1. Retrieve Models & VAEs
             model_idx = combo.get("model_index", 0)
