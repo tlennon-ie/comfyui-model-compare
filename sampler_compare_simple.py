@@ -20,8 +20,8 @@ class SamplerCompareSimple:
     Supports WAN 2.2 High/Low noise sampling.
     """
     
-    RETURN_TYPES = ("IMAGE", "STRING", "MODEL_COMPARE_CONFIG")
-    RETURN_NAMES = ("images", "labels", "config")
+    RETURN_TYPES = ("IMAGE", "MODEL_COMPARE_CONFIG", "STRING")
+    RETURN_NAMES = ("images", "config", "labels")
     FUNCTION = "sample_all_combinations"
     CATEGORY = "sampling"
     OUTPUT_NODE = True
@@ -38,10 +38,10 @@ class SamplerCompareSimple:
             "required": {
                 "config": ("MODEL_COMPARE_CONFIG",),
                 "model": ("MODEL",),
-                "positive": ("CONDITIONING",),
-                "negative": ("CONDITIONING",),
-                "latent": ("LATENT",),
                 "vae": ("VAE",),
+                "positive_cond": ("CONDITIONING",),
+                "negative_cond": ("CONDITIONING",),
+                "latent": ("LATENT",),
                 "preset": (["STANDARD", "SDXL", "PONY", "WAN2.1", "WAN2.2", "HUNYUAN_VIDEO", "HUNYUAN_VIDEO_15", "QWEN", "FLUX", "FLUX2"], {
                     "default": "STANDARD",
                     "tooltip": "Sampler preset - controls visibility of specific fields"
@@ -73,10 +73,10 @@ class SamplerCompareSimple:
         self,
         config: Dict[str, Any],
         model,
-        positive,
-        negative,
-        latent,
         vae,
+        positive_cond,
+        negative_cond,
+        latent,
         preset: str,
         steps: int,
         cfg: float,
@@ -252,8 +252,8 @@ class SamplerCompareSimple:
             # Always re-encode conditioning with THIS combo's CLIP object
             # This is critical when comparing different model types (e.g., FLUX2 vs FLUX)
             # as they have incompatible CLIP architectures
-            current_positive = positive
-            current_negative = negative
+            current_positive = positive_cond
+            current_negative = negative_cond
             
             # Get CLIP variation info
             clip_var = combo.get("clip_variation")
@@ -501,7 +501,7 @@ class SamplerCompareSimple:
         images_tensor = torch.cat(resized_images, dim=0)
         labels_str = "\n".join(all_labels)
         
-        return (images_tensor, labels_str, config)
+        return (images_tensor, config, labels_str)
     
     @staticmethod
     def _apply_loras(model, lora_names: List[str], strengths: Tuple[float, ...]):

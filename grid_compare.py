@@ -36,8 +36,8 @@ class GridCompare:
         return {
             "required": {
                 "images": ("IMAGE",),
-                "labels": ("STRING",),
                 "config": ("MODEL_COMPARE_CONFIG",),
+                "labels": ("STRING",),
                 "save_location": ("STRING", {
                     "default": "model-compare/ComfyUI",
                     "multiline": False,
@@ -122,7 +122,7 @@ class GridCompare:
 
     CATEGORY = "image"
     RETURN_TYPES = ("IMAGE", "STRING")
-    RETURN_NAMES = ("grid_image", "save_path")
+    RETURN_NAMES = ("images", "save_path")
     FUNCTION = "create_grid"
     OUTPUT_NODE = True
     
@@ -773,7 +773,7 @@ class GridCompare:
             images_by_prompt[prompt_idx].append((img, label))
         
         all_paths = []
-        first_grid_tensor = None
+        all_grid_tensors = []
         
         for prompt_idx in sorted(images_by_prompt.keys()):
             img_label_pairs = images_by_prompt[prompt_idx]
@@ -794,10 +794,6 @@ class GridCompare:
             
             # Build title with prompt info
             prompt_title = f"{grid_title} - Prompt {prompt_idx}" if grid_title else f"Prompt {prompt_idx}"
-            if prompt_info:
-                pos_preview = prompt_info.get("positive", "")[:60]
-                if pos_preview:
-                    prompt_title += f": {pos_preview}..."
             
             print(f"[GridCompare] Creating grid for prompt {prompt_idx} with {len(prompt_images)} images")
             
@@ -832,18 +828,18 @@ class GridCompare:
                     font_name=font_name,
                     title=prompt_title,
                 )
-            
-            # Add prompt text to bottom if enabled
-            if show_positive_prompt or show_negative_prompt:
-                grid_image = self._add_prompt_text_to_grid(
-                    grid_image=grid_image,
-                    prompt_info=prompt_info,
-                    show_positive=show_positive_prompt,
-                    show_negative=show_negative_prompt,
-                    text_color=text_color,
-                    font_name=font_name,
-                    font_size=font_size,
-                )
+                
+                # Add prompt text to bottom only for non-grouped mode (grouped mode already includes it)
+                if show_positive_prompt or show_negative_prompt:
+                    grid_image = self._add_prompt_text_to_grid(
+                        grid_image=grid_image,
+                        prompt_info=prompt_info,
+                        show_positive=show_positive_prompt,
+                        show_negative=show_negative_prompt,
+                        text_color=text_color,
+                        font_name=font_name,
+                        font_size=font_size,
+                    )
             
             # Save this grid
             save_title = f"{grid_title}_prompt{prompt_idx}" if grid_title else f"grid_prompt{prompt_idx}"
@@ -857,17 +853,20 @@ class GridCompare:
                 extra_pnginfo=extra_pnginfo,
             )
             all_paths.append(save_path)
+            all_grid_tensors.append(self._pil_to_tensor(grid_image))
             print(f"[GridCompare] Prompt {prompt_idx} grid saved to: {save_path}")
-            
-            # Keep first grid tensor for output
-            if first_grid_tensor is None:
-                first_grid_tensor = self._pil_to_tensor(grid_image)
         
-        # Return first grid tensor and all paths
+        # Return all grid tensors stacked and all paths
         combined_paths = ", ".join(all_paths)
         print(f"[GridCompare] All {len(all_paths)} prompt grids saved")
         
-        return (first_grid_tensor, combined_paths)
+        # Stack all grid tensors into a batch
+        if all_grid_tensors:
+            stacked_grids = torch.cat(all_grid_tensors, dim=0)
+        else:
+            stacked_grids = torch.zeros((1, 64, 64, 3))
+        
+        return (stacked_grids, combined_paths)
 
     def _add_prompt_text_to_grid(
         self,
@@ -1014,9 +1013,9 @@ class GridCompare:
         if show_positive_prompt or show_negative_prompt:
             lines_needed = 0
             if show_positive_prompt:
-                lines_needed += 2  # Allow 2 lines for positive
+                lines_needed += 6  # Header + 5 lines for positive prompt text
             if show_negative_prompt:
-                lines_needed += 2  # Allow 2 lines for negative
+                lines_needed += 6  # Spacer + Header + 5 lines for negative prompt text
             prompt_text_height = int(font_size * 0.6 * lines_needed) + gap_size
         
         # Calculate cell/grid dimensions
@@ -1100,16 +1099,23 @@ class GridCompare:
                 prompt_width = grid_width - gap_size * 2
                 
                 if show_positive_prompt and prompt_positive:
+                    # Draw header
+                    draw.text((grid_width // 2, prompt_y), "Positive Prompt:", fill=(80, 80, 80), font=prompt_font, anchor="mt")
+                    prompt_y += int(font_size * 0.6)
                     # Wrap and draw positive prompt
-                    wrapped_pos = self._wrap_text(f"+ {prompt_positive}", prompt_font, prompt_width)
-                    for line in wrapped_pos.split('\n')[:2]:  # Max 2 lines
+                    wrapped_pos = self._wrap_text(prompt_positive, prompt_font, prompt_width)
+                    for line in wrapped_pos.split('\n'):
                         draw.text((grid_width // 2, prompt_y), line, fill=text_rgb, font=prompt_font, anchor="mt")
                         prompt_y += int(font_size * 0.6)
                 
                 if show_negative_prompt and prompt_negative:
+                    prompt_y += int(font_size * 0.3)  # Add spacer
+                    # Draw header
+                    draw.text((grid_width // 2, prompt_y), "Negative Prompt:", fill=(150, 50, 50), font=prompt_font, anchor="mt")
+                    prompt_y += int(font_size * 0.6)
                     # Wrap and draw negative prompt
-                    wrapped_neg = self._wrap_text(f"- {prompt_negative}", prompt_font, prompt_width)
-                    for line in wrapped_neg.split('\n')[:2]:  # Max 2 lines
+                    wrapped_neg = self._wrap_text(prompt_negative, prompt_font, prompt_width)
+                    for line in wrapped_neg.split('\n'):
                         draw.text((grid_width // 2, prompt_y), line, fill=(150, 50, 50), font=prompt_font, anchor="mt")
                         prompt_y += int(font_size * 0.6)
         

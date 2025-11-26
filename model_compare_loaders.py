@@ -220,8 +220,8 @@ class ModelCompareLoaders:
 
         return inputs
 
-    RETURN_TYPES = ("MODEL_COMPARE_CONFIG", "MODEL", "CLIP", "VAE", "CONDITIONING", "CONDITIONING")
-    RETURN_NAMES = ("config", "base_model", "base_clip", "base_vae", "positive_cond", "negative_cond")
+    RETURN_TYPES = ("MODEL_COMPARE_CONFIG", "MODEL", "VAE", "CONDITIONING", "CONDITIONING")
+    RETURN_NAMES = ("config", "base_model", "base_vae", "positive_cond", "negative_cond")
     FUNCTION = "load_models"
     CATEGORY = "loaders"
 
@@ -602,7 +602,7 @@ class ModelCompareLoaders:
                 print(f"[ModelCompareLoaders] Using empty conditioning tensors")
 
         # Return base objects for standard connection if needed (fallback)
-        return (config, base_entry["model_obj"], base_clip_obj, base_vae_obj, positive_cond, negative_cond)
+        return (config, base_entry["model_obj"], base_vae_obj, positive_cond, negative_cond)
 
     def _get_clip_type_enum(self, clip_type_str):
         """
