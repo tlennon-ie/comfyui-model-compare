@@ -218,6 +218,31 @@ function registerExtension(app) {
                                         }
                                     }
                                 }
+                                
+                                // --- FPS Fields (Video Models) ---
+                                else if (widget.name === "fps") {
+                                    // Show base FPS for video presets
+                                    const videoPresets = ["WAN2.1", "WAN2.2", "HUNYUAN_VIDEO", "HUNYUAN_VIDEO_15"];
+                                    shouldShow = videoPresets.includes(preset);
+                                }
+                                else if (widget.name.startsWith("fps_variation_")) {
+                                    // Show FPS for each video model variation
+                                    const num = parseInt(widget.name.split("_")[2]);
+                                    if (num < num_diffusion_models) {
+                                        // Check if this variation's clip_type is a video type
+                                        const varClipTypeWidget = self.widgets.find(w => w.name === `clip_type_variation_${num}`);
+                                        const varClipType = varClipTypeWidget ? varClipTypeWidget.value : "default";
+                                        
+                                        let resolvedType = varClipType;
+                                        if (resolvedType === "default") {
+                                            resolvedType = preset.toLowerCase();
+                                        }
+                                        
+                                        const videoTypes = ["wan", "wan22", "hunyuan_video", "hunyuan_video_15"];
+                                        const videoPresets = ["wan2.1", "wan2.2", "hunyuan_video", "hunyuan_video_15"];
+                                        shouldShow = videoTypes.includes(resolvedType) || videoPresets.includes(resolvedType);
+                                    }
+                                }
 
                                 if (shouldShow) {
                                     widget.computeSize = widget.origComputeSize;

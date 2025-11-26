@@ -121,6 +121,14 @@ class ModelCompareLoaders:
                 "prompt_config": ("PROMPT_COMPARE_CONFIG", {
                     "tooltip": "Optional: Connect PromptCompare node to compare multiple prompts"
                 }),
+                # Video model FPS settings (shown for video presets)
+                "fps": ("INT", {
+                    "default": 24,
+                    "min": 1,
+                    "max": 120,
+                    "step": 1,
+                    "tooltip": "FPS for base video model output. Common: WAN=16, Hunyuan=24, HY1.5=24"
+                }),
             },
         }
 
@@ -177,6 +185,15 @@ class ModelCompareLoaders:
                 ["NONE"] + vaes,
                 {"default": "NONE", "tooltip": f"VAE Variation {i} (independent of base baked_vae_clip - set baked_vae_clip_variation_{i} toggle)"}
             )
+            
+            # FPS for video model variations
+            inputs["optional"][f"fps_variation_{i}"] = ("INT", {
+                "default": 24,
+                "min": 1,
+                "max": 120,
+                "step": 1,
+                "tooltip": f"Variation {i}: FPS for video output. Common: WAN=16, Hunyuan=24, HY1.5=24"
+            })
         
         # LoRA fields (separate section after variations)
         for i in range(10):
@@ -320,7 +337,17 @@ class ModelCompareLoaders:
             
             return current_clip_type
         
-        def load_model_entry(name_high, name_low, use_baked, current_clip_type, is_base=False):
+        def load_model_entry(name_high, name_low, use_baked, current_clip_type, is_base=False, var_clip_type=None):
+            """Load a model entry with optional low noise model for WAN 2.2.
+            
+            Args:
+                name_high: High noise model name
+                name_low: Low noise model name (for WAN 2.2)
+                use_baked: Whether to use baked VAE/CLIP from checkpoint
+                current_clip_type: Current CLIP type
+                is_base: Whether this is the base model (affects auto-detection)
+                var_clip_type: Explicit clip_type for variations (to detect WAN 2.2 variations)
+            """
             entry = {"name": name_high, "model_obj": None, "model_low_obj": None, "baked_vae": None, "baked_clip": None}
             
             type_high, path_high = self._parse_model_selector(name_high)
@@ -359,11 +386,14 @@ class ModelCompareLoaders:
                         current_clip_type = detected
                 
                 # Load Low Noise Model if WAN 2.2
-                if preset == "WAN2.2" and name_low != "NONE":
+                # Check: preset is WAN2.2 OR variation's clip_type is wan22
+                is_wan22 = preset == "WAN2.2" or var_clip_type == "wan22"
+                if is_wan22 and name_low != "NONE":
                     type_low, path_low = self._parse_model_selector(name_low)
                     if type_low == "diffusion":
                         diff_low_path = folder_paths.get_full_path("diffusion_models", path_low)
                         entry["model_low_obj"] = comfy.sd.load_diffusion_model(diff_low_path, model_options={})
+                        print(f"[ModelCompareLoaders] Loaded WAN 2.2 low noise model: {path_low}")
             
             return entry
 
@@ -375,6 +405,8 @@ class ModelCompareLoaders:
             base_entry["display_name"] = base_label
         else:
             base_entry["display_name"] = base_entry["name"]
+        # Store FPS for video models
+        base_entry["fps"] = kwargs.get("fps", 24)
         model_variations.append(base_entry)
         
         # Variation Models
@@ -383,14 +415,18 @@ class ModelCompareLoaders:
             var_low_name = kwargs.get(f"diffusion_model_variation_{i}_low", "NONE")
             var_baked = kwargs.get(f"baked_vae_clip_variation_{i}", False)
             var_label = kwargs.get(f"diffusion_model_variation_{i}_label", "")
+            # Get variation's clip_type to detect WAN 2.2 variations
+            var_clip_type = kwargs.get(f"clip_type_variation_{i}", "default")
             
             if var_name != "NONE":
-                var_entry = load_model_entry(var_name, var_low_name, var_baked, current_clip_type)
+                var_entry = load_model_entry(var_name, var_low_name, var_baked, current_clip_type, var_clip_type=var_clip_type)
                 # Apply custom label if provided
                 if var_label:
                     var_entry["display_name"] = var_label
                 else:
                     var_entry["display_name"] = var_entry["name"]
+                # Store FPS for video models
+                var_entry["fps"] = kwargs.get(f"fps_variation_{i}", 24)
                 model_variations.append(var_entry)
 
         # 3. Load VAEs
