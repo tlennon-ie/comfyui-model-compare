@@ -447,6 +447,20 @@ class ModelCompareLoaders:
         
         clip_variations = []
         
+        # Resolve base clip_type for storage
+        base_resolved_clip_type = current_clip_type
+        if base_resolved_clip_type == "default":
+            # Map preset to clip_type
+            preset_to_clip_type = {
+                "SDXL": "sdxl", "PONY": "sdxl",
+                "FLUX": "flux", "FLUX2": "flux2",
+                "QWEN": "qwen",
+                "WAN2.1": "wan", "WAN2.2": "wan22",
+                "HUNYUAN_VIDEO": "hunyuan_video",
+                "HUNYUAN_VIDEO_15": "hunyuan_video_15",
+            }
+            base_resolved_clip_type = preset_to_clip_type.get(preset, "sd")
+        
         # Add base CLIP config
         if base_needs_dual_clip:
             # FLUX style - dual CLIP pair
@@ -454,14 +468,16 @@ class ModelCompareLoaders:
                 "type": "pair",
                 "a": clip_model,
                 "b": clip_model_2,
-                "clip_obj": base_clip_obj
+                "clip_obj": base_clip_obj,
+                "clip_type": base_resolved_clip_type,  # Store for sampler model type detection
             })
         else:
             # FLUX2, QWEN, etc - single CLIP
             clip_variations.append({
                 "type": "single",
                 "model": clip_model,
-                "clip_obj": base_clip_obj
+                "clip_obj": base_clip_obj,
+                "clip_type": base_resolved_clip_type,  # Store for sampler model type detection
             })
 
         for i in range(1, num_clip_variations):

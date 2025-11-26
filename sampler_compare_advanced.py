@@ -493,7 +493,7 @@ class SamplerCompareAdvanced:
             model=model_high, seed=seed, steps=steps, cfg=cfg,
             sampler_name=sampler_name, scheduler=scheduler,
             positive=positive, negative=negative, latent=latent,
-            denoise=denoise, start_step=start_step, end_step=end_step
+            denoise=denoise, start_step=start_step, last_step=end_step
         )[0]
         
         if model_low is None:
@@ -505,7 +505,7 @@ class SamplerCompareAdvanced:
             model=model_low, seed=seed, steps=steps, cfg=cfg,
             sampler_name=sampler_name, scheduler=scheduler,
             positive=positive, negative=negative, latent=samples_1,
-            denoise=denoise, start_step=end_step, end_step=steps
+            denoise=denoise, start_step=end_step, last_step=steps
         )[0]
         
         return samples_2
