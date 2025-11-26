@@ -258,6 +258,8 @@ class SamplerCompareAdvanced:
             
             # Prepare latent based on model type
             current_latent = latent
+            is_video_model = model_type in ['hunyuan', 'hunyuan15', 'wan21', 'wan22']
+            num_frames = 1  # Default for image models
             
             # FLUX2 needs 128-channel latent with 16x compression
             if model_type == 'flux2' and latent_channels != 128:
@@ -269,10 +271,19 @@ class SamplerCompareAdvanced:
                 current_latent = {"samples": flux2_latent}
                 print(f"[SamplerCompareAdvanced] Created FLUX2 latent: {flux2_latent.shape}")
             
-            # Video models may need video_latent
-            elif model_type in ['hunyuan', 'hunyuan15', 'wan21', 'wan22'] and video_latent is not None:
+            # Video models should use video_latent if provided
+            elif is_video_model and video_latent is not None:
                 current_latent = video_latent
-                print(f"[SamplerCompareAdvanced] Using video latent input")
+                video_samples = video_latent.get("samples", video_latent)
+                if isinstance(video_samples, torch.Tensor):
+                    # Video latents are typically [B, C, T, H, W] or [B, C, H, W] 
+                    if video_samples.dim() == 5:
+                        num_frames = video_samples.shape[2]  # T dimension
+                        print(f"[SamplerCompareAdvanced] Using video latent: {video_samples.shape}, {num_frames} frames")
+                    else:
+                        print(f"[SamplerCompareAdvanced] Using video latent: {video_samples.shape}")
+            elif is_video_model:
+                print(f"[SamplerCompareAdvanced] WARNING: Video model detected but no video_latent provided. Using standard latent.")
             
             # Prepare working model
             working_model = model_obj
@@ -354,8 +365,12 @@ class SamplerCompareAdvanced:
                 
                 # Decode
                 print(f"[SamplerCompareAdvanced] Decoding...")
-                image = self._decode_latent(sampled_latent, current_vae)
+                image = self._decode_latent(sampled_latent, current_vae, is_video=is_video_model, num_frames=num_frames)
                 all_images.append(image)
+                
+                # Log video output info
+                if is_video_model and image.shape[0] > 1:
+                    print(f"[SamplerCompareAdvanced] Video output: {image.shape[0]} frames")
                 
             except Exception as e:
                 print(f"[SamplerCompareAdvanced] Sampling error: {e}")
@@ -485,14 +500,38 @@ class SamplerCompareAdvanced:
         return working_model
     
     @staticmethod
-    def _decode_latent(latent_dict, vae):
-        """Decode latent samples to image using VAE."""
+    def _decode_latent(latent_dict, vae, is_video=False, num_frames=1):
+        """Decode latent samples to image using VAE.
+        
+        For video models, returns all frames as [F, H, W, C] tensor.
+        For image models, returns [B, H, W, C] tensor.
+        """
         samples = latent_dict["samples"] if isinstance(latent_dict, dict) else latent_dict
         image = vae.decode(samples)
+        
+        # Handle 5D video output [B, F, H, W, C] or [B, C, F, H, W]
         if image.dim() == 5:
-            image = image[:, 0:1, :, :, :]
-        if image.dim() == 5:
-            image = image.squeeze(1)
+            if is_video and num_frames > 1:
+                # Video model - return all frames
+                # Typical decoded shape is [B, F, H, W, C]
+                if image.shape[1] == num_frames:  # [B, F, H, W, C]
+                    # Squeeze batch and return [F, H, W, C]
+                    image = image.squeeze(0)
+                elif image.shape[2] == num_frames:  # Maybe [B, C, F, H, W]?
+                    # Permute and squeeze
+                    image = image.permute(0, 2, 3, 4, 1).squeeze(0)
+                else:
+                    # Unknown format, try to preserve frames
+                    print(f"[SamplerCompareAdvanced] Warning: Unexpected video shape {image.shape}, attempting best effort")
+                    image = image.squeeze(0)
+                    if image.dim() == 4:
+                        # Assume [F, H, W, C] or similar
+                        pass
+            else:
+                # Image model or single frame - take first frame only
+                image = image[:, 0:1, :, :, :]
+                image = image.squeeze(1)
+        
         return image
 
 
