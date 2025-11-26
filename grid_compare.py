@@ -83,6 +83,24 @@ class GridCompare:
                     "default": "default",
                     "tooltip": "Font for text labels",
                 }),
+                "show_positive_prompt": ("BOOLEAN", {
+                    "default": False,
+                    "label_on": "yes",
+                    "label_off": "no",
+                    "tooltip": "Show positive prompt text below each prompt section",
+                }),
+                "show_negative_prompt": ("BOOLEAN", {
+                    "default": False,
+                    "label_on": "yes",
+                    "label_off": "no",
+                    "tooltip": "Show negative prompt text below each prompt section",
+                }),
+                "save_prompt_grids_separately": ("BOOLEAN", {
+                    "default": False,
+                    "label_on": "yes",
+                    "label_off": "no",
+                    "tooltip": "Save each prompt variation as a separate grid file (useful for many prompts)",
+                }),
                 "save_individuals": ("BOOLEAN", {
                     "default": True,
                     "label_on": "yes",
@@ -408,7 +426,10 @@ class GridCompare:
         text_color: str,
         font_size: int,
         font_name: str,
-        save_individuals: bool,
+        show_positive_prompt: bool = False,
+        show_negative_prompt: bool = False,
+        save_prompt_grids_separately: bool = False,
+        save_individuals: bool = False,
         save_metadata: bool = False,
         prompt=None,
         extra_pnginfo=None,
@@ -433,6 +454,32 @@ class GridCompare:
         pil_images = self._tensor_to_pil_list(images)
         print(f"  Converted {len(pil_images)} images to PIL")
 
+        # Handle "Save each prompt as separate grid" option
+        prompt_variations = config.get("prompt_variations", [])
+        combinations = config.get("combinations", [])
+        
+        if save_prompt_grids_separately and len(prompt_variations) > 1 and len(combinations) == len(pil_images):
+            print(f"[GridCompare] Creating separate grids for {len(prompt_variations)} prompt variations")
+            return self._create_separate_prompt_grids(
+                pil_images=pil_images,
+                label_list=label_list,
+                config=config,
+                save_location=save_location,
+                grid_title=grid_title,
+                gap_size=gap_size,
+                border_color=border_color,
+                border_width=border_width,
+                text_color=text_color,
+                font_size=font_size,
+                font_name=font_name,
+                show_positive_prompt=show_positive_prompt,
+                show_negative_prompt=show_negative_prompt,
+                save_individuals=save_individuals,
+                save_metadata=save_metadata,
+                prompt=prompt,
+                extra_pnginfo=extra_pnginfo,
+            )
+
         # Check if sampling failed (e.g., "No successful samples" returned)
         if len(pil_images) > 0 and len(label_list) == 1 and label_list[0].lower().startswith("no "):
             print(f"[GridCompare] Sampling failed: {label_list[0]}")
@@ -456,14 +503,33 @@ class GridCompare:
             organized_data = self._organize_images_by_lora(config, pil_images, label_list)
             
             # Check if we should use the Nested Grid System
-            # Use nested grid if we have multiple models, VAEs, or CLIPs
+            # Use nested grid if we have multiple models, VAEs, or CLIPs AND not in grouped mode
+            is_grouped = config.get("is_grouped", False)
             is_nested = (
                 len(config.get("model_variations", [])) > 1 or
                 len(config.get("vae_variations", [])) > 1 or
                 len(config.get("clip_variations", [])) > 1
-            )
+            ) and not is_grouped
             
-            if is_nested:
+            if is_grouped:
+                # Grouped mode: simple side-by-side comparison
+                # Each model group (Model + VAE + CLIP) is one column
+                print(f"[GridCompare] Using Grouped Grid System (side-by-side comparison)")
+                grid_image = self._create_grouped_grid(
+                    images=pil_images,
+                    labels=label_list,
+                    config=config,
+                    gap_size=gap_size,
+                    border_color=border_color,
+                    border_width=border_width,
+                    text_color=text_color,
+                    font_size=font_size,
+                    font_name=font_name,
+                    title=grid_title,
+                    show_positive_prompt=show_positive_prompt,
+                    show_negative_prompt=show_negative_prompt,
+                )
+            elif is_nested:
                 print(f"[GridCompare] Detected complex config, using Nested Grid System")
                 grid_image = self._create_nested_grid(
                     images=pil_images,
@@ -661,6 +727,422 @@ class GridCompare:
             grid_img.paste(images[0], (gap, header_height + gap))
         
         return grid_img
+
+    def _create_separate_prompt_grids(
+        self,
+        pil_images: List[Image.Image],
+        label_list: List[str],
+        config: Dict[str, Any],
+        save_location: str,
+        grid_title: str,
+        gap_size: int,
+        border_color: str,
+        border_width: int,
+        text_color: str,
+        font_size: int,
+        font_name: str,
+        show_positive_prompt: bool,
+        show_negative_prompt: bool,
+        save_individuals: bool,
+        save_metadata: bool,
+        prompt,
+        extra_pnginfo,
+    ) -> Tuple[torch.Tensor, str]:
+        """
+        Create separate grid images for each prompt variation.
+        
+        Returns the first grid as tensor and comma-separated paths for all grids.
+        """
+        prompt_variations = config.get("prompt_variations", [])
+        combinations = config.get("combinations", [])
+        num_model_groups = config.get("num_model_groups", 1)
+        
+        # Group images by prompt_index
+        # Images are organized: [prompt1_model1, prompt1_model2, ..., prompt2_model1, prompt2_model2, ...]
+        images_by_prompt: Dict[int, List[Tuple[Image.Image, str]]] = {}
+        
+        for i, (img, label) in enumerate(zip(pil_images, label_list)):
+            if i < len(combinations):
+                prompt_idx = combinations[i].get("prompt_index", 1)
+            else:
+                # Fallback: calculate from position
+                prompt_idx = (i // num_model_groups) + 1
+            
+            if prompt_idx not in images_by_prompt:
+                images_by_prompt[prompt_idx] = []
+            images_by_prompt[prompt_idx].append((img, label))
+        
+        all_paths = []
+        first_grid_tensor = None
+        
+        for prompt_idx in sorted(images_by_prompt.keys()):
+            img_label_pairs = images_by_prompt[prompt_idx]
+            prompt_images = [pair[0] for pair in img_label_pairs]
+            prompt_labels = [pair[1] for pair in img_label_pairs]
+            
+            # Get the prompt text for this variation
+            prompt_info = None
+            for pv in prompt_variations:
+                if pv.get("index") == prompt_idx:
+                    prompt_info = pv
+                    break
+            
+            # Create a modified config for this single prompt
+            single_prompt_config = config.copy()
+            single_prompt_config["prompt_variations"] = [prompt_info] if prompt_info else []
+            single_prompt_config["num_model_groups"] = num_model_groups
+            
+            # Build title with prompt info
+            prompt_title = f"{grid_title} - Prompt {prompt_idx}" if grid_title else f"Prompt {prompt_idx}"
+            if prompt_info:
+                pos_preview = prompt_info.get("positive", "")[:60]
+                if pos_preview:
+                    prompt_title += f": {pos_preview}..."
+            
+            print(f"[GridCompare] Creating grid for prompt {prompt_idx} with {len(prompt_images)} images")
+            
+            # Create the grid for this prompt using grouped layout
+            is_grouped = config.get("is_grouped", False)
+            
+            if is_grouped:
+                grid_image = self._create_grouped_grid(
+                    images=prompt_images,
+                    labels=prompt_labels,
+                    config=single_prompt_config,
+                    gap_size=gap_size,
+                    border_color=border_color,
+                    border_width=border_width,
+                    text_color=text_color,
+                    font_size=font_size,
+                    font_name=font_name,
+                    title=prompt_title,
+                    show_positive_prompt=show_positive_prompt,
+                    show_negative_prompt=show_negative_prompt,
+                )
+            else:
+                # Use simple grid for non-grouped mode
+                grid_image = self._create_simple_grid(
+                    images=prompt_images,
+                    labels=prompt_labels,
+                    gap_size=gap_size,
+                    border_color=border_color,
+                    border_width=border_width,
+                    text_color=text_color,
+                    font_size=font_size,
+                    font_name=font_name,
+                    title=prompt_title,
+                )
+            
+            # Add prompt text to bottom if enabled
+            if show_positive_prompt or show_negative_prompt:
+                grid_image = self._add_prompt_text_to_grid(
+                    grid_image=grid_image,
+                    prompt_info=prompt_info,
+                    show_positive=show_positive_prompt,
+                    show_negative=show_negative_prompt,
+                    text_color=text_color,
+                    font_name=font_name,
+                    font_size=font_size,
+                )
+            
+            # Save this grid
+            save_title = f"{grid_title}_prompt{prompt_idx}" if grid_title else f"grid_prompt{prompt_idx}"
+            save_path = self._save_images(
+                grid_image=grid_image,
+                individual_images=prompt_images if save_individuals else [],
+                save_location=save_location,
+                title=save_title,
+                save_metadata=save_metadata,
+                prompt=prompt,
+                extra_pnginfo=extra_pnginfo,
+            )
+            all_paths.append(save_path)
+            print(f"[GridCompare] Prompt {prompt_idx} grid saved to: {save_path}")
+            
+            # Keep first grid tensor for output
+            if first_grid_tensor is None:
+                first_grid_tensor = self._pil_to_tensor(grid_image)
+        
+        # Return first grid tensor and all paths
+        combined_paths = ", ".join(all_paths)
+        print(f"[GridCompare] All {len(all_paths)} prompt grids saved")
+        
+        return (first_grid_tensor, combined_paths)
+
+    def _add_prompt_text_to_grid(
+        self,
+        grid_image: Image.Image,
+        prompt_info: Dict[str, Any],
+        show_positive: bool,
+        show_negative: bool,
+        text_color: str,
+        font_name: str,
+        font_size: int,
+    ) -> Image.Image:
+        """Add prompt text to bottom of grid image, centered and wrapped."""
+        if not prompt_info:
+            return grid_image
+        
+        prompt_font = self._get_font(font_name, int(font_size * 0.5))
+        text_rgb = self._parse_color(text_color)
+        
+        # Calculate available width for text (with padding on both sides)
+        text_padding = 20
+        available_width = grid_image.width - text_padding * 2
+        
+        # Build wrapped text lines
+        lines = []
+        if show_positive and prompt_info.get("positive"):
+            pos_text = prompt_info["positive"]
+            lines.append(("header", "Positive Prompt:"))
+            wrapped = self._wrap_text(pos_text, prompt_font, available_width)
+            for line in wrapped.split('\n'):
+                lines.append(("positive", line))
+            lines.append(("spacer", ""))  # Add spacing between positive and negative
+        
+        if show_negative and prompt_info.get("negative"):
+            neg_text = prompt_info["negative"]
+            lines.append(("header_neg", "Negative Prompt:"))
+            wrapped = self._wrap_text(neg_text, prompt_font, available_width)
+            for line in wrapped.split('\n'):
+                lines.append(("negative", line))
+        
+        if not lines:
+            return grid_image
+        
+        # Calculate text height needed
+        line_height = int(font_size * 0.6)
+        spacer_height = int(font_size * 0.3)
+        total_text_height = 0
+        for line_type, _ in lines:
+            if line_type == "spacer":
+                total_text_height += spacer_height
+            else:
+                total_text_height += line_height
+        text_height = total_text_height + text_padding * 2
+        
+        # Create new image with extra space at bottom
+        new_width = grid_image.width
+        new_height = grid_image.height + text_height
+        new_image = Image.new('RGB', (new_width, new_height), color=(255, 255, 255))
+        new_image.paste(grid_image, (0, 0))
+        
+        # Draw prompt text - centered
+        draw = ImageDraw.Draw(new_image)
+        y = grid_image.height + text_padding
+        center_x = new_width // 2
+        
+        for line_type, line_text in lines:
+            if line_type == "spacer":
+                y += spacer_height
+                continue
+            elif line_type == "header":
+                color = (80, 80, 80)  # Gray for headers
+            elif line_type == "header_neg":
+                color = (150, 50, 50)  # Dark red for negative header
+            elif line_type == "negative":
+                color = (150, 50, 50)  # Dark red for negative
+            else:
+                color = text_rgb
+            
+            # Draw centered text
+            draw.text((center_x, y), line_text, fill=color, font=prompt_font, anchor="mt")
+            y += line_height
+        
+        return new_image
+
+    def _create_grouped_grid(
+        self,
+        images: List[Image.Image],
+        labels: List[str],
+        config: Dict[str, Any],
+        gap_size: int,
+        border_color: str,
+        border_width: int,
+        text_color: str,
+        font_size: int,
+        font_name: str,
+        title: str = "",
+        show_positive_prompt: bool = False,
+        show_negative_prompt: bool = False,
+    ) -> Image.Image:
+        """
+        Create a grid for grouped comparisons (Model+VAE+CLIP are grouped together).
+        
+        Layout:
+        - Title at top
+        - For each prompt variation:
+            - Model labels row (one per column)
+            - Images row (one per model group)
+            - Prompt text row (spanning all columns) if enabled
+        
+        Columns = Model Groups (Model 1 vs Model 2 vs ...)
+        Sections = Prompt variations (each gets its own row of images + optional prompt label)
+        """
+        if not images:
+            return Image.new('RGB', (100, 100), color='white')
+        
+        # Get image dimensions from first image
+        img_width, img_height = images[0].size
+        
+        # Determine grid layout
+        num_model_groups = config.get("num_model_groups", 1)
+        prompt_variations = config.get("prompt_variations", [])
+        num_prompts = len(prompt_variations) if prompt_variations else 1
+        
+        # Columns = model groups
+        num_cols = num_model_groups
+        
+        # Images are organized: [prompt1_model1, prompt1_model2, ..., prompt2_model1, prompt2_model2, ...]
+        # Each prompt variation gets num_cols images
+        
+        print(f"[GridCompare] Grouped grid: {num_prompts} prompt sections × {num_cols} model columns = {num_prompts * num_cols} cells for {len(images)} images")
+        
+        # Get fonts
+        title_font = self._get_font(font_name, font_size)
+        label_font = self._get_font(font_name, int(font_size * 0.7))
+        prompt_font = self._get_font(font_name, int(font_size * 0.5))
+        text_rgb = self._parse_color(text_color)
+        border_rgb = self._parse_color(border_color)
+        
+        # Calculate dimensions
+        model_label_height = int(font_size * 1.2)
+        title_height = font_size + 30 if title else 0
+        
+        # Calculate prompt text height (if enabled)
+        prompt_text_height = 0
+        if show_positive_prompt or show_negative_prompt:
+            lines_needed = 0
+            if show_positive_prompt:
+                lines_needed += 2  # Allow 2 lines for positive
+            if show_negative_prompt:
+                lines_needed += 2  # Allow 2 lines for negative
+            prompt_text_height = int(font_size * 0.6 * lines_needed) + gap_size
+        
+        # Calculate cell/grid dimensions
+        cell_width = img_width + gap_size
+        section_height = model_label_height + img_height + gap_size + prompt_text_height
+        
+        grid_width = cell_width * num_cols + gap_size
+        grid_height = title_height + section_height * num_prompts + gap_size
+        
+        # Create grid image
+        grid_img = Image.new('RGB', (grid_width, grid_height), color=(255, 255, 255))
+        draw = ImageDraw.Draw(grid_img)
+        
+        # Draw title
+        current_y = 0
+        if title:
+            title_x = grid_width // 2
+            title_y = title_height // 2
+            draw.text((title_x, title_y), title, fill=text_rgb, font=title_font, anchor="mm")
+            current_y = title_height
+        
+        # Draw each prompt section
+        for prompt_idx in range(num_prompts):
+            section_y = current_y + prompt_idx * section_height
+            
+            # Get prompt text for this section
+            prompt_positive = ""
+            prompt_negative = ""
+            if prompt_variations and prompt_idx < len(prompt_variations):
+                prompt_data = prompt_variations[prompt_idx]
+                prompt_positive = prompt_data.get("positive", "")
+                prompt_negative = prompt_data.get("negative", "")
+            
+            # Draw model labels and images for this prompt section
+            for col in range(num_cols):
+                img_idx = prompt_idx * num_cols + col
+                if img_idx >= len(images):
+                    continue
+                
+                x = gap_size + col * cell_width
+                
+                # Get label for this image (model name)
+                label = labels[img_idx] if img_idx < len(labels) else f"Model {col + 1}"
+                
+                # Draw model label
+                label_y = section_y + model_label_height // 2
+                # Truncate label if too long
+                max_label_width = img_width - 10
+                display_label = label
+                if label_font:
+                    try:
+                        while label_font.getbbox(display_label)[2] > max_label_width and len(display_label) > 10:
+                            display_label = display_label[:-4] + "..."
+                    except:
+                        pass
+                draw.text((x + img_width // 2, label_y), display_label, fill=text_rgb, font=label_font, anchor="mm")
+                
+                # Draw image
+                img_y = section_y + model_label_height
+                img = images[img_idx]
+                
+                # Resize if needed
+                if img.size != (img_width, img_height):
+                    img = img.resize((img_width, img_height), Image.LANCZOS)
+                
+                # Draw border
+                if border_width > 0:
+                    for i in range(border_width):
+                        draw.rectangle(
+                            [(x - i, img_y - i), (x + img_width + i, img_y + img_height + i)],
+                            outline=border_rgb,
+                            width=1,
+                        )
+                
+                grid_img.paste(img, (x, img_y))
+            
+            # Draw prompt text spanning all columns (if enabled)
+            if show_positive_prompt or show_negative_prompt:
+                prompt_y = section_y + model_label_height + img_height + gap_size // 2
+                prompt_x = gap_size
+                prompt_width = grid_width - gap_size * 2
+                
+                if show_positive_prompt and prompt_positive:
+                    # Wrap and draw positive prompt
+                    wrapped_pos = self._wrap_text(f"+ {prompt_positive}", prompt_font, prompt_width)
+                    for line in wrapped_pos.split('\n')[:2]:  # Max 2 lines
+                        draw.text((grid_width // 2, prompt_y), line, fill=text_rgb, font=prompt_font, anchor="mt")
+                        prompt_y += int(font_size * 0.6)
+                
+                if show_negative_prompt and prompt_negative:
+                    # Wrap and draw negative prompt
+                    wrapped_neg = self._wrap_text(f"- {prompt_negative}", prompt_font, prompt_width)
+                    for line in wrapped_neg.split('\n')[:2]:  # Max 2 lines
+                        draw.text((grid_width // 2, prompt_y), line, fill=(150, 50, 50), font=prompt_font, anchor="mt")
+                        prompt_y += int(font_size * 0.6)
+        
+        return grid_img
+
+    def _wrap_text(self, text: str, font, max_width: int) -> str:
+        """Wrap text to fit within max_width."""
+        if not font:
+            return text
+        
+        words = text.split()
+        lines = []
+        current_line = []
+        
+        for word in words:
+            test_line = ' '.join(current_line + [word])
+            try:
+                bbox = font.getbbox(test_line)
+                width = bbox[2] - bbox[0]
+            except:
+                width = len(test_line) * 10
+            
+            if width <= max_width:
+                current_line.append(word)
+            else:
+                if current_line:
+                    lines.append(' '.join(current_line))
+                current_line = [word]
+        
+        if current_line:
+            lines.append(' '.join(current_line))
+        
+        return '\n'.join(lines) if lines else text
 
     def _create_simple_grid(
         self,

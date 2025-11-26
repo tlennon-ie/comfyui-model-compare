@@ -1,5 +1,5 @@
 // Model Compare Web Extension
-// Adds "Update Inputs" button to Model Compare nodes
+// Adds "Update Inputs" button to Model Compare nodes and handles dynamic visibility
 
 console.log("[ModelCompare] model_compare.js loaded");
 
@@ -25,14 +25,14 @@ const maxAttempts = 100;
 
 function tryRegisterExtension() {
     registerAttempts++;
-    
+
     if (window.comfyAPI && window.comfyAPI.app && window.comfyAPI.app.app) {
         const app = window.comfyAPI.app.app;
         console.log("[ModelCompare] Found ComfyApp at window.comfyAPI.app.app");
         registerExtension(app);
         return;
     }
-    
+
     if (registerAttempts < maxAttempts) {
         setTimeout(tryRegisterExtension, 50);
     } else {
@@ -42,253 +42,458 @@ function tryRegisterExtension() {
 
 function registerExtension(app) {
     console.log("[ModelCompare] Registering extension with app object");
-    
+
     app.registerExtension({
         name: "comfyui-model-compare",
-        
+
         async beforeRegisterNodeDef(nodeType, nodeData, app) {
+            // --- ModelCompareLoaders Logic ---
             if (nodeData.name === "ModelCompareLoaders") {
                 console.log("[ModelCompare] Setting up ModelCompareLoaders");
-                
-                // Add configure hook to restore width when loading workflows
-                chainCallback(nodeType.prototype, "configure", function(info) {
-                    // Restore the width to 630 after configuration
+
+                chainCallback(nodeType.prototype, "configure", function (info) {
                     setTimeout(() => {
                         if (this.size) {
                             this.size[0] = 630;
                         }
                     }, 10);
                 });
-                
+
                 chainCallback(nodeType.prototype, "onNodeCreated", function () {
-                    console.log("[ModelCompare] onNodeCreated called for ModelCompareLoaders");
-                    
                     try {
                         const self = this;
                         const appRef = app;
-                        
-                        // Store original computeSize for each widget ONCE, on first access
+
                         self.widgets.forEach((w) => {
                             if (!w.origComputeSize) {
                                 w.origComputeSize = w.computeSize;
                             }
                         });
-                        
+
                         const updateVisibility = () => {
-                            const num_diffusion_models = self.widgets.find(w => w.name === "num_diffusion_models")?.value || 1;
-                            const num_vae_variations = self.widgets.find(w => w.name === "num_vae_variations")?.value || 1;
-                            const num_loras = self.widgets.find(w => w.name === "num_loras")?.value || 0;
-                            const num_clip_variations = self.widgets.find(w => w.name === "num_clip_variations")?.value || 1;
-                            const preset = self.widgets.find(w => w.name === "preset")?.value || "QWEN";
-                            
-                            console.log(`[ModelCompare] Updating visibility: preset=${preset}, model_variations=${num_diffusion_models}, vae_variations=${num_vae_variations}, clip_variations=${num_clip_variations}, loras=${num_loras}`);
-                            
+                            const getVal = (name, defaultVal) => {
+                                const w = self.widgets.find(w => w.name === name);
+                                return w ? w.value : defaultVal;
+                            };
+
+                            const num_diffusion_models = getVal("num_diffusion_models", 1);
+                            const num_vae_variations = getVal("num_vae_variations", 1);
+                            const num_loras = getVal("num_loras", 0);
+                            const num_clip_variations = getVal("num_clip_variations", 1);
+                            const preset = getVal("preset", "STANDARD");
+                            const baked_vae_clip = getVal("baked_vae_clip", false);
+
+                            // Define preset flags
+                            const isWAN22 = preset === "WAN2.2";
+                            const isFLUX = preset === "FLUX";
+                            const isHUNYUAN = preset === "HUNYUAN_VIDEO";
+
                             let hiddenCount = 0;
                             let visibleCount = 0;
-                            
-                            // Define preset-specific field filters
-                            const isQWEN = preset === "QWEN";
-                            const isFLUX = preset === "FLUX";
-                            
-                            // Update computeSize for all widgets based on visibility
+
                             self.widgets.forEach((widget) => {
                                 if (!widget.name) {
-                                    // Always show unnamed widgets
                                     widget.computeSize = widget.origComputeSize;
                                     visibleCount++;
                                     return;
                                 }
-                                
-                                // Always show base fields and control widgets
-                                const baseFields = ["base_model", "vae", "clip_type", "preset", "diffusion_model"];
-                                const controlFields = ["num_diffusion_models", "num_vae_variations", "num_clip_variations", "num_loras"];
-                                
-                                if (baseFields.includes(widget.name) || 
-                                    controlFields.includes(widget.name) || 
-                                    widget.type === "button") {
+
+                                const alwaysShow = [
+                                    "preset", "diffusion_model", "num_diffusion_models",
+                                    "num_vae_variations", "num_clip_variations", "num_loras",
+                                    "clip_type"
+                                ];
+
+                                if (alwaysShow.includes(widget.name) || widget.type === "button") {
                                     widget.computeSize = widget.origComputeSize;
                                     visibleCount++;
                                     return;
                                 }
-                                
+
                                 let shouldShow = false;
-                                
-                                // Model variations - show indices 1 through num_diffusion_models-1
-                                if (widget.name.startsWith("model_variation_") || widget.name.startsWith("diffusion_model_variation_")) {
+
+                                // --- Base Model Fields ---
+                                if (widget.name === "baked_vae_clip") {
+                                    // Only show if model name starts with [Checkpoint]
+                                    const diffModel = getVal("diffusion_model", "NONE");
+                                    shouldShow = diffModel.startsWith("[Checkpoint]");
+                                }
+                                else if (widget.name === "diffusion_model_label") {
+                                    // Always show custom label for base model when we have models
+                                    shouldShow = true;
+                                }
+                                else if (widget.name === "diffusion_model_low") {
+                                    shouldShow = isWAN22;
+                                }
+                                else if (widget.name === "vae") {
+                                    shouldShow = !baked_vae_clip;
+                                }
+                                else if (widget.name === "clip_model") {
+                                    shouldShow = !baked_vae_clip;
+                                }
+                                else if (widget.name === "clip_model_2") {
+                                    // Show second CLIP only for dual-CLIP presets/types
+                                    const needsDualClip = ["flux", "wan", "hunyuan_video", "hunyuan_video_15"].includes(preset.toLowerCase());
+                                    shouldShow = needsDualClip && !baked_vae_clip;
+                                }
+
+                                // --- Model Variations ---
+                                else if (widget.name.startsWith("diffusion_model_variation_")) {
+                                    const parts = widget.name.split("_");
+                                    const isLow = parts[parts.length - 1] === "low";
+                                    const isLabel = parts[parts.length - 1] === "label";
+                                    let numStr;
+                                    if (isLow || isLabel) {
+                                        numStr = parts[parts.length - 2];
+                                    } else {
+                                        numStr = parts[parts.length - 1];
+                                    }
+                                    const num = parseInt(numStr);
+
+                                    if (num < num_diffusion_models) {
+                                        if (isLow) {
+                                            shouldShow = isWAN22;
+                                        } else if (isLabel) {
+                                            shouldShow = true; // Always show label for visible variations
+                                        } else {
+                                            shouldShow = true;
+                                        }
+                                    }
+                                }
+                                else if (widget.name.startsWith("baked_vae_clip_variation_")) {
                                     const num = parseInt(widget.name.split("_").pop());
                                     shouldShow = num < num_diffusion_models;
                                 }
-                                // VAE variations - show indices 1 through num_vae_variations-1
+
+                                // --- VAE Variations ---
                                 else if (widget.name.startsWith("vae_variation_")) {
                                     const num = parseInt(widget.name.split("_")[2]);
                                     shouldShow = num < num_vae_variations;
                                 }
-                                // LoRA fields - show only the ones we need
+
+                                // --- CLIP Variations ---
+                                else if (widget.name.startsWith("clip_model_variation_")) {
+                                    const parts = widget.name.split("_");
+                                    const num = parseInt(parts[3]);
+                                    const isSecondary = parts.length > 4 && parts[4] === "2";
+
+                                    if (num < num_clip_variations) {
+                                        const clipTypeWidget = self.widgets.find(w => w.name === `clip_type_variation_${num}`);
+                                        let clipType = clipTypeWidget ? clipTypeWidget.value : "default";
+                                        
+                                        let resolvedClipType = clipType;
+                                        if (clipType === "default") {
+                                            resolvedClipType = preset.toLowerCase();
+                                        }
+                                        
+                                        const dualClipTypes = ["flux", "wan", "hunyuan_video", "hunyuan_video_15"];
+                                        const needsDualClip = dualClipTypes.includes(resolvedClipType);
+                                        
+                                        if (isSecondary) {
+                                            shouldShow = needsDualClip && !baked_vae_clip;
+                                        } else {
+                                            shouldShow = !baked_vae_clip;
+                                        }
+                                    }
+                                }
+                                else if (widget.name.startsWith("clip_type_variation_")) {
+                                    const num = parseInt(widget.name.split("_")[3]);
+                                    shouldShow = num < num_clip_variations;
+                                }
+
+                                // --- LoRA Fields ---
                                 else if (widget.name.startsWith("lora_")) {
                                     const parts = widget.name.split("_");
                                     const loraNum = parseInt(parts[1]);
-                                    
-                                    // Check if this is a combiner field
-                                    if (widget.name.includes("combiner")) {
-                                        // Only show combiner if there's a NEXT lora coming
-                                        // Combiner for lora_0 only shows if num_loras >= 2
-                                        shouldShow = loraNum < (num_loras - 1);
-                                    } else {
-                                        // Show lora itself if we need it
-                                        shouldShow = loraNum < num_loras;
+
+                                    if (loraNum < num_loras) {
+                                        if (widget.name.includes("_low")) {
+                                            shouldShow = isWAN22;
+                                        } else if (widget.name.includes("combiner")) {
+                                            shouldShow = loraNum < (num_loras - 1);
+                                        } else {
+                                            shouldShow = true;
+                                        }
                                     }
                                 }
-                                // clip_model (singular) - only show for QWEN
-                                // For QWEN: clip_model is variation 1, clip_model_1 is variation 2, etc.
-                                else if (widget.name === "clip_model") {
-                                    shouldShow = isQWEN;
-                                }
-                                // QWEN-style CLIP variations - single CLIP per variation
-                                // clip_model_1, clip_model_2, etc. are additional variations beyond the base clip_model
-                                // clip_model is variation 0, clip_model_1 is variation 1, clip_model_2 is variation 2, etc.
-                                // With num_clip_variations=1: only clip_model (variation 0) shown
-                                // With num_clip_variations=2: clip_model (0) and clip_model_1 (1) shown
-                                // With num_clip_variations=3: clip_model (0), clip_model_1 (1), and clip_model_2 (2) shown
-                                else if (widget.name.startsWith("clip_model_") && !widget.name.includes("_a") && !widget.name.includes("_b")) {
-                                    const num = parseInt(widget.name.split("_")[2]);
-                                    shouldShow = isQWEN && num < num_clip_variations;
-                                }
-                                // FLUX-style CLIP pair variations - always shown as pairs
-                                // clip_model_a and clip_model_b are the first pair (num_clip_variations >= 1)
-                                // clip_model_1_a and clip_model_1_b are the second pair (num_clip_variations >= 2)
-                                // clip_model_2_a and clip_model_2_b are the third pair (num_clip_variations >= 3)
-                                else if (widget.name.match(/^clip_model(_\d+)?_[ab]$/)) {
-                                    if (isFLUX) {
-                                        // Parse the pair index from the field name
-                                        const match = widget.name.match(/^clip_model(?:_(\d+))?_[ab]$/);
-                                        const pairIndex = match[1] ? parseInt(match[1]) : 0;
-                                        // Show pair if its index is less than num_clip_variations
-                                        shouldShow = pairIndex < num_clip_variations;
-                                    }
-                                }
-                                // clip_model_2 should only show for FLUX (it's part of the legacy/base naming)
-                                else if (widget.name === "clip_model_2") {
-                                    shouldShow = false;  // Don't show this field anymore, use clip_model_a/b instead
-                                }
-                                
+
                                 if (shouldShow) {
-                                    // Show: restore original computeSize
                                     widget.computeSize = widget.origComputeSize;
                                     visibleCount++;
                                 } else {
-                                    // Hide: return [0, -4] to collapse the space
                                     widget.computeSize = () => [0, -4];
                                     hiddenCount++;
                                 }
                             });
-                            
-                            console.log(`[ModelCompare] Visibility updated: ${visibleCount} visible, ${hiddenCount} hidden`);
-                            
-                            // Recalculate the node's size based on the new widget sizes
+
                             if (self.size) {
                                 self.setSize(self.computeSize());
                             }
-                            
-                            // Restore node width after size recalculation
                             self.size[0] = 630;
-                            
+
                             if (appRef && appRef.graph) {
                                 appRef.graph.setDirtyCanvas(true, true);
                             }
                         };
-                        
-                        // Find the preset widget and add change detection
-                        const presetWidget = self.widgets.find(w => w.name === "preset");
-                        if (presetWidget) {
-                            console.log("[ModelCompare] Found preset widget:", presetWidget);
-                            const originalCallback = presetWidget.callback;
-                            presetWidget.callback = function(value) {
-                                console.log(`[ModelCompare] Preset widget callback fired with value: ${value}`);
-                                if (originalCallback) {
-                                    originalCallback.call(this, value);
-                                }
-                                console.log("[ModelCompare] Calling updateVisibility after preset change");
-                                updateVisibility();
-                            };
-                            console.log("[ModelCompare] Preset change callback attached");
-                        } else {
-                            console.warn("[ModelCompare] Could not find preset widget");
+
+                        const triggerWidgets = [
+                            "preset", "num_diffusion_models", "num_vae_variations",
+                            "num_clip_variations", "num_loras", "baked_vae_clip", "diffusion_model"
+                        ];
+
+                        for (let i = 1; i < 5; i++) {
+                            triggerWidgets.push(`baked_vae_clip_variation_${i}`);
+                            triggerWidgets.push(`clip_type_variation_${i}`);
+                            triggerWidgets.push(`diffusion_model_variation_${i}`);
                         }
-                        
-                        // Find num_diffusion_models widget and add change detection
-                        const numModelsWidget = self.widgets.find(w => w.name === "num_diffusion_models");
-                        if (numModelsWidget) {
-                            const originalCallback = numModelsWidget.callback;
-                            numModelsWidget.callback = function(value) {
-                                if (originalCallback) {
-                                    originalCallback.call(this, value);
-                                }
-                                updateVisibility();
-                            };
-                        }
-                        
-                        // Find num_vae_variations widget and add change detection
-                        const numVaeWidget = self.widgets.find(w => w.name === "num_vae_variations");
-                        if (numVaeWidget) {
-                            const originalCallback = numVaeWidget.callback;
-                            numVaeWidget.callback = function(value) {
-                                if (originalCallback) {
-                                    originalCallback.call(this, value);
-                                }
-                                updateVisibility();
-                            };
-                        }
-                        
-                        // Find num_loras widget and add change detection
-                        const numLorasWidget = self.widgets.find(w => w.name === "num_loras");
-                        if (numLorasWidget) {
-                            const originalCallback = numLorasWidget.callback;
-                            numLorasWidget.callback = function(value) {
-                                if (originalCallback) {
-                                    originalCallback.call(this, value);
-                                }
-                                updateVisibility();
-                            };
-                        }
-                        
-                        // Find num_clip_variations widget and add change detection
-                        const numClipVariationsWidget = self.widgets.find(w => w.name === "num_clip_variations");
-                        if (numClipVariationsWidget) {
-                            const originalCallback = numClipVariationsWidget.callback;
-                            numClipVariationsWidget.callback = function(value) {
-                                if (originalCallback) {
-                                    originalCallback.call(this, value);
-                                }
-                                updateVisibility();
-                            };
-                        }
-                        
+
+                        triggerWidgets.forEach(name => {
+                            const w = self.widgets.find(w => w.name === name);
+                            if (w) {
+                                const originalCallback = w.callback;
+                                w.callback = function (value) {
+                                    if (originalCallback) originalCallback.call(this, value);
+                                    updateVisibility();
+                                };
+                            }
+                        });
+
                         const buttonCallback = () => {
-                            console.log("[ModelCompare] Update Inputs button clicked");
                             updateVisibility();
                         };
-                        
+
                         this.addWidget("button", "Update Inputs", null, buttonCallback);
-                        console.log("[ModelCompare] Update Inputs button added");
-                        
-                        // Set node width to double the default (ComfyUI default is usually 315, so set to ~630)
-                        self.size = [630, self.size[1]];
-                        
-                        // Initial setup
+
                         setTimeout(() => {
-                            console.log("[ModelCompare] Initial visibility setup");
                             updateVisibility();
                         }, 50);
-                        
+
                     } catch (e) {
                         console.error("[ModelCompare] Error in onNodeCreated:", e);
-                        console.error(e.stack);
                     }
+                });
+            }
+
+            // --- PromptCompare Logic ---
+            if (nodeData.name === "PromptCompare") {
+                console.log("[ModelCompare] Setting up PromptCompare");
+
+                chainCallback(nodeType.prototype, "configure", function (info) {
+                    setTimeout(() => {
+                        if (this.size) {
+                            this.size[0] = 400;
+                        }
+                    }, 10);
+                });
+
+                chainCallback(nodeType.prototype, "onNodeCreated", function () {
+                    try {
+                        const self = this;
+                        const appRef = app;
+
+                        self.widgets.forEach((w) => {
+                            if (!w.origComputeSize) {
+                                w.origComputeSize = w.computeSize;
+                            }
+                        });
+
+                        const updatePromptVisibility = () => {
+                            const getVal = (n, d) => {
+                                const w = self.widgets.find((x) => x.name === n);
+                                return w ? w.value : d;
+                            };
+
+                            const num_prompt_variations = parseInt(getVal("num_prompt_variations", 1), 10);
+                            console.log("[ModelCompare] PromptCompare num_prompt_variations:", num_prompt_variations);
+
+                            const alwaysShow = ["positive_prompt_1", "negative_prompt_1", "num_prompt_variations"];
+
+                            self.widgets.forEach((widget) => {
+                                if (!widget.name || widget.type === "button") {
+                                    widget.computeSize = widget.origComputeSize;
+                                    return;
+                                }
+
+                                if (alwaysShow.includes(widget.name)) {
+                                    widget.computeSize = widget.origComputeSize;
+                                    return;
+                                }
+
+                                let shouldShow = false;
+
+                                if (widget.name.startsWith("positive_prompt_") || widget.name.startsWith("negative_prompt_")) {
+                                    const parts = widget.name.split("_");
+                                    const num = parseInt(parts[parts.length - 1], 10);
+                                    shouldShow = num <= num_prompt_variations;
+                                    if (!shouldShow) {
+                                        console.log(`[ModelCompare] Hiding ${widget.name} (num=${num}, max=${num_prompt_variations})`);
+                                    }
+                                }
+
+                                if (shouldShow) {
+                                    widget.computeSize = widget.origComputeSize;
+                                } else {
+                                    widget.computeSize = () => [0, -4];
+                                }
+                            });
+
+                            // Force node resize
+                            if (self.size) {
+                                self.setSize(self.computeSize());
+                            }
+                            self.size[0] = 400;
+
+                            if (appRef && appRef.graph) {
+                                appRef.graph.setDirtyCanvas(true, true);
+                            }
+                        };
+
+                        const triggerWidgets = ["num_prompt_variations"];
+
+                        triggerWidgets.forEach(name => {
+                            const w = self.widgets.find(w => w.name === name);
+                            if (w) {
+                                const originalCallback = w.callback;
+                                w.callback = function (value) {
+                                    if (originalCallback) originalCallback.call(this, value);
+                                    updatePromptVisibility();
+                                };
+                            }
+                        });
+
+                        // Add Update Inputs button and save its origComputeSize
+                        const updateBtn = this.addWidget("button", "Update Inputs", null, () => {
+                            updatePromptVisibility();
+                        });
+                        if (updateBtn && !updateBtn.origComputeSize) {
+                            updateBtn.origComputeSize = updateBtn.computeSize;
+                        }
+
+                        setTimeout(() => {
+                            updatePromptVisibility();
+                        }, 50);
+
+                    } catch (e) {
+                        console.error("[ModelCompare] Error in PromptCompare onNodeCreated:", e);
+                    }
+                });
+            }
+
+            // --- SamplerCompareSimple Logic ---
+            if (nodeData.name === "SamplerCompareSimple") {
+                console.log("[ModelCompare] Setting up SamplerCompareSimple");
+
+                chainCallback(nodeType.prototype, "configure", function (info) {
+                    setTimeout(() => {
+                        if (this.size) {
+                            this.size[0] = 400;
+                        }
+                    }, 10);
+                });
+
+                chainCallback(nodeType.prototype, "onNodeCreated", function () {
+                    try {
+                        const self = this;
+                        const appRef = app;
+
+                        self.widgets.forEach((w) => {
+                            if (!w.origComputeSize) {
+                                if (typeof w.computeSize === 'function') {
+                                    w.origComputeSize = w.computeSize;
+                                } else {
+                                    w.origComputeSize = () => [200, 20];
+                                }
+                            }
+                        });
+
+                        const updateSamplerVisibility = () => {
+                            const presetWidget = self.widgets.find(w => w.name === "preset");
+                            const preset = presetWidget ? presetWidget.value : "STANDARD";
+
+                            const isWAN22 = preset === "WAN2.2";
+                            const isFLUX = preset === "FLUX" || preset === "FLUX2";
+                            const isQWEN = preset === "QWEN";
+                            const isHUNYUAN = preset === "HUNYUAN_VIDEO" || preset === "HUNYUAN_VIDEO_15";
+                            const isWAN = preset === "WAN2.1" || preset === "WAN2.2";
+
+                            self.widgets.forEach((widget) => {
+                                let shouldShow = true;
+
+                                if (widget.name === "wan_high_start" || widget.name === "wan_high_end" || widget.name === "wan_low_start" || widget.name === "wan_low_end") {
+                                    shouldShow = isWAN22;
+                                }
+                                else if (widget.name === "flux_guidance") {
+                                    shouldShow = isFLUX;
+                                }
+                                else if (widget.name === "shift") {
+                                    shouldShow = isHUNYUAN || isWAN;
+                                }
+                                else if (widget.name === "shift_low") {
+                                    shouldShow = isWAN22;
+                                }
+                                else if (widget.name === "qwen_shift" || widget.name === "qwen_cfg_norm") {
+                                    shouldShow = isQWEN;
+                                }
+
+                                if (shouldShow) {
+                                    if (widget.origComputeSize) {
+                                        widget.computeSize = widget.origComputeSize;
+                                    } else {
+                                        widget.computeSize = () => [200, 20];
+                                    }
+                                } else {
+                                    widget.computeSize = () => [0, -4];
+                                }
+                            });
+
+                            if (self.size) {
+                                self.setSize(self.computeSize());
+                            }
+                            self.size[0] = 400;
+
+                            if (appRef && appRef.graph) {
+                                appRef.graph.setDirtyCanvas(true, true);
+                            }
+                        };
+
+                        const presetWidget = self.widgets.find(w => w.name === "preset");
+                        if (presetWidget) {
+                            const originalCallback = presetWidget.callback;
+                            presetWidget.callback = function (value) {
+                                if (originalCallback) originalCallback.call(this, value);
+                                updateSamplerVisibility();
+                            };
+                        }
+
+                        this.addWidget("button", "Update Inputs", null, () => {
+                            updateSamplerVisibility();
+                        });
+
+                        setTimeout(() => {
+                            updateSamplerVisibility();
+                        }, 100);
+
+                    } catch (e) {
+                        console.error("[ModelCompare] Error in Sampler onNodeCreated:", e);
+                    }
+                });
+            }
+
+            // --- GridCompare Logic ---
+            if (nodeData.name === "GridCompare") {
+                console.log("[ModelCompare] Setting up GridCompare");
+
+                chainCallback(nodeType.prototype, "configure", function (info) {
+                    setTimeout(() => {
+                        if (this.size) {
+                            this.size[0] = 400;
+                        }
+                    }, 10);
                 });
             }
         }
     });
-    
+
     console.log("[ModelCompare] Extension registered successfully");
 }
 
