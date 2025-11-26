@@ -367,7 +367,7 @@ class SamplerCompareAdvanced:
                         working_model, model_entry.get("model_low_obj"),
                         seed, steps, cfg, sampler_name, scheduler,
                         current_positive, current_negative, current_latent,
-                        denoise, wan22_start_step, wan22_end_step
+                        denoise, wan22_start_step, wan22_end_step, wan_shift
                     )
                 else:
                     # Standard sampling for all other models
@@ -470,6 +470,12 @@ class SamplerCompareAdvanced:
             model = ModelSamplingSD3().patch(model, shift)[0]
             print(f"[SamplerCompareAdvanced] Applied WAN 2.1 shift={shift}")
         
+        elif model_type == 'wan22':
+            # WAN 2.2 also needs shift applied to BOTH high and low noise models
+            shift = kwargs.get('wan_shift', 8.0)
+            model = ModelSamplingSD3().patch(model, shift)[0]
+            print(f"[SamplerCompareAdvanced] Applied WAN 2.2 shift={shift}")
+        
         elif model_type in ['hunyuan', 'hunyuan15']:
             shift = kwargs.get('hunyuan_shift', 7.0)
             model = ModelSamplingSD3().patch(model, shift)[0]
@@ -486,13 +492,14 @@ class SamplerCompareAdvanced:
         return model
     
     def _sample_wan22(self, model_high, model_low, seed, steps, cfg, sampler_name, scheduler,
-                      positive, negative, latent, denoise, start_step, end_step):
+                      positive, negative, latent, denoise, start_step, end_step, wan_shift=8.0):
         """WAN 2.2 two-phase sampling."""
         from nodes import common_ksampler
+        from comfy_extras.nodes_model_advanced import ModelSamplingSD3
         
         print(f"[SamplerCompareAdvanced] WAN 2.2 Phase 1: steps {start_step}-{end_step}")
         
-        # Phase 1: High noise model
+        # Phase 1: High noise model (shift already applied by _apply_model_patches)
         samples_1 = common_ksampler(
             model=model_high, seed=seed, steps=steps, cfg=cfg,
             sampler_name=sampler_name, scheduler=scheduler,
@@ -503,10 +510,14 @@ class SamplerCompareAdvanced:
         if model_low is None:
             return samples_1
         
+        # Apply shift to low noise model too
+        model_low_patched = ModelSamplingSD3().patch(model_low, wan_shift)[0]
+        print(f"[SamplerCompareAdvanced] Applied WAN 2.2 shift={wan_shift} to low noise model")
+        
         # Phase 2: Low noise model
         print(f"[SamplerCompareAdvanced] WAN 2.2 Phase 2: steps {end_step}-{steps}")
         samples_2 = common_ksampler(
-            model=model_low, seed=seed, steps=steps, cfg=cfg,
+            model=model_low_patched, seed=seed, steps=steps, cfg=cfg,
             sampler_name=sampler_name, scheduler=scheduler,
             positive=positive, negative=negative, latent=samples_1,
             denoise=denoise, start_step=end_step, last_step=steps
