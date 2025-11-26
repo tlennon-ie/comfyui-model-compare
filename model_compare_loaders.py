@@ -510,7 +510,8 @@ class ModelCompareLoaders:
                     resolved_clip_type = c_type
                 
                 # Check if VARIATION's clip_type requires dual CLIP
-                variation_needs_dual_clip = resolved_clip_type in ["flux", "wan", "wan22", "hunyuan_video", "hunyuan_video_15"]
+                # Dual CLIP: FLUX, Hunyuan Video, Hunyuan 1.5 (NOT WAN 2.1, NOT WAN 2.2)
+                variation_needs_dual_clip = resolved_clip_type in ["flux", "hunyuan_video", "hunyuan_video_15"]
                 
                 # Load dual CLIP only if THIS VARIATION's clip_type requires it AND secondary CLIP provided
                 if variation_needs_dual_clip and c_name_2 != "NONE":
