@@ -756,6 +756,145 @@ function registerExtension(app) {
                     }
                 });
             }
+
+            // --- ModelCompareGlobals Logic ---
+            if (nodeData.name === "ModelCompareGlobals") {
+                chainCallback(nodeType.prototype, "configure", function (info) {
+                    setTimeout(() => {
+                        if (this.size) {
+                            this.size[0] = 400;
+                        }
+                    }, 10);
+                });
+
+                chainCallback(nodeType.prototype, "onNodeCreated", function () {
+                    try {
+                        const self = this;
+                        const appRef = app;
+
+                        // Store original computeSize for all widgets
+                        self.widgets.forEach((w) => {
+                            if (!w.origComputeSize) {
+                                if (typeof w.computeSize === 'function') {
+                                    w.origComputeSize = w.computeSize;
+                                } else {
+                                    w.origComputeSize = () => [200, 20];
+                                }
+                            }
+                        });
+
+                        const updateGlobalsVisibility = () => {
+                            const numFieldsWidget = self.widgets.find(w => w.name === "num_fields");
+                            const numFields = numFieldsWidget ? parseInt(numFieldsWidget.value, 10) : 2;
+
+                            // Map param types to which value widget should be shown
+                            const paramTypeToValueWidget = {
+                                "seed": "value_int",
+                                "steps": "value_int",
+                                "cfg": "value_float",
+                                "denoise": "value_float",
+                                "seed_control": "value_seed_control",
+                                "sampler_name": "value_sampler",
+                                "scheduler": "value_scheduler",
+                            };
+
+                            self.widgets.forEach((widget) => {
+                                if (!widget.name) return;
+
+                                let shouldShow = false;
+
+                                // Always show num_fields and buttons
+                                if (widget.name === "num_fields" || widget.type === "button") {
+                                    shouldShow = true;
+                                }
+                                // Handle param_type_N widgets
+                                else if (widget.name.startsWith("param_type_")) {
+                                    const idx = parseInt(widget.name.split("_")[2], 10);
+                                    shouldShow = idx < numFields;
+                                }
+                                // Handle value_*_N widgets
+                                else if (widget.name.startsWith("value_")) {
+                                    // Parse: value_int_0, value_float_1, value_seed_control_2, etc.
+                                    const parts = widget.name.split("_");
+                                    const idx = parseInt(parts[parts.length - 1], 10);
+                                    
+                                    // Only show if within num_fields
+                                    if (idx < numFields) {
+                                        // Get the param_type for this index
+                                        const paramTypeWidget = self.widgets.find(w => w.name === `param_type_${idx}`);
+                                        const paramType = paramTypeWidget ? paramTypeWidget.value : "NONE";
+                                        
+                                        // Determine which value widget type should be shown
+                                        const expectedValueType = paramTypeToValueWidget[paramType];
+                                        
+                                        if (expectedValueType) {
+                                            // Build the expected widget name
+                                            const expectedName = `${expectedValueType}_${idx}`;
+                                            shouldShow = widget.name === expectedName;
+                                        }
+                                    }
+                                }
+
+                                // Apply visibility
+                                if (shouldShow) {
+                                    if (widget.origComputeSize) {
+                                        widget.computeSize = widget.origComputeSize;
+                                    } else {
+                                        widget.computeSize = () => [200, 20];
+                                    }
+                                } else {
+                                    widget.computeSize = () => [0, -4];
+                                }
+                            });
+
+                            // Resize node
+                            if (self.size) {
+                                self.setSize(self.computeSize());
+                            }
+                            self.size[0] = 400;
+
+                            if (appRef && appRef.graph) {
+                                appRef.graph.setDirtyCanvas(true, true);
+                            }
+                        };
+
+                        // Hook num_fields widget change
+                        const numFieldsWidget = self.widgets.find(w => w.name === "num_fields");
+                        if (numFieldsWidget) {
+                            const originalCallback = numFieldsWidget.callback;
+                            numFieldsWidget.callback = function (value) {
+                                if (originalCallback) originalCallback.call(this, value);
+                                updateGlobalsVisibility();
+                            };
+                        }
+
+                        // Hook all param_type_N widgets
+                        for (let i = 0; i < 8; i++) {
+                            const paramTypeWidget = self.widgets.find(w => w.name === `param_type_${i}`);
+                            if (paramTypeWidget) {
+                                const originalCallback = paramTypeWidget.callback;
+                                paramTypeWidget.callback = function (value) {
+                                    if (originalCallback) originalCallback.call(this, value);
+                                    updateGlobalsVisibility();
+                                };
+                            }
+                        }
+
+                        // Add update button
+                        this.addWidget("button", "Update Fields", null, () => {
+                            updateGlobalsVisibility();
+                        });
+
+                        // Initial visibility update
+                        setTimeout(() => {
+                            updateGlobalsVisibility();
+                        }, 100);
+
+                    } catch (e) {
+                        console.error("[ModelCompareGlobals] Error:", e);
+                    }
+                });
+            }
         }
     });
 }

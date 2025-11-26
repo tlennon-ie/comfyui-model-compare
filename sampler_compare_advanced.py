@@ -410,10 +410,15 @@ class SamplerCompareAdvanced:
 
     def _get_sampling_config_for_type(self, config: Dict, model_type: str, defaults: Dict) -> Dict:
         """
-        Get sampling configuration for a specific model type from the config chain.
-        Falls back to node's own parameters if no config found.
+        Get sampling configuration for a specific model type.
+        
+        Priority:
+        1. Config chain settings (per-variation)
+        2. Global config (ModelCompareGlobals)
+        3. Node defaults
         """
         sampling_configs = config.get("sampling_configs", []) if config else []
+        global_config = config.get("global_config") if config else None
         
         # Map internal model types to config_type names
         type_mapping = {
@@ -428,19 +433,37 @@ class SamplerCompareAdvanced:
             "flux": "FLUX",
             "flux2": "FLUX2",
             "sd3": "STANDARD",
+            "lumina2": "Z_IMAGE",
         }
         
         config_type = type_mapping.get(model_type, "STANDARD")
         
-        # Look for matching config in chain
+        # Start with node defaults
+        result = dict(defaults)
+        
+        # Apply global config values (if set)
+        if global_config:
+            for key, value in global_config.items():
+                if value is not None:
+                    result[key] = value
+                    print(f"[SamplerCompareAdvanced] Global: {key} = {value}")
+        
+        # Look for matching config in chain (overrides globals)
         for cfg in sampling_configs:
             if cfg.get("config_type") == config_type:
                 print(f"[SamplerCompareAdvanced] Found config chain settings for {config_type}")
-                return cfg
+                # Chain config overrides globals
+                for key, value in cfg.items():
+                    if key != "config_type" and value is not None:
+                        result[key] = value
+                return result
         
-        # No config found, use node defaults
-        print(f"[SamplerCompareAdvanced] No config chain for {model_type}, using node defaults")
-        return defaults
+        if global_config:
+            print(f"[SamplerCompareAdvanced] Using global config for {model_type}")
+        else:
+            print(f"[SamplerCompareAdvanced] No config chain/globals for {model_type}, using node defaults")
+        
+        return result
 
     def sample_all_combinations(
         self,

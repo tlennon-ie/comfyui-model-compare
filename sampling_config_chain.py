@@ -190,30 +190,12 @@ class SamplingConfigChain:
             },
         }
     
-    # Output the config PLUS all parameters for chaining
-    RETURN_TYPES = (
-        "MODEL_COMPARE_CONFIG",
-        "INT", "COMBO", "INT", "FLOAT", "COMBO", "COMBO", "FLOAT",  # Common params
-        "FLOAT", "BOOLEAN", "FLOAT",  # QWEN
-        "FLOAT",  # WAN 2.1
-        "FLOAT", "INT", "INT", "INT", "INT",  # WAN 2.2
-        "FLOAT",  # Hunyuan
-        "FLOAT",  # FLUX
-        "INT",  # FPS
-    )
-    RETURN_NAMES = (
-        "config",
-        "seed", "seed_control", "steps", "cfg", "sampler_name", "scheduler", "denoise",
-        "qwen_shift", "qwen_cfg_norm", "qwen_cfg_norm_multiplier",
-        "wan_shift",
-        "wan22_shift", "wan22_high_start", "wan22_high_end", "wan22_low_start", "wan22_low_end",
-        "hunyuan_shift",
-        "flux_guidance",
-        "fps",
-    )
+    # Output only the config - global parameters should use ModelCompareGlobals
+    RETURN_TYPES = ("MODEL_COMPARE_CONFIG",)
+    RETURN_NAMES = ("config",)
     FUNCTION = "apply_config"
     CATEGORY = "Model Compare"
-    DESCRIPTION = "Configure sampling parameters for a specific model variation. All parameters can be connected to/from other nodes."
+    DESCRIPTION = "Configure sampling parameters for a specific model variation."
     
     def apply_config(
         self,
@@ -326,17 +308,8 @@ class SamplingConfigChain:
         elif config_type == "Z_IMAGE":
             print(f"  Z_IMAGE: Using Lumina2 (standard sampling)")
         
-        # Return config plus all parameters for chaining
-        return (
-            new_config,
-            seed, seed_control, steps, cfg, sampler_name, scheduler, denoise,
-            qwen_shift, qwen_cfg_norm, qwen_cfg_norm_multiplier,
-            wan_shift,
-            wan22_shift, wan22_high_start, wan22_high_end, wan22_low_start, wan22_low_end,
-            hunyuan_shift,
-            flux_guidance,
-            fps,
-        )
+        # Return only config
+        return (new_config,)
     
     @classmethod
     def IS_CHANGED(cls, config, variation_index, config_type, **kwargs):

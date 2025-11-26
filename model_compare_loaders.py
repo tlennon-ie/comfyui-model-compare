@@ -118,6 +118,9 @@ class ModelCompareLoaders:
                 "prompt_config": ("PROMPT_COMPARE_CONFIG", {
                     "tooltip": "Optional: Connect PromptCompare node to compare multiple prompts"
                 }),
+                "global_config": ("GLOBAL_COMPARE_CONFIG", {
+                    "tooltip": "Optional: Connect ModelCompareGlobals node to set global sampling parameters"
+                }),
             },
         }
 
@@ -227,7 +230,7 @@ class ModelCompareLoaders:
 
     def load_models(self, preset, diffusion_model, baked_vae_clip, diffusion_model_low, vae, clip_model, clip_model_2, clip_type,
                num_diffusion_models, num_vae_variations, num_clip_variations,
-               prompt_config=None,
+               prompt_config=None, global_config=None,
                **kwargs):
         
         # 1. Determine CLIP Type based on Preset if default
@@ -535,9 +538,13 @@ class ModelCompareLoaders:
             "clip_variations": clip_variations,  # Contains paths and config, not objects
             "lora_configs": lora_configs,  # Per-variation LoRA configs from LoRA Compare nodes
             "prompt_variations": prompt_variations,  # Prompt variations
+            "global_config": global_config,  # Global sampling parameters from ModelCompareGlobals
             "is_grouped": is_grouped,  # Flag for grid to use simple grouped layout
             "num_model_groups": num_models,  # Number of model groups (for grid layout)
         }
+        
+        if global_config:
+            print(f"[ModelCompareLoaders] Global config connected with {sum(1 for v in global_config.values() if v is not None)} parameter(s)")
 
         # LAZY LOADING: All model/VAE/CLIP loading deferred to sampler
         # Config only contains paths and configurations
@@ -571,7 +578,7 @@ class ModelCompareLoaders:
             
         return mapping.get(clip_type_str, comfy.sd.CLIPType.STABLE_DIFFUSION)
 
-    def _compute_combinations(self, models, vaes, clips, loras, preset, prompt_variations=None):
+    def _compute_combinations(self, models, vaes, clips, lora_configs, preset, prompt_variations=None):
         """
         Compute combinations with GROUPING support and PROMPT variations.
         

@@ -16,6 +16,8 @@ License: MIT
 
 from .model_compare_loaders import NODE_CLASS_MAPPINGS as LOADER_MAPPINGS
 from .model_compare_loaders import NODE_DISPLAY_NAME_MAPPINGS as LOADER_DISPLAYS
+from .model_compare_globals import NODE_CLASS_MAPPINGS as GLOBALS_MAPPINGS
+from .model_compare_globals import NODE_DISPLAY_NAME_MAPPINGS as GLOBALS_DISPLAYS
 from .prompt_compare import NODE_CLASS_MAPPINGS as PROMPT_MAPPINGS
 from .prompt_compare import NODE_DISPLAY_NAME_MAPPINGS as PROMPT_DISPLAYS
 from .sampling_config_chain import NODE_CLASS_MAPPINGS as CONFIG_CHAIN_MAPPINGS
@@ -36,6 +38,7 @@ from .video_preview import NODE_DISPLAY_NAME_MAPPINGS as VIDEO_PREVIEW_DISPLAYS
 # Merge all node mappings - only include the active nodes
 NODE_CLASS_MAPPINGS = {
     **LOADER_MAPPINGS,
+    **GLOBALS_MAPPINGS,
     **PROMPT_MAPPINGS,
     **CONFIG_CHAIN_MAPPINGS,
     **LORA_MAPPINGS,
@@ -48,6 +51,7 @@ NODE_CLASS_MAPPINGS = {
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     **LOADER_DISPLAYS,
+    **GLOBALS_DISPLAYS,
     **PROMPT_DISPLAYS,
     **CONFIG_CHAIN_DISPLAYS,
     **LORA_DISPLAYS,
