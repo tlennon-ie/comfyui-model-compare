@@ -391,6 +391,10 @@ class SamplerCompareAdvanced:
                 image = self._decode_latent(sampled_latent, current_vae, is_video=is_video_model, num_frames=num_frames)
                 all_images.append(image)
                 
+                # Store actual frame count for this combination
+                actual_frame_count = image.shape[0]
+                combo["output_frame_count"] = actual_frame_count
+                
                 # Log video output info
                 if is_video_model and image.shape[0] > 1:
                     print(f"[SamplerCompareAdvanced] Video output: {image.shape[0]} frames")

@@ -113,6 +113,26 @@ class GridCompare:
                     "label_off": "no",
                     "tooltip": "Embed workflow metadata in PNG files",
                 }),
+                # Video grid options
+                "video_output_mode": (["images_only", "video_only", "both"], {
+                    "default": "images_only",
+                    "tooltip": "Output mode: images only, video only, or both (for mixed image/video results)"
+                }),
+                "video_format": (["mp4", "gif", "webm"], {
+                    "default": "mp4",
+                    "tooltip": "Video format for video grid output"
+                }),
+                "video_codec": (["libx264", "libx265"], {
+                    "default": "libx264",
+                    "tooltip": "Video codec (h264 recommended for compatibility)"
+                }),
+                "video_quality": ("INT", {
+                    "default": 23,
+                    "min": 1,
+                    "max": 51,
+                    "step": 1,
+                    "tooltip": "Video quality (CRF: lower = better, 18-28 recommended)"
+                }),
             },
             "hidden": {
                 "prompt": "PROMPT",
@@ -121,8 +141,9 @@ class GridCompare:
         }
 
     CATEGORY = "image"
-    RETURN_TYPES = ("IMAGE", "STRING")
-    RETURN_NAMES = ("images", "save_path")
+    RETURN_TYPES = ("IMAGE", "STRING", "STRING")
+    RETURN_NAMES = ("images", "save_path", "video_path")
+    OUTPUT_IS_LIST = (False, False, False)
     FUNCTION = "create_grid"
     OUTPUT_NODE = True
     
@@ -431,17 +452,24 @@ class GridCompare:
         save_prompt_grids_separately: bool = False,
         save_individuals: bool = False,
         save_metadata: bool = False,
+        video_output_mode: str = "images_only",
+        video_format: str = "mp4",
+        video_codec: str = "libx264",
+        video_quality: int = 23,
         prompt=None,
         extra_pnginfo=None,
         **kwargs  # Ignore any optional x_label, y_label, z_label
-    ) -> Tuple[torch.Tensor, str]:
+    ) -> Tuple[torch.Tensor, str, str]:
         """
         Create a comparison grid from images and labels.
         Organizes images by LoRA rows and strength columns with proper axis labels.
+        
+        For video output, handles multi-frame results and creates video grids.
         """
         print(f"[GridCompare] Creating comparison grid...")
         print(f"  Images shape: {images.shape}")
         print(f"  Labels input: {repr(labels)}")
+        print(f"  Video output mode: {video_output_mode}")
         
         # Parse labels - try newline-separated first, then semicolon for backwards compatibility
         if "\n" in labels:
@@ -450,13 +478,29 @@ class GridCompare:
             label_list = [l.strip() for l in labels.split(";") if l.strip()]
         print(f"  Parsed {len(label_list)} labels")
         
-        # Convert images to PIL
-        pil_images = self._tensor_to_pil_list(images)
-        print(f"  Converted {len(pil_images)} images to PIL")
+        # Convert ALL images to PIL (needed for video grid)
+        all_pil_images = self._tensor_to_pil_list(images)
+        print(f"  Converted {len(all_pil_images)} images to PIL")
+        
+        # For image grid, extract only first frame per combination if we have multi-frame outputs
+        combinations = config.get("combinations", [])
+        has_frame_counts = any(combo.get("output_frame_count", 1) > 1 for combo in combinations)
+        
+        if has_frame_counts:
+            # Extract first frame from each combination for image grid
+            pil_images = []
+            img_idx = 0
+            for combo in combinations:
+                frame_count = combo.get("output_frame_count", 1)
+                if img_idx < len(all_pil_images):
+                    pil_images.append(all_pil_images[img_idx])  # First frame only
+                img_idx += frame_count  # Skip remaining frames
+            print(f"  Extracted {len(pil_images)} first-frames for image grid (from {len(all_pil_images)} total)")
+        else:
+            pil_images = all_pil_images
 
         # Handle "Save each prompt as separate grid" option
         prompt_variations = config.get("prompt_variations", [])
-        combinations = config.get("combinations", [])
         
         if save_prompt_grids_separately and len(prompt_variations) > 1 and len(combinations) == len(pil_images):
             print(f"[GridCompare] Creating separate grids for {len(prompt_variations)} prompt variations")
@@ -581,10 +625,26 @@ class GridCompare:
 
         print(f"[GridCompare] Grid saved to: {save_path}")
 
+        # Handle video output if needed
+        video_path = ""
+        if video_output_mode in ["video_only", "both"]:
+            video_path = self._create_video_grid(
+                all_pil_images=all_pil_images,
+                labels=label_list,
+                config=config,
+                save_location=save_location,
+                grid_title=grid_title,
+                video_format=video_format,
+                video_codec=video_codec,
+                video_quality=video_quality,
+                gap_size=gap_size,
+                font_size=font_size,
+            )
+
         # Convert PIL back to tensor for output
         output_tensor = self._pil_to_tensor(grid_image)
 
-        return (output_tensor, save_path)
+        return (output_tensor, save_path, video_path)
 
     @staticmethod
     def _tensor_to_pil_list(images: torch.Tensor) -> List[Image.Image]:
@@ -866,7 +926,7 @@ class GridCompare:
         else:
             stacked_grids = torch.zeros((1, 64, 64, 3))
         
-        return (stacked_grids, combined_paths)
+        return (stacked_grids, combined_paths, "")  # No video path for separate prompt grids yet
 
     def _add_prompt_text_to_grid(
         self,
@@ -1688,6 +1748,151 @@ class GridCompare:
             print(f"[GridCompare] Saved {len(individual_images)} individual images to {save_dir}")
         
         return save_dir
+
+    def _create_video_grid(
+        self,
+        all_pil_images: List[Image.Image],
+        labels: List[str],
+        config: Dict[str, Any],
+        save_location: str,
+        grid_title: str,
+        video_format: str,
+        video_codec: str,
+        video_quality: int,
+        gap_size: int,
+        font_size: int,
+    ) -> str:
+        """
+        Create a video grid from multi-frame outputs.
+        
+        For video models, each model variation may output multiple frames.
+        This method arranges them into a video grid where each cell shows
+        the animated output of that model.
+        
+        Args:
+            all_pil_images: List of all PIL images (all frames from all combinations)
+        
+        Returns:
+            Path to the saved video file, or empty string if failed.
+        """
+        try:
+            from .video_utils import create_video_grid, is_video_output, get_ffmpeg_path
+        except ImportError:
+            print("[GridCompare] video_utils not available, skipping video grid")
+            return ""
+        
+        if get_ffmpeg_path() is None:
+            print("[GridCompare] FFmpeg not found, skipping video grid")
+            return ""
+        
+        combinations = config.get("combinations", [])
+        model_variations = config.get("model_variations", [])
+        
+        if not combinations:
+            print("[GridCompare] No combinations in config, skipping video grid")
+            return ""
+        
+        print(f"[GridCompare] Creating video grid...")
+        print(f"  Total PIL images: {len(all_pil_images)}")
+        print(f"  Number of combinations: {len(combinations)}")
+        
+        # Collect video frames per combination using output_frame_count
+        video_frames_list = []
+        video_labels = []
+        fps_list = []
+        
+        img_idx = 0
+        for combo_idx, combo in enumerate(combinations):
+            frame_count = combo.get("output_frame_count", 1)
+            combo_frames = []
+            
+            for _ in range(frame_count):
+                if img_idx < len(all_pil_images):
+                    combo_frames.append(all_pil_images[img_idx])
+                    img_idx += 1
+            
+            if combo_frames:
+                video_frames_list.append(combo_frames)
+                
+                # Get label
+                if combo_idx < len(labels):
+                    video_labels.append(labels[combo_idx])
+                else:
+                    video_labels.append(f"Model {combo_idx + 1}")
+                
+                # Get FPS from model variation
+                model_idx = combo.get("model_index", 0)
+                if model_idx < len(model_variations):
+                    fps = model_variations[model_idx].get("fps", 24)
+                else:
+                    fps = 24
+                fps_list.append(fps)
+                
+                print(f"    Combo {combo_idx + 1}: {frame_count} frames at {fps} FPS")
+        
+        if not video_frames_list:
+            print("[GridCompare] No video frames collected, skipping video grid")
+            return ""
+        
+        # Check if we actually have video (multiple frames)
+        has_video = any(len(frames) > 1 for frames in video_frames_list)
+        if not has_video:
+            print("[GridCompare] No multi-frame outputs, skipping video grid (all single frames)")
+            return ""
+        
+        print(f"  Collected {len(video_frames_list)} video sequences")
+        for i, frames in enumerate(video_frames_list):
+            print(f"    Sequence {i + 1}: {len(frames)} frames at {fps_list[i]} FPS")
+        
+        # Determine grid layout
+        num_videos = len(video_frames_list)
+        grid_cols = min(num_videos, config.get("num_model_groups", 2))
+        
+        # Get cell size from first frame
+        if video_frames_list and video_frames_list[0]:
+            first_frame = video_frames_list[0][0]
+            cell_size = (first_frame.width, first_frame.height)
+        else:
+            cell_size = (512, 512)
+        
+        # Create output path
+        output_dir = folder_paths.get_output_directory()
+        save_dir = os.path.join(output_dir, save_location)
+        os.makedirs(save_dir, exist_ok=True)
+        
+        # Find next counter
+        counter = 0
+        while True:
+            video_path = os.path.join(save_dir, f"{grid_title}_video_{counter}.{video_format}")
+            if not os.path.exists(video_path):
+                break
+            counter += 1
+        
+        # Remove extension for create_video_grid (it adds it)
+        video_path_base = video_path.rsplit('.', 1)[0]
+        
+        # Create video grid
+        success = create_video_grid(
+            video_frames_list=video_frames_list,
+            labels=video_labels,
+            output_path=video_path_base,
+            fps_list=fps_list,
+            grid_cols=grid_cols,
+            cell_size=cell_size,
+            padding=gap_size,
+            label_height=font_size + 20,
+            format=video_format,
+            codec=video_codec,
+            quality=video_quality,
+            font_size=font_size,
+        )
+        
+        if success:
+            print(f"[GridCompare] Video grid saved to: {video_path}")
+            return video_path
+        else:
+            print("[GridCompare] Failed to create video grid")
+            return ""
 
 
 # Node mappings
