@@ -3,6 +3,7 @@ Simple Model Compare Sampler - Works like standard KSampler but handles multiple
 Supports FLUX, QWEN, WAN, and Checkpoints.
 """
 
+import gc
 import torch
 import folder_paths
 import comfy.sd
@@ -186,12 +187,15 @@ class SamplerCompareSimple:
         for idx, combo in enumerate(combinations):
             print(f"\n[SamplerCompareSimple] === Combination {idx + 1}/{len(combinations)} ===")
             
-            # Free GPU memory before loading new models
+            # Aggressive GPU memory cleanup before loading new models
             # This is critical when switching between large models like FLUX variants
             comfy.model_management.unload_all_models()
+            comfy.model_management.cleanup_models()
             comfy.model_management.soft_empty_cache()
-            import gc
             gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                torch.cuda.synchronize()
             
             # 1. Retrieve Models & VAEs
             model_idx = combo.get("model_index", 0)
@@ -478,6 +482,20 @@ class SamplerCompareSimple:
             label = " - ".join(label_parts) if label_parts else f"Combo {idx}"
             all_labels.append(label)
             print(f"[SamplerCompareSimple] Label: {label}")
+            
+            # Aggressive cleanup after each combination to free VRAM
+            # This prevents OOM when switching between large models like FLUX variants
+            del working_model
+            if 'working_model_low' in dir():
+                del working_model_low
+            del sampled_latent
+            comfy.model_management.cleanup_models()
+            comfy.model_management.soft_empty_cache()
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                torch.cuda.synchronize()
+            print(f"[SamplerCompareSimple] Memory cleanup complete for combination {idx + 1}")
         
         # Concatenate - handle different image sizes by resizing to match first image
         if not all_images:
