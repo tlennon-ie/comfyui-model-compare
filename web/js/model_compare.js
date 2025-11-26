@@ -87,7 +87,7 @@ function registerExtension(app) {
                                 const alwaysShow = [
                                     "preset", "diffusion_model", "num_diffusion_models",
                                     "num_vae_variations", "num_clip_variations", "num_loras",
-                                    "clip_type"
+                                    "clip_type", "clip_device"
                                 ];
 
                                 if (alwaysShow.includes(widget.name) || widget.type === "button") {
@@ -182,6 +182,10 @@ function registerExtension(app) {
                                     }
                                 }
                                 else if (widget.name.startsWith("clip_type_variation_")) {
+                                    const num = parseInt(widget.name.split("_")[3]);
+                                    shouldShow = num < num_clip_variations;
+                                }
+                                else if (widget.name.startsWith("clip_device_variation_")) {
                                     const num = parseInt(widget.name.split("_")[3]);
                                     shouldShow = num < num_clip_variations;
                                 }
