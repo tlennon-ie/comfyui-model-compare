@@ -527,13 +527,15 @@ class ModelCompareLoaders:
                         "type": "pair",
                         "a": c_name,
                         "b": c_name_2,
-                        "clip_obj": c_obj
+                        "clip_obj": c_obj,
+                        "clip_type": resolved_clip_type,  # Store for sampler model type detection
                     })
                 else:
                     clip_variations.append({
                         "type": "single",
                         "model": c_name,
-                        "clip_obj": c_obj
+                        "clip_obj": c_obj,
+                        "clip_type": resolved_clip_type,  # Store for sampler model type detection
                     })
 
         # 5. Load LoRAs

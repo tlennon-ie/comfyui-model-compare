@@ -243,9 +243,32 @@ class SamplerCompareAdvanced:
             model_entry = config["model_variations"][model_idx]
             model_obj = model_entry.get("model_obj")
             
-            # Auto-detect model type
-            model_type = self.detect_model_type(model_obj)
-            print(f"[SamplerCompareAdvanced] Detected model type: {model_type}")
+            # Get model type from clip_variation's clip_type (most reliable source)
+            # Falls back to auto-detection if clip_type not available
+            clip_var = combo.get("clip_variation")
+            clip_type_str = clip_var.get("clip_type", "") if clip_var else ""
+            
+            # Map clip_type to model_type
+            clip_type_to_model_type = {
+                "flux": "flux",
+                "flux2": "flux2", 
+                "wan": "wan21",
+                "wan22": "wan22",
+                "hunyuan_video": "hunyuan",
+                "hunyuan_video_15": "hunyuan15",
+                "qwen": "qwen",
+                "sdxl": "sdxl",
+                "sd": "sd",
+                "sd3": "sd3",
+            }
+            
+            if clip_type_str and clip_type_str in clip_type_to_model_type:
+                model_type = clip_type_to_model_type[clip_type_str]
+                print(f"[SamplerCompareAdvanced] Model type from clip_type '{clip_type_str}': {model_type}")
+            else:
+                # Fallback to auto-detection
+                model_type = self.detect_model_type(model_obj)
+                print(f"[SamplerCompareAdvanced] Auto-detected model type: {model_type}")
             
             # Get VAE
             current_vae = vae
