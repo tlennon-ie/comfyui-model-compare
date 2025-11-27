@@ -51,6 +51,9 @@ class SamplerCompareAdvanced:
         "sampler_name",
         "scheduler",
     ]
+    
+    # Seed control modes (matching ComfyUI's standard behavior)
+    SEED_CONTROL_MODES = ["fixed", "increment", "decrement", "randomize"]
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -128,6 +131,12 @@ class SamplerCompareAdvanced:
                 "default": comfy.samplers.KSampler.SCHEDULERS[0],
                 "tooltip": f"Global {i+1}: Scheduler name"
             })
+            
+            # Seed control mode (only used when param_type is 'seed')
+            inputs["optional"][f"global_seed_control_{i}"] = (cls.SEED_CONTROL_MODES, {
+                "default": "fixed",
+                "tooltip": f"Global {i+1}: Seed control mode (fixed/increment/decrement/randomize)"
+            })
         
         return inputs
     
@@ -135,6 +144,7 @@ class SamplerCompareAdvanced:
         """Build global config from dynamic fields."""
         config = {
             "seed": None,
+            "seed_control": "fixed",  # Seed control mode
             "steps": None,
             "cfg": None,
             "denoise": None,
@@ -150,6 +160,7 @@ class SamplerCompareAdvanced:
             
             if param_type == "seed":
                 config["seed"] = kwargs.get(f"global_value_int_{i}", 0)
+                config["seed_control"] = kwargs.get(f"global_seed_control_{i}", "fixed")
             elif param_type == "steps":
                 config["steps"] = kwargs.get(f"global_value_int_{i}", 20)
             elif param_type == "cfg":
@@ -1090,8 +1101,20 @@ class SamplerCompareAdvanced:
         cache_hits = 0
         cache_misses = 0
         
+        # Seed control: track running seed and control mode
+        seed_control_mode = global_config.get("seed_control", "fixed")
+        initial_seed = global_config.get("seed")
+        running_seed = initial_seed  # Will be updated after each combination based on control mode
+        
+        if initial_seed is not None:
+            print(f"[SamplerCompareAdvanced] Seed control: {seed_control_mode}, starting seed: {initial_seed}")
+        
         for idx, combo in enumerate(combinations):
             print(f"\n[SamplerCompareAdvanced] === Combination {idx + 1}/{len(combinations)} ===")
+            
+            # Update global_config with running seed (for seed control modes)
+            if running_seed is not None:
+                global_config["seed"] = running_seed
             
             # Get model type early for cache hash
             clip_var = combo.get("clip_variation")
@@ -1132,6 +1155,17 @@ class SamplerCompareAdvanced:
                 combo["output_frame_count"] = frame_count
                 all_labels.append(label)
                 cache_hits += 1
+                
+                # Update running seed even on cache hit (to stay consistent with control mode)
+                if running_seed is not None:
+                    if seed_control_mode == "increment":
+                        running_seed += 1
+                    elif seed_control_mode == "decrement":
+                        running_seed = max(0, running_seed - 1)
+                    elif seed_control_mode == "randomize":
+                        import random
+                        running_seed = random.randint(0, 0xffffffffffffffff)
+                
                 continue
             
             cache_misses += 1
@@ -1489,6 +1523,17 @@ class SamplerCompareAdvanced:
             if all_images:
                 actual_frame_count = combo.get("output_frame_count", 1)
                 self._cache_result(combo_hash, all_images[-1], label, actual_frame_count)
+            
+            # Update running seed based on control mode (for next iteration)
+            if running_seed is not None:
+                if seed_control_mode == "increment":
+                    running_seed += 1
+                elif seed_control_mode == "decrement":
+                    running_seed = max(0, running_seed - 1)
+                elif seed_control_mode == "randomize":
+                    import random
+                    running_seed = random.randint(0, 0xffffffffffffffff)
+                # "fixed" mode: running_seed stays the same
             
             # Per-iteration cleanup - clear intermediate tensors to help GC
             # Note: 'image' is moved to CPU and stored in all_images, 
