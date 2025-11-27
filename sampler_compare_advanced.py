@@ -774,7 +774,7 @@ class SamplerCompareAdvanced:
         return positive, out_latent
     
     def _unload_current(self, config: Dict = None):
-        """Unload all models and free VRAM aggressively."""
+        """Unload all models and free VRAM AND RAM aggressively."""
         # Clear baked resources from model entries to allow GC
         if config:
             model_variations = config.get("model_variations", [])
@@ -782,16 +782,40 @@ class SamplerCompareAdvanced:
                 entry.pop("_baked_clip", None)
                 entry.pop("_baked_vae", None)
         
-        # Unload in specific order: cleanup first, then unload, then clear cache
+        # CRITICAL: Access ComfyUI's global loaded models list and FULLY unload
+        # The standard unload_all_models() only moves to RAM, it doesn't free RAM
+        try:
+            # First unload from VRAM
+            comfy.model_management.unload_all_models()
+        except Exception as e:
+            print(f"[SamplerCompareAdvanced] unload_all_models warning: {e}")
+        
+        # Now aggressively remove ALL models from the loaded list (including RAM)
+        try:
+            loaded_models = comfy.model_management.current_loaded_models
+            num_to_unload = len(loaded_models)
+            if num_to_unload > 0:
+                print(f"[SamplerCompareAdvanced] Force-unloading {num_to_unload} models from RAM...")
+                # Pop all models and properly detach them
+                while len(loaded_models) > 0:
+                    loaded_model = loaded_models.pop()
+                    try:
+                        # Detach the model patcher (releases references)
+                        if hasattr(loaded_model, 'model') and loaded_model.model is not None:
+                            loaded_model.model.detach(unpatch_all=True)
+                        # Detach the finalizer
+                        if hasattr(loaded_model, 'model_finalizer') and loaded_model.model_finalizer is not None:
+                            loaded_model.model_finalizer.detach()
+                    except Exception as e:
+                        print(f"[SamplerCompareAdvanced] Model detach warning: {e}")
+                    del loaded_model
+        except Exception as e:
+            print(f"[SamplerCompareAdvanced] Force-unload warning: {e}")
+        
         try:
             comfy.model_management.cleanup_models()
         except Exception as e:
             print(f"[SamplerCompareAdvanced] cleanup_models warning: {e}")
-        
-        try:
-            comfy.model_management.unload_all_models()
-        except Exception as e:
-            print(f"[SamplerCompareAdvanced] unload_all_models warning: {e}")
         
         try:
             comfy.model_management.soft_empty_cache()
@@ -799,8 +823,8 @@ class SamplerCompareAdvanced:
             print(f"[SamplerCompareAdvanced] soft_empty_cache warning: {e}")
         
         # Run GC multiple times to ensure all cycles are collected
-        gc.collect()
-        gc.collect()
+        for _ in range(3):
+            gc.collect()
         
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
@@ -815,6 +839,15 @@ class SamplerCompareAdvanced:
             free_mem = torch.cuda.mem_get_info()[0] / (1024**3)
             total_mem = torch.cuda.mem_get_info()[1] / (1024**3)
             print(f"[SamplerCompareAdvanced] GPU Memory: {free_mem:.2f}GB free / {total_mem:.2f}GB total")
+        
+        # Also log system RAM usage
+        try:
+            import psutil
+            process = psutil.Process()
+            ram_gb = process.memory_info().rss / (1024**3)
+            print(f"[SamplerCompareAdvanced] Process RAM: {ram_gb:.2f}GB")
+        except ImportError:
+            pass  # psutil not available
     
     def _get_combo_key(self, combo: Dict, config: Dict) -> str:
         """
