@@ -530,10 +530,12 @@ function registerExtension(app) {
 
                             // Define which config type shows which fields
                             const isQWEN = configType === "QWEN";
+                            const isQWEN_EDIT = configType === "QWEN_EDIT";
+                            const isZ_IMAGE = configType === "Z_IMAGE";
                             const isWAN21 = configType === "WAN2.1";
                             const isWAN22 = configType === "WAN2.2";
                             const isHUNYUAN = configType === "HUNYUAN_VIDEO" || configType === "HUNYUAN_VIDEO_15";
-                            const isFLUX = configType === "FLUX" || configType === "FLUX2";
+                            const isFLUX = configType === "FLUX" || configType === "FLUX2" || configType === "FLUX_KONTEXT";
                             const isVideo = isWAN21 || isWAN22 || isHUNYUAN;
 
                             // Common fields always shown
@@ -552,9 +554,9 @@ function registerExtension(app) {
                                 if (alwaysShow.includes(widget.name)) {
                                     shouldShow = true;
                                 }
-                                // QWEN fields
+                                // QWEN fields (also used by QWEN_EDIT and Z_IMAGE for shift parameter)
                                 else if (widget.name.startsWith("qwen_")) {
-                                    shouldShow = isQWEN;
+                                    shouldShow = isQWEN || isQWEN_EDIT || isZ_IMAGE;
                                 }
                                 // WAN 2.1 fields
                                 else if (widget.name === "wan_shift") {

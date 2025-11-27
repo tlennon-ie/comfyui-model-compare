@@ -118,9 +118,6 @@ class ModelCompareLoaders:
                 "prompt_config": ("PROMPT_COMPARE_CONFIG", {
                     "tooltip": "Optional: Connect PromptCompare node to compare multiple prompts"
                 }),
-                "global_config": ("GLOBAL_COMPARE_CONFIG", {
-                    "tooltip": "Optional: Connect ModelCompareGlobals node to set global sampling parameters"
-                }),
             },
         }
 
@@ -230,7 +227,7 @@ class ModelCompareLoaders:
 
     def load_models(self, preset, diffusion_model, baked_vae_clip, diffusion_model_low, vae, clip_model, clip_model_2, clip_type,
                num_diffusion_models, num_vae_variations, num_clip_variations,
-               prompt_config=None, global_config=None,
+               prompt_config=None,
                **kwargs):
         
         # 1. Determine CLIP Type based on Preset if default
@@ -240,8 +237,14 @@ class ModelCompareLoaders:
                 current_clip_type = "sdxl"
             elif preset == "FLUX":
                 current_clip_type = "flux"
+            elif preset == "FLUX2":
+                current_clip_type = "flux2"
+            elif preset == "FLUX_KONTEXT":
+                current_clip_type = "flux_kontext"
             elif preset == "QWEN":
                 current_clip_type = "qwen"
+            elif preset == "QWEN_EDIT":
+                current_clip_type = "qwen_edit"
             elif preset == "WAN2.1" or preset == "WAN2.2":
                 current_clip_type = "wan"
             elif preset == "HUNYUAN_VIDEO":

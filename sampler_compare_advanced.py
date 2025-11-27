@@ -890,53 +890,62 @@ class SamplerCompareAdvanced:
         
         return model, model_low, clip
 
-    def _get_sampling_config_for_type(self, config: Dict, model_type: str, defaults: Dict, global_config: Dict = None) -> Dict:
+    def _get_sampling_config_for_type(self, config: Dict, model_type: str, defaults: Dict, global_config: Dict = None, model_idx: int = 0) -> Tuple[Dict, str]:
         """
-        Get sampling configuration for a specific model type.
+        Get sampling configuration for a specific model variation.
         
         Priority (later overrides earlier):
         1. Node defaults (lowest)
-        2. Config chain settings (per-variation)
+        2. Config chain settings (matched by variation_index, NOT config_type)
         3. Global config (from sampler's dynamic fields) - highest priority
+        
+        Returns:
+            Tuple of (sampling_config_dict, resolved_model_type)
+            The resolved_model_type is derived from the config chain's config_type if found,
+            which allows proper handling of QWEN_EDIT, Z_IMAGE, etc.
         """
-        sampling_configs = config.get("sampling_configs", []) if config else []
+        sampling_configs = config.get("sampling_configs", {}) if config else {}
         
-        # Map internal model types to config_type names
-        type_mapping = {
-            "sd": "STANDARD",
-            "sdxl": "SDXL",
-            "pony": "PONY",
-            "wan21": "WAN2.1",
-            "wan22": "WAN2.2",
-            "hunyuan": "HUNYUAN_VIDEO",
-            "hunyuan15": "HUNYUAN_VIDEO_15",
-            "qwen": "QWEN",
-            "qwen_edit": "QWEN_EDIT",
-            "flux": "FLUX",
-            "flux2": "FLUX2",
-            "flux_kontext": "FLUX_KONTEXT",
-            "sd3": "STANDARD",
-            "lumina2": "Z_IMAGE",
+        # Map config_type to internal model_type (reverse mapping)
+        config_type_to_model_type = {
+            "STANDARD": "sd",
+            "SDXL": "sdxl",
+            "PONY": "sdxl",
+            "WAN2.1": "wan21",
+            "WAN2.2": "wan22",
+            "HUNYUAN_VIDEO": "hunyuan",
+            "HUNYUAN_VIDEO_15": "hunyuan15",
+            "QWEN": "qwen",
+            "QWEN_EDIT": "qwen_edit",
+            "FLUX": "flux",
+            "FLUX2": "flux2",
+            "FLUX_KONTEXT": "flux_kontext",
+            "Z_IMAGE": "lumina2",
         }
-        
-        config_type = type_mapping.get(model_type, "STANDARD")
         
         # Start with node defaults
         result = dict(defaults)
+        resolved_model_type = model_type  # Start with detected model_type
         
-        # Look for matching config in chain (overrides defaults)
-        # sampling_configs is a dict keyed by variation index, so iterate over values
-        configs_to_check = sampling_configs.values() if isinstance(sampling_configs, dict) else sampling_configs
+        # Look for matching config by variation_index (PRIMARY matching method)
         found_chain = False
-        for cfg in configs_to_check:
-            if cfg.get("config_type") == config_type:
-                print(f"[SamplerCompareAdvanced] Found config chain settings for {config_type}")
-                found_chain = True
-                # Chain config overrides defaults
-                for key, value in cfg.items():
-                    if key != "config_type" and value is not None:
-                        result[key] = value
-                break
+        if isinstance(sampling_configs, dict) and model_idx in sampling_configs:
+            cfg = sampling_configs[model_idx]
+            chain_config_type = cfg.get("config_type", "STANDARD")
+            print(f"[SamplerCompareAdvanced] Found config chain for variation {model_idx} (config_type={chain_config_type})")
+            found_chain = True
+            
+            # Override model_type from config chain's config_type
+            # This is critical for QWEN_EDIT, Z_IMAGE, FLUX_KONTEXT detection
+            if chain_config_type in config_type_to_model_type:
+                resolved_model_type = config_type_to_model_type[chain_config_type]
+                if resolved_model_type != model_type:
+                    print(f"[SamplerCompareAdvanced] Overriding model_type: {model_type} -> {resolved_model_type} (from config chain)")
+            
+            # Chain config overrides defaults
+            for key, value in cfg.items():
+                if key != "config_type" and value is not None:
+                    result[key] = value
         
         # Apply global config values (highest priority - overrides chain)
         if global_config:
@@ -946,9 +955,9 @@ class SamplerCompareAdvanced:
                     print(f"[SamplerCompareAdvanced] Global override: {key} = {value}")
         
         if not found_chain and not global_config:
-            print(f"[SamplerCompareAdvanced] No config chain/globals for {model_type}, using node defaults")
+            print(f"[SamplerCompareAdvanced] No config chain for variation {model_idx}, using node defaults")
         
-        return result
+        return result, resolved_model_type
 
     def sample_all_combinations(
         self,
@@ -1047,7 +1056,8 @@ class SamplerCompareAdvanced:
             early_model_entry = config.get("model_variations", [])[model_idx] if model_idx < len(config.get("model_variations", [])) else {}
             
             # Compute sampling config for cache hash (without loading model)
-            early_sampling_cfg = self._get_sampling_config_for_type(config, early_model_type, node_defaults, global_config)
+            # Pass model_idx so config chain is matched by variation index
+            early_sampling_cfg, _ = self._get_sampling_config_for_type(config, early_model_type, node_defaults, global_config, model_idx)
             
             # Determine dimensions for cache hash
             cache_width = use_global_width if use_global_width else early_sampling_cfg.get("width", 1024)
@@ -1149,14 +1159,34 @@ class SamplerCompareAdvanced:
             # Prepare latent based on model type
             is_video_model = model_type in ['hunyuan', 'hunyuan15', 'wan21', 'wan22']
             
-            # Get sampling config for this model type
+            # Get sampling config for this model variation
             # Priority: global_config (from sampler) > config chain > node_defaults
-            sampling_cfg = self._get_sampling_config_for_type(config, model_type, node_defaults, global_config)
+            # Also get the resolved model_type from config chain (overrides clip_type detection)
+            sampling_cfg, resolved_model_type = self._get_sampling_config_for_type(config, model_type, node_defaults, global_config, model_idx)
+            
+            # Use resolved model_type from config chain (handles QWEN_EDIT, Z_IMAGE, FLUX_KONTEXT properly)
+            if resolved_model_type != model_type:
+                model_type = resolved_model_type
+                is_video_model = model_type in ['hunyuan', 'hunyuan15', 'wan21', 'wan22']
             
             # Get dimensions from config chain or use global overrides
             latent_width = use_global_width if use_global_width else sampling_cfg.get("width", 1024)
             latent_height = use_global_height if use_global_height else sampling_cfg.get("height", 1024)
             num_frames = use_global_num_frames if use_global_num_frames else sampling_cfg.get("num_frames", 81)
+            
+            # For QWEN_EDIT and FLUX_KONTEXT with reference images, derive latent dimensions from first reference
+            # This matches ComfyUI's TextEncodeQwenImageEdit behavior (scale to ~1024x1024 total pixels)
+            reference_images = sampling_cfg.get("reference_images", [])
+            if model_type in ['qwen_edit', 'flux_kontext'] and reference_images and not use_global_width and not use_global_height:
+                import math
+                ref_img = reference_images[0]
+                # ref_img shape is [B, H, W, C]
+                ref_h, ref_w = ref_img.shape[1], ref_img.shape[2]
+                total = int(1024 * 1024)  # Target ~1024x1024 total pixels
+                scale_by = math.sqrt(total / (ref_w * ref_h))
+                latent_width = round(ref_w * scale_by / 8.0) * 8
+                latent_height = round(ref_h * scale_by / 8.0) * 8
+                print(f"[SamplerCompareAdvanced] {model_type} latent dims from reference: {latent_width}x{latent_height}")
             
             # For non-video models, ensure num_frames is 1
             if not is_video_model:
@@ -1171,7 +1201,20 @@ class SamplerCompareAdvanced:
             current_latent = self._create_latent_for_type(model_type, latent_width, latent_height, num_frames)
             
             # Extract sampling parameters (already merged by _get_sampling_config_for_type)
-            use_seed = sampling_cfg.get("seed", 0)
+            base_seed = sampling_cfg.get("seed", 0)
+            seed_control = sampling_cfg.get("seed_control", "fixed")
+            
+            # Apply seed_control logic
+            if seed_control == "randomize":
+                import random
+                use_seed = random.randint(0, 0xffffffffffffffff)
+            elif seed_control == "increment":
+                use_seed = base_seed + idx
+            elif seed_control == "decrement":
+                use_seed = max(0, base_seed - idx)
+            else:  # "fixed" or default
+                use_seed = base_seed
+            
             use_steps = sampling_cfg.get("steps", 20)
             use_cfg = sampling_cfg.get("cfg", 7.0)
             use_sampler = sampling_cfg.get("sampler_name", "euler")
@@ -1363,17 +1406,16 @@ class SamplerCompareAdvanced:
                 traceback.print_exc()
                 continue
             
-            # Generate label
+            # Generate label (use user's custom label without model_type suffix)
             label = current_model_entry.get("display_name", current_model_entry.get("name", f"Model {model_idx}"))
-            full_label = f"{label} ({model_type})"
-            all_labels.append(full_label)
-            print(f"[SamplerCompareAdvanced] Label: {full_label}")
+            all_labels.append(label)
+            print(f"[SamplerCompareAdvanced] Label: {label}")
             
             # Cache the result for future runs
             # Use all_images[-1] since we just appended
             if all_images:
                 actual_frame_count = combo.get("output_frame_count", 1)
-                self._cache_result(combo_hash, all_images[-1], full_label, actual_frame_count)
+                self._cache_result(combo_hash, all_images[-1], label, actual_frame_count)
         
         # Log cache stats
         print(f"\n[SamplerCompareAdvanced] Cache stats: {cache_hits} hits, {cache_misses} misses")
