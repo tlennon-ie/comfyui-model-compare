@@ -393,6 +393,11 @@ class SamplingConfigChain:
                     ref_images.append(reference_image_3)
                 if ref_images:
                     sampling_config["reference_images"] = ref_images
+        elif config_type == "Z_IMAGE":
+            # Z_IMAGE (Lumina2) uses AuraFlow sampling with shift parameter
+            sampling_config.update({
+                "qwen_shift": qwen_shift,  # Lumina2 uses the same shift as QWEN
+            })
         
         # Store by variation index
         new_config["sampling_configs"][idx] = sampling_config

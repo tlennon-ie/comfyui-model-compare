@@ -17,7 +17,7 @@ import folder_paths
 class LoraCompare:
     """Configure LoRAs for specific model variations with support for comparison."""
     
-    CATEGORY = "loaders"
+    CATEGORY = "Model Compare/Loaders"
     
     @classmethod
     def INPUT_TYPES(cls):

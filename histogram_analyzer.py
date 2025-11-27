@@ -84,7 +84,7 @@ class HistogramAnalyzer:
             },
         }
     
-    CATEGORY = "image/analysis"
+    CATEGORY = "Model Compare/Analysis"
     RETURN_TYPES = ("IMAGE", "IMAGE", "IMAGE", "IMAGE", "IMAGE", "IMAGE", "STRING")
     RETURN_NAMES = ("rgb_histogram", "individual_histogram", "luminance_histogram", "hue_histogram", "hsv_histogram", "all_types_grid", "statistics")
     FUNCTION = "analyze"
@@ -292,7 +292,7 @@ class HistogramComparator:
             },
         }
     
-    CATEGORY = "image/analysis"
+    CATEGORY = "Model Compare/Analysis"
     RETURN_TYPES = ("IMAGE", "IMAGE", "IMAGE", "IMAGE", "IMAGE", "STRING")
     RETURN_NAMES = ("rgb_comparison", "individual_comparison", "luminance_comparison", "hue_comparison", "all_types_grid", "difference_stats")
     FUNCTION = "compare"

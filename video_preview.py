@@ -42,7 +42,7 @@ class VideoPreview:
             },
         }
 
-    CATEGORY = "Video Helper Suite 🎥 Model Compare"
+    CATEGORY = "Model Compare/Video"
     RETURN_TYPES = ("STRING", "IMAGE")
     RETURN_NAMES = ("video_path", "images")
     FUNCTION = "preview_video"
@@ -126,7 +126,7 @@ class VideoGridPreview:
             },
         }
 
-    CATEGORY = "Video Helper Suite 🎥 Model Compare"
+    CATEGORY = "Model Compare/Video"
     RETURN_TYPES = ("IMAGE", "STRING", "STRING")
     RETURN_NAMES = ("images", "image_path", "video_path")
     FUNCTION = "preview_grid"

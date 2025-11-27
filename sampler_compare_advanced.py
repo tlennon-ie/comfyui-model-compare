@@ -33,7 +33,7 @@ class SamplerCompareAdvanced:
     RETURN_TYPES = ("IMAGE", "MODEL_COMPARE_CONFIG", "STRING")
     RETURN_NAMES = ("images", "config", "labels")
     FUNCTION = "sample_all_combinations"
-    CATEGORY = "sampling"
+    CATEGORY = "Model Compare/Sampling"
     OUTPUT_NODE = True
     
     # Class-level cache for per-combination results
@@ -314,13 +314,26 @@ class SamplerCompareAdvanced:
         
         return {"samples": latent}
     
-    def _get_combination_hash(self, combo: Dict, sampling_cfg: Dict, global_config: Dict, latent_shape: tuple) -> str:
+    def _get_combination_hash(self, combo: Dict, sampling_cfg: Dict, global_config: Dict, latent_shape: tuple, model_entry: Dict = None) -> str:
         """
         Generate a unique hash for a combination including all parameters that affect output.
         This is used for per-combination caching.
+        
+        Args:
+            combo: The combination dict (model_index, vae_name, prompts, etc.)
+            sampling_cfg: The resolved sampling configuration
+            global_config: Global config overrides
+            latent_shape: Shape tuple (width, height, frames)
+            model_entry: The model variation entry (contains display_name, model_path, etc.)
         """
+        # Get model display name from model_entry if provided
+        model_display_name = ""
+        if model_entry:
+            model_display_name = model_entry.get("display_name", model_entry.get("name", ""))
+        
         hash_parts = [
             str(combo.get("model_index", 0)),
+            str(model_display_name),  # Include model display name/label for cache invalidation
             str(combo.get("vae_name", "")),
             str(combo.get("prompt_positive", "")),
             str(combo.get("prompt_negative", "")),
@@ -1029,6 +1042,10 @@ class SamplerCompareAdvanced:
             }
             early_model_type = clip_type_to_model_type.get(clip_type_str, "sd")
             
+            # Get model entry early for cache hash (includes display_name/label)
+            model_idx = combo.get("model_index", 0)
+            early_model_entry = config.get("model_variations", [])[model_idx] if model_idx < len(config.get("model_variations", [])) else {}
+            
             # Compute sampling config for cache hash (without loading model)
             early_sampling_cfg = self._get_sampling_config_for_type(config, early_model_type, node_defaults, global_config)
             
@@ -1038,7 +1055,8 @@ class SamplerCompareAdvanced:
             cache_frames = use_global_num_frames if use_global_num_frames else early_sampling_cfg.get("num_frames", 1)
             
             # Generate cache hash for this combination (using dimensions instead of latent shape)
-            combo_hash = self._get_combination_hash(combo, early_sampling_cfg, global_config, (cache_width, cache_height, cache_frames))
+            # Pass model_entry so cache invalidates when model label/name changes
+            combo_hash = self._get_combination_hash(combo, early_sampling_cfg, global_config, (cache_width, cache_height, cache_frames), early_model_entry)
             
             # Check cache for existing result
             cached = self._get_cached_result(combo_hash)
@@ -1401,6 +1419,24 @@ class SamplerCompareAdvanced:
                 mult = kwargs.get('cfg_norm_multiplier', 0.7)
                 model = RescaleCFG().patch(model, mult)[0]
             print(f"[SamplerCompareAdvanced] Applied QWEN patches (shift={shift})")
+        
+        elif model_type == 'qwen_edit':
+            # QWEN Edit uses same AuraFlow sampling as QWEN
+            shift = kwargs.get('qwen_shift', 1.15)
+            model = ModelSamplingAuraFlow().patch(model, shift)[0]
+            
+            # Apply CFG normalization
+            if kwargs.get('cfg_norm', True):
+                mult = kwargs.get('cfg_norm_multiplier', 0.7)
+                model = RescaleCFG().patch(model, mult)[0]
+            print(f"[SamplerCompareAdvanced] Applied QWEN Edit patches (shift={shift})")
+        
+        elif model_type == 'lumina2':
+            # Lumina2/Z_IMAGE uses AuraFlow sampling like QWEN
+            # Default shift=1.15 matches QWEN defaults, but user can override via config chain
+            shift = kwargs.get('qwen_shift', 1.15)
+            model = ModelSamplingAuraFlow().patch(model, shift)[0]
+            print(f"[SamplerCompareAdvanced] Applied Lumina2/Z_IMAGE patches (shift={shift})")
         
         elif model_type == 'wan21':
             shift = kwargs.get('wan_shift', 8.0)

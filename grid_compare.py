@@ -140,7 +140,7 @@ class GridCompare:
             },
         }
 
-    CATEGORY = "image"
+    CATEGORY = "Model Compare/Grid"
     RETURN_TYPES = ("IMAGE", "STRING", "STRING")
     RETURN_NAMES = ("images", "save_path", "video_path")
     OUTPUT_IS_LIST = (False, False, False)

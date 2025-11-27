@@ -195,7 +195,7 @@ class ModelCompareLoaders:
     RETURN_TYPES = ("MODEL_COMPARE_CONFIG",)
     RETURN_NAMES = ("config",)
     FUNCTION = "load_models"
-    CATEGORY = "loaders"
+    CATEGORY = "Model Compare/Loaders"
 
     @classmethod
     def _get_cached_models(cls, type_name):
