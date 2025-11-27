@@ -1073,18 +1073,44 @@ class GridCompare:
         model_label_height = int(font_size * 1.2)
         title_height = font_size + 30 if title else 0
         
-        # Calculate prompt text height (if enabled)
+        # Calculate cell dimensions first (needed for prompt width calculation)
+        cell_width = img_width + gap_size
+        
+        # Calculate prompt text height (if enabled) - measure actual text height needed
         prompt_text_height = 0
         if show_positive_prompt or show_negative_prompt:
-            lines_needed = 0
-            if show_positive_prompt:
-                lines_needed += 6  # Header + 5 lines for positive prompt text
-            if show_negative_prompt:
-                lines_needed += 6  # Spacer + Header + 5 lines for negative prompt text
-            prompt_text_height = int(font_size * 0.6 * lines_needed) + gap_size
+            # We need to calculate actual height based on wrapped text
+            # Get prompt text from first prompt variation to measure
+            prompt_variations = config.get("prompt_variations", [])
+            max_prompt_height = 0
+            
+            # Calculate available width for text wrapping (same as used in drawing)
+            grid_width_temp = cell_width * num_cols + gap_size
+            prompt_width = grid_width_temp - gap_size * 2
+            
+            for pv in prompt_variations:
+                pv_height = 0
+                if show_positive_prompt and pv.get("positive"):
+                    # Header line
+                    pv_height += int(font_size * 0.6)
+                    # Wrapped text lines
+                    wrapped = self._wrap_text(pv.get("positive", ""), prompt_font, prompt_width)
+                    pv_height += int(font_size * 0.6) * len(wrapped.split('\n'))
+                
+                if show_negative_prompt and pv.get("negative"):
+                    # Spacer
+                    pv_height += int(font_size * 0.3)
+                    # Header line
+                    pv_height += int(font_size * 0.6)
+                    # Wrapped text lines
+                    wrapped = self._wrap_text(pv.get("negative", ""), prompt_font, prompt_width)
+                    pv_height += int(font_size * 0.6) * len(wrapped.split('\n'))
+                
+                max_prompt_height = max(max_prompt_height, pv_height)
+            
+            prompt_text_height = max_prompt_height + gap_size * 2  # Add padding
         
-        # Calculate cell/grid dimensions
-        cell_width = img_width + gap_size
+        # Calculate grid dimensions (cell_width already defined above)
         section_height = model_label_height + img_height + gap_size + prompt_text_height
         
         grid_width = cell_width * num_cols + gap_size
