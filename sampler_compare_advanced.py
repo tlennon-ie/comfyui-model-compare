@@ -1463,7 +1463,7 @@ class SamplerCompareAdvanced:
             # QWEN uses shift=1.15 by default (NOT 8.0!)
             # From comfy/supported_models.py: sampling_settings = {"multiplier": 1.0, "shift": 1.15}
             shift = kwargs.get('qwen_shift', 1.15)
-            model = ModelSamplingAuraFlow().patch(model, shift)[0]
+            model = ModelSamplingAuraFlow().patch_aura(model, shift)[0]
             
             # Apply CFG normalization
             if kwargs.get('cfg_norm', True):
@@ -1474,7 +1474,7 @@ class SamplerCompareAdvanced:
         elif model_type == 'qwen_edit':
             # QWEN Edit uses same AuraFlow sampling as QWEN
             shift = kwargs.get('qwen_shift', 1.15)
-            model = ModelSamplingAuraFlow().patch(model, shift)[0]
+            model = ModelSamplingAuraFlow().patch_aura(model, shift)[0]
             
             # Apply CFG normalization
             if kwargs.get('cfg_norm', True):
@@ -1486,16 +1486,17 @@ class SamplerCompareAdvanced:
             # Lumina2 uses AuraFlow sampling with shift parameter
             # Default shift=6.0 for Lumina2
             shift = kwargs.get('lumina_shift', 6.0)
-            model = ModelSamplingAuraFlow().patch(model, shift)[0]
+            model = ModelSamplingAuraFlow().patch_aura(model, shift)[0]
             print(f"[SamplerCompareAdvanced] Applied Lumina2 patches (shift={shift})")
         
         elif model_type == 'z_image':
             # Z_IMAGE uses AuraFlow sampling with shift parameter
             # Default shift=3.0 for Z_IMAGE (different from Lumina2's 6.0)
             # NO CFG normalization (unlike QWEN)
+            # CRITICAL: Use patch_aura() which sets multiplier=1.0 (not patch() which defaults to 1000)
             shift = kwargs.get('lumina_shift', 3.0)
-            model = ModelSamplingAuraFlow().patch(model, shift)[0]
-            print(f"[SamplerCompareAdvanced] Applied Z_IMAGE patches (shift={shift})")
+            model = ModelSamplingAuraFlow().patch_aura(model, shift)[0]
+            print(f"[SamplerCompareAdvanced] Applied Z_IMAGE patches (shift={shift}, multiplier=1.0)")
         
         elif model_type == 'wan21':
             shift = kwargs.get('wan_shift', 8.0)
