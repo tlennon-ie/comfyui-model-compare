@@ -58,7 +58,6 @@ class SamplerCompareAdvanced:
         inputs = {
             "required": {
                 "config": ("MODEL_COMPARE_CONFIG",),
-                "latent": ("LATENT",),
                 # Dynamic global fields slider
                 "num_global_fields": ("INT", {
                     "default": 0,
@@ -70,17 +69,26 @@ class SamplerCompareAdvanced:
                 }),
             },
             "optional": {
-                # Video Latent Input (kept for video model support)
-                "video_latent": ("LATENT", {
-                    "tooltip": "Optional video latent for Hunyuan/WAN video models"
+                # Global dimension overrides
+                "global_width": ("INT", {
+                    "default": 0,
+                    "min": 0,
+                    "max": 8192,
+                    "step": 8,
+                    "tooltip": "Global width override (0 = use config chain values). Overrides all variations."
                 }),
-                
-                # Image-to-Video Inputs (kept for I2V support)
-                "start_image": ("IMAGE", {
-                    "tooltip": "Start frame for WAN Image-to-Video"
+                "global_height": ("INT", {
+                    "default": 0,
+                    "min": 0,
+                    "max": 8192,
+                    "step": 8,
+                    "tooltip": "Global height override (0 = use config chain values). Overrides all variations."
                 }),
-                "end_image": ("IMAGE", {
-                    "tooltip": "End frame for WAN First-Last-Frame-to-Video"
+                "global_num_frames": ("INT", {
+                    "default": 0,
+                    "min": 0,
+                    "max": 1000,
+                    "tooltip": "Global frame count override for video models (0 = use config chain values)."
                 }),
             }
         }
@@ -227,16 +235,84 @@ class SamplerCompareAdvanced:
             "sd3": getattr(comfy.sd.CLIPType, "SD3", comfy.sd.CLIPType.STABLE_DIFFUSION),
             "flux": getattr(comfy.sd.CLIPType, "FLUX", comfy.sd.CLIPType.STABLE_DIFFUSION),
             "flux2": getattr(comfy.sd.CLIPType, "FLUX2", comfy.sd.CLIPType.STABLE_DIFFUSION),
+            "flux_kontext": getattr(comfy.sd.CLIPType, "FLUX2", comfy.sd.CLIPType.STABLE_DIFFUSION),  # FLUX_KONTEXT uses FLUX2 CLIP type
             "wan": getattr(comfy.sd.CLIPType, "WAN", getattr(comfy.sd.CLIPType, "FLUX", comfy.sd.CLIPType.STABLE_DIFFUSION)),
             "wan22": getattr(comfy.sd.CLIPType, "WAN", getattr(comfy.sd.CLIPType, "FLUX", comfy.sd.CLIPType.STABLE_DIFFUSION)),
             "hunyuan_video": getattr(comfy.sd.CLIPType, "HUNYUAN_VIDEO", comfy.sd.CLIPType.STABLE_DIFFUSION),
             "hunyuan_video_15": getattr(comfy.sd.CLIPType, "HUNYUAN_VIDEO_15", comfy.sd.CLIPType.STABLE_DIFFUSION),
             "qwen": getattr(comfy.sd.CLIPType, "QWEN_IMAGE", comfy.sd.CLIPType.STABLE_DIFFUSION),
+            "qwen_edit": getattr(comfy.sd.CLIPType, "QWEN_IMAGE", comfy.sd.CLIPType.STABLE_DIFFUSION),  # QWEN_EDIT uses same CLIP type as QWEN
         }
         key = clip_type_str.upper().replace("_", "")
         if hasattr(comfy.sd.CLIPType, key):
             return getattr(comfy.sd.CLIPType, key)
         return mapping.get(clip_type_str, comfy.sd.CLIPType.STABLE_DIFFUSION)
+    
+    def _create_latent_for_type(self, model_type: str, width: int, height: int, num_frames: int = 1, batch_size: int = 1) -> Dict:
+        """
+        Create an appropriate latent tensor based on model type.
+        
+        Latent channel counts:
+        - SD/SDXL: 4 channels (standard VAE)
+        - FLUX: 16 channels
+        - FLUX2/FLUX_KONTEXT: 128 channels (with spatial compression)
+        - QWEN: 16 channels (uses Wan21 latent format)
+        - Lumina2: 16 channels (Flux format)
+        - WAN2.1/2.2: 16 channels, 5D tensor for video
+        - Hunyuan: 16 channels, 5D tensor for video
+        
+        Args:
+            model_type: Type of model (sd, sdxl, flux, flux2, qwen, wan21, etc.)
+            width: Output width in pixels
+            height: Output height in pixels
+            num_frames: Number of frames for video models (default 1 for images)
+            batch_size: Batch size (default 1)
+        
+        Returns:
+            Dict with "samples" key containing the latent tensor
+        """
+        device = comfy.model_management.intermediate_device()
+        
+        # Calculate latent dimensions (VAE compression factor is 8)
+        latent_h = height // 8
+        latent_w = width // 8
+        
+        is_video_model = model_type in ['wan21', 'wan22', 'hunyuan', 'hunyuan15']
+        
+        if model_type == 'flux2' or model_type == 'flux_kontext':
+            # FLUX2 uses 128 channels with additional spatial compression
+            channels = 128
+            latent = torch.zeros(
+                [batch_size, channels, latent_h // 2, latent_w // 2],
+                device=device
+            )
+            print(f"[SamplerCompareAdvanced] Created {model_type} latent (128ch): {latent.shape}")
+        elif model_type in ['flux', 'qwen', 'qwen_edit', 'lumina2']:
+            # FLUX, QWEN, Lumina2 use 16 channels
+            channels = 16
+            latent = torch.zeros(
+                [batch_size, channels, latent_h, latent_w],
+                device=device
+            )
+            print(f"[SamplerCompareAdvanced] Created {model_type} latent (16ch): {latent.shape}")
+        elif is_video_model:
+            # Video models: 5D tensor [B, C, F, H, W]
+            channels = 16
+            latent = torch.zeros(
+                [batch_size, channels, num_frames, latent_h, latent_w],
+                device=device
+            )
+            print(f"[SamplerCompareAdvanced] Created {model_type} video latent: {latent.shape} ({num_frames} frames)")
+        else:
+            # SD/SDXL: 4 channels
+            channels = 4
+            latent = torch.zeros(
+                [batch_size, channels, latent_h, latent_w],
+                device=device
+            )
+            print(f"[SamplerCompareAdvanced] Created {model_type} latent (4ch): {latent.shape}")
+        
+        return {"samples": latent}
     
     def _get_combination_hash(self, combo: Dict, sampling_cfg: Dict, global_config: Dict, latent_shape: tuple) -> str:
         """
@@ -417,6 +493,274 @@ class SamplerCompareAdvanced:
         
         return None
     
+    def _encode_qwen_edit_conditioning(self, clip, vae, prompt: str, reference_images: List[torch.Tensor]) -> Tuple[Any, Any]:
+        """
+        Encode conditioning for QWEN Image Edit models.
+        
+        Based on TextEncodeQwenImageEditPlus from ComfyUI:
+        - Images scaled to 384x384 for tokenization (CLIP vision)
+        - Images scaled to 1024x1024 for VAE encoding (reference latents)
+        - Uses special LLAMA template for image editing
+        
+        Args:
+            clip: CLIP model
+            vae: VAE for encoding reference images
+            prompt: Text prompt
+            reference_images: List of reference images (up to 3)
+        
+        Returns:
+            Tuple of (positive_conditioning, negative_conditioning)
+        """
+        import math
+        import node_helpers
+        
+        ref_latents = []
+        images_vl = []
+        llama_template = "<|im_start|>system\nDescribe the key features of the input image (color, shape, size, texture, objects, background), then explain how the user's text instruction should alter or modify the image. Generate a new image that meets the user's requirements while maintaining consistency with the original input where appropriate.<|im_end|>\n<|im_start|>user\n{}<|im_end|>\n<|im_start|>assistant\n"
+        image_prompt = ""
+        
+        for i, image in enumerate(reference_images):
+            if image is not None:
+                samples = image.movedim(-1, 1)
+                
+                # Scale to 384x384 for CLIP vision tokenization
+                total = int(384 * 384)
+                scale_by = math.sqrt(total / (samples.shape[3] * samples.shape[2]))
+                width = round(samples.shape[3] * scale_by)
+                height = round(samples.shape[2] * scale_by)
+                
+                s = comfy.utils.common_upscale(samples, width, height, "area", "disabled")
+                images_vl.append(s.movedim(1, -1))
+                
+                if vae is not None:
+                    # Scale to 1024x1024 for VAE encoding (reference latents)
+                    total = int(1024 * 1024)
+                    scale_by = math.sqrt(total / (samples.shape[3] * samples.shape[2]))
+                    width = round(samples.shape[3] * scale_by / 8.0) * 8
+                    height = round(samples.shape[2] * scale_by / 8.0) * 8
+                    
+                    s = comfy.utils.common_upscale(samples, width, height, "area", "disabled")
+                    ref_latents.append(vae.encode(s.movedim(1, -1)[:, :, :, :3]))
+                
+                image_prompt += "Picture {}: <|vision_start|><|image_pad|><|vision_end|>".format(i + 1)
+        
+        # Encode positive conditioning
+        tokens = clip.tokenize(image_prompt + prompt, images=images_vl, llama_template=llama_template)
+        positive = clip.encode_from_tokens_scheduled(tokens)
+        
+        if len(ref_latents) > 0:
+            positive = node_helpers.conditioning_set_values(positive, {"reference_latents": ref_latents}, append=True)
+        
+        # Encode negative conditioning (empty for QWEN Edit)
+        neg_tokens = clip.tokenize("", images=[])
+        negative = clip.encode_from_tokens_scheduled(neg_tokens)
+        
+        print(f"[SamplerCompareAdvanced] QWEN Edit conditioning: {len(images_vl)} images, {len(ref_latents)} ref latents")
+        
+        return positive, negative
+    
+    def _encode_flux_reference_conditioning(self, clip, vae, prompt: str, reference_images: List[torch.Tensor], flux_guidance: float) -> Tuple[Any, Any]:
+        """
+        Encode conditioning for FLUX2/FLUX_KONTEXT with reference images.
+        
+        Based on ReferenceLatent pattern from ComfyUI:
+        - VAE encode reference images
+        - Add reference_latents to conditioning
+        - Apply FluxGuidance
+        
+        Args:
+            clip: CLIP model
+            vae: VAE for encoding reference images
+            prompt: Text prompt
+            reference_images: List of reference images
+            flux_guidance: FLUX guidance scale
+        
+        Returns:
+            Tuple of (positive_conditioning, negative_conditioning)
+        """
+        import node_helpers
+        
+        ref_latents = []
+        
+        for image in reference_images:
+            if image is not None and vae is not None:
+                # VAE encode the reference image
+                samples = image.movedim(-1, 1)
+                ref_latents.append(vae.encode(samples.movedim(1, -1)[:, :, :, :3]))
+        
+        # Encode positive conditioning with FLUX guidance
+        tokens = clip.tokenize(prompt)
+        positive = clip.encode_from_tokens_scheduled(tokens, add_dict={"guidance": flux_guidance})
+        
+        if len(ref_latents) > 0:
+            positive = node_helpers.conditioning_set_values(positive, {"reference_latents": ref_latents}, append=True)
+        
+        # Encode negative conditioning
+        neg_tokens = clip.tokenize("")
+        negative = clip.encode_from_tokens_scheduled(neg_tokens, add_dict={"guidance": flux_guidance})
+        
+        print(f"[SamplerCompareAdvanced] FLUX reference conditioning: {len(ref_latents)} ref latents")
+        
+        return positive, negative
+    
+    def _prepare_wan_i2v(self, vae, positive, negative, width: int, height: int, num_frames: int,
+                         start_frame: Optional[torch.Tensor] = None, 
+                         end_frame: Optional[torch.Tensor] = None,
+                         clip_vision_start=None, clip_vision_end=None) -> Tuple[Any, Any, Dict]:
+        """
+        Prepare conditioning and latent for WAN Image-to-Video (I2V) or First-Last-Frame-to-Video (FLF2V).
+        
+        Based on WanImageToVideo and WanFirstLastFrameToVideo from ComfyUI:
+        - Creates video latent with proper shape
+        - Encodes start/end frames and creates concat_latent_image and concat_mask
+        - Applies CLIP vision outputs if provided
+        
+        Args:
+            vae: VAE for encoding frames
+            positive: Positive conditioning
+            negative: Negative conditioning
+            width: Video width
+            height: Video height
+            num_frames: Number of video frames
+            start_frame: Optional start frame image
+            end_frame: Optional end frame image (for FLF2V)
+            clip_vision_start: Optional CLIP vision output for start frame
+            clip_vision_end: Optional CLIP vision output for end frame
+        
+        Returns:
+            Tuple of (positive_cond, negative_cond, latent_dict)
+        """
+        import node_helpers
+        import comfy.clip_vision
+        
+        batch_size = 1
+        spacial_scale = 8  # Standard VAE compression
+        latent_frames = ((num_frames - 1) // 4) + 1
+        
+        # Create empty video latent
+        latent = torch.zeros(
+            [batch_size, 16, latent_frames, height // spacial_scale, width // spacial_scale],
+            device=comfy.model_management.intermediate_device()
+        )
+        
+        if start_frame is not None or end_frame is not None:
+            # Prepare frames and mask
+            if start_frame is not None:
+                start_frame = comfy.utils.common_upscale(
+                    start_frame[:num_frames].movedim(-1, 1), width, height, "bilinear", "center"
+                ).movedim(1, -1)
+            if end_frame is not None:
+                end_frame = comfy.utils.common_upscale(
+                    end_frame[-num_frames:].movedim(-1, 1), width, height, "bilinear", "center"
+                ).movedim(1, -1)
+            
+            # Create image sequence and mask
+            image = torch.ones((num_frames, height, width, 3)) * 0.5
+            mask = torch.ones((1, 1, latent_frames * 4, latent.shape[-2], latent.shape[-1]))
+            
+            if start_frame is not None:
+                image[:start_frame.shape[0]] = start_frame
+                mask[:, :, :start_frame.shape[0] + 3] = 0.0
+            
+            if end_frame is not None:
+                image[-end_frame.shape[0]:] = end_frame
+                mask[:, :, -end_frame.shape[0]:] = 0.0
+            
+            # Encode to latent
+            concat_latent_image = vae.encode(image[:, :, :, :3])
+            mask = mask.view(1, mask.shape[2] // 4, 4, mask.shape[3], mask.shape[4]).transpose(1, 2)
+            
+            positive = node_helpers.conditioning_set_values(positive, {"concat_latent_image": concat_latent_image, "concat_mask": mask})
+            negative = node_helpers.conditioning_set_values(negative, {"concat_latent_image": concat_latent_image, "concat_mask": mask})
+        
+        # Handle CLIP vision outputs
+        clip_vision_output = None
+        if clip_vision_start is not None:
+            clip_vision_output = clip_vision_start
+        
+        if clip_vision_end is not None:
+            if clip_vision_output is not None:
+                # Combine start and end CLIP vision outputs
+                states = torch.cat([clip_vision_output.penultimate_hidden_states, clip_vision_end.penultimate_hidden_states], dim=-2)
+                clip_vision_output = comfy.clip_vision.Output()
+                clip_vision_output.penultimate_hidden_states = states
+            else:
+                clip_vision_output = clip_vision_end
+        
+        if clip_vision_output is not None:
+            positive = node_helpers.conditioning_set_values(positive, {"clip_vision_output": clip_vision_output})
+            negative = node_helpers.conditioning_set_values(negative, {"clip_vision_output": clip_vision_output})
+        
+        has_start = start_frame is not None
+        has_end = end_frame is not None
+        print(f"[SamplerCompareAdvanced] WAN I2V: {num_frames} frames, start={has_start}, end={has_end}")
+        
+        return positive, negative, {"samples": latent}
+    
+    def _prepare_hunyuan_i2v(self, vae, positive, width: int, height: int, num_frames: int,
+                              start_frame: Optional[torch.Tensor] = None,
+                              guidance_type: str = "v1 (concat)") -> Tuple[Any, Dict]:
+        """
+        Prepare conditioning and latent for Hunyuan Image-to-Video.
+        
+        Based on HunyuanImageToVideo from ComfyUI:
+        - Creates video latent with proper shape
+        - Encodes start frame based on guidance_type
+        
+        Args:
+            vae: VAE for encoding frames
+            positive: Positive conditioning
+            width: Video width
+            height: Video height
+            num_frames: Number of video frames
+            start_frame: Optional start frame image
+            guidance_type: One of "v1 (concat)", "v2 (replace)", "custom"
+        
+        Returns:
+            Tuple of (positive_cond, latent_dict)
+        """
+        import node_helpers
+        
+        batch_size = 1
+        latent_frames = ((num_frames - 1) // 4) + 1
+        
+        # Create empty video latent
+        latent = torch.zeros(
+            [batch_size, 16, latent_frames, height // 8, width // 8],
+            device=comfy.model_management.intermediate_device()
+        )
+        out_latent = {}
+        
+        if start_frame is not None:
+            start_frame = comfy.utils.common_upscale(
+                start_frame[:num_frames, :, :, :3].movedim(-1, 1), width, height, "bilinear", "center"
+            ).movedim(1, -1)
+            
+            concat_latent_image = vae.encode(start_frame)
+            mask = torch.ones(
+                (1, 1, latent.shape[2], concat_latent_image.shape[-2], concat_latent_image.shape[-1]),
+                device=start_frame.device, dtype=start_frame.dtype
+            )
+            mask[:, :, :((start_frame.shape[0] - 1) // 4) + 1] = 0.0
+            
+            if guidance_type == "v1 (concat)":
+                cond = {"concat_latent_image": concat_latent_image, "concat_mask": mask}
+            elif guidance_type == "v2 (replace)":
+                cond = {'guiding_frame_index': 0}
+                latent[:, :, :concat_latent_image.shape[2]] = concat_latent_image
+                out_latent["noise_mask"] = mask
+            elif guidance_type == "custom":
+                cond = {"ref_latent": concat_latent_image}
+            else:
+                cond = {"concat_latent_image": concat_latent_image, "concat_mask": mask}
+            
+            positive = node_helpers.conditioning_set_values(positive, cond)
+        
+        out_latent["samples"] = latent
+        print(f"[SamplerCompareAdvanced] Hunyuan I2V: {num_frames} frames, guidance_type={guidance_type}")
+        
+        return positive, out_latent
+    
     def _unload_current(self, config: Dict = None):
         """Unload all models and free VRAM."""
         # Clear baked resources from model entries to allow GC
@@ -554,8 +898,10 @@ class SamplerCompareAdvanced:
             "hunyuan": "HUNYUAN_VIDEO",
             "hunyuan15": "HUNYUAN_VIDEO_15",
             "qwen": "QWEN",
+            "qwen_edit": "QWEN_EDIT",
             "flux": "FLUX",
             "flux2": "FLUX2",
+            "flux_kontext": "FLUX_KONTEXT",
             "sd3": "STANDARD",
             "lumina2": "Z_IMAGE",
         }
@@ -594,19 +940,19 @@ class SamplerCompareAdvanced:
     def sample_all_combinations(
         self,
         config: Dict,
-        latent: Dict,
         num_global_fields: int = 0,
-        # Optional inputs
-        video_latent: Optional[Dict] = None,
-        start_image: Optional[torch.Tensor] = None,
-        end_image: Optional[torch.Tensor] = None,
+        # Global dimension overrides
+        global_width: int = 0,
+        global_height: int = 0,
+        global_num_frames: int = 0,
         **kwargs,  # Captures dynamic global_param_type_N, global_value_*_N fields
     ):
         """
         Sample all combinations with LAZY LOADING.
         Models are loaded on-demand and unloaded when config changes.
         
-        All sampling parameters come from config chain. Global fields override for all variations.
+        Latents are now generated internally based on config chain width/height/num_frames.
+        Global overrides can set width/height/num_frames for all variations.
         """
         from nodes import common_ksampler
         
@@ -644,14 +990,16 @@ class SamplerCompareAdvanced:
         all_images = []
         all_labels = []
         
-        # Get latent info
-        latent_image = latent["samples"]
-        latent_channels = latent_image.shape[1]
-        latent_height = latent_image.shape[2] * 8
-        latent_width = latent_image.shape[3] * 8
+        # Global dimension overrides (0 means use config chain values)
+        use_global_width = global_width if global_width > 0 else None
+        use_global_height = global_height if global_height > 0 else None
+        use_global_num_frames = global_num_frames if global_num_frames > 0 else None
         
         print(f"\n[SamplerCompareAdvanced] Processing {len(combinations)} combinations (LAZY LOADING)")
-        print(f"[SamplerCompareAdvanced] Latent shape: {latent_image.shape}")
+        if use_global_width or use_global_height:
+            print(f"[SamplerCompareAdvanced] Global dimension override: {use_global_width or 'chain'}x{use_global_height or 'chain'}")
+        if use_global_num_frames:
+            print(f"[SamplerCompareAdvanced] Global frame count override: {use_global_num_frames}")
         
         # Track currently loaded resources for smart unloading
         current_model = None
@@ -672,9 +1020,11 @@ class SamplerCompareAdvanced:
             clip_var = combo.get("clip_variation")
             clip_type_str = clip_var.get("clip_type", "") if clip_var else ""
             clip_type_to_model_type = {
-                "flux": "flux", "flux2": "flux2", "wan": "wan21", "wan22": "wan22",
+                "flux": "flux", "flux2": "flux2", "flux_kontext": "flux_kontext",
+                "wan": "wan21", "wan22": "wan22",
                 "hunyuan_video": "hunyuan", "hunyuan_video_15": "hunyuan15",
-                "qwen": "qwen", "sdxl": "sdxl", "sd": "sd", "sd3": "sd3",
+                "qwen": "qwen", "qwen_edit": "qwen_edit",
+                "sdxl": "sdxl", "sd": "sd", "sd3": "sd3",
                 "lumina2": "lumina2",
             }
             early_model_type = clip_type_to_model_type.get(clip_type_str, "sd")
@@ -682,8 +1032,13 @@ class SamplerCompareAdvanced:
             # Compute sampling config for cache hash (without loading model)
             early_sampling_cfg = self._get_sampling_config_for_type(config, early_model_type, node_defaults, global_config)
             
-            # Generate cache hash for this combination
-            combo_hash = self._get_combination_hash(combo, early_sampling_cfg, global_config, latent_image.shape)
+            # Determine dimensions for cache hash
+            cache_width = use_global_width if use_global_width else early_sampling_cfg.get("width", 1024)
+            cache_height = use_global_height if use_global_height else early_sampling_cfg.get("height", 1024)
+            cache_frames = use_global_num_frames if use_global_num_frames else early_sampling_cfg.get("num_frames", 1)
+            
+            # Generate cache hash for this combination (using dimensions instead of latent shape)
+            combo_hash = self._get_combination_hash(combo, early_sampling_cfg, global_config, (cache_width, cache_height, cache_frames))
             
             # Check cache for existing result
             cached = self._get_cached_result(combo_hash)
@@ -758,9 +1113,11 @@ class SamplerCompareAdvanced:
             clip_type_str = clip_var.get("clip_type", "") if clip_var else ""
             
             clip_type_to_model_type = {
-                "flux": "flux", "flux2": "flux2", "wan": "wan21", "wan22": "wan22",
+                "flux": "flux", "flux2": "flux2", "flux_kontext": "flux_kontext",
+                "wan": "wan21", "wan22": "wan22",
                 "hunyuan_video": "hunyuan", "hunyuan_video_15": "hunyuan15",
-                "qwen": "qwen", "sdxl": "sdxl", "sd": "sd", "sd3": "sd3",
+                "qwen": "qwen", "qwen_edit": "qwen_edit",
+                "sdxl": "sdxl", "sd": "sd", "sd3": "sd3",
                 "lumina2": "lumina2",
             }
             
@@ -772,13 +1129,28 @@ class SamplerCompareAdvanced:
                 print(f"[SamplerCompareAdvanced] Auto-detected model type: {model_type}")
             
             # Prepare latent based on model type
-            current_latent = latent
             is_video_model = model_type in ['hunyuan', 'hunyuan15', 'wan21', 'wan22']
-            num_frames = 1
             
             # Get sampling config for this model type
             # Priority: global_config (from sampler) > config chain > node_defaults
             sampling_cfg = self._get_sampling_config_for_type(config, model_type, node_defaults, global_config)
+            
+            # Get dimensions from config chain or use global overrides
+            latent_width = use_global_width if use_global_width else sampling_cfg.get("width", 1024)
+            latent_height = use_global_height if use_global_height else sampling_cfg.get("height", 1024)
+            num_frames = use_global_num_frames if use_global_num_frames else sampling_cfg.get("num_frames", 81)
+            
+            # For non-video models, ensure num_frames is 1
+            if not is_video_model:
+                num_frames = 1
+            
+            # Get I2V frames from sampling config if available
+            start_frame = sampling_cfg.get("start_frame")
+            end_frame = sampling_cfg.get("end_frame")
+            clip_vision = sampling_cfg.get("clip_vision")
+            
+            # Create appropriate latent for this model type
+            current_latent = self._create_latent_for_type(model_type, latent_width, latent_height, num_frames)
             
             # Extract sampling parameters (already merged by _get_sampling_config_for_type)
             use_seed = sampling_cfg.get("seed", 0)
@@ -800,45 +1172,7 @@ class SamplerCompareAdvanced:
             use_hunyuan_shift = sampling_cfg.get("hunyuan_shift", 7.0)
             
             print(f"[SamplerCompareAdvanced] Using: steps={use_steps}, cfg={use_cfg}, sampler={use_sampler}, scheduler={use_scheduler}")
-            
-            # FLUX2 needs 128-channel latent
-            if model_type == 'flux2' and latent_channels != 128:
-                device = comfy.model_management.intermediate_device()
-                flux2_latent = torch.zeros(
-                    [latent_image.shape[0], 128, latent_image.shape[2] // 2, latent_image.shape[3] // 2],
-                    device=device
-                )
-                current_latent = {"samples": flux2_latent}
-                print(f"[SamplerCompareAdvanced] Created FLUX2 latent: {flux2_latent.shape}")
-            
-            # QWEN uses Wan21 latent format (16 channels) for image generation
-            elif model_type == 'qwen' and latent_channels != 16:
-                device = comfy.model_management.intermediate_device()
-                # QWEN uses Wan21 latent format: 16 channels, 2D image (not video)
-                qwen_latent = torch.zeros(
-                    [latent_image.shape[0], 16, latent_image.shape[2], latent_image.shape[3]],
-                    device=device
-                )
-                current_latent = {"samples": qwen_latent}
-                print(f"[SamplerCompareAdvanced] Created QWEN latent (16ch): {qwen_latent.shape}")
-            
-            # Lumina2/Z_IMAGE uses Flux latent format (16 channels)
-            elif model_type == 'lumina2' and latent_channels != 16:
-                device = comfy.model_management.intermediate_device()
-                lumina2_latent = torch.zeros(
-                    [latent_image.shape[0], 16, latent_image.shape[2], latent_image.shape[3]],
-                    device=device
-                )
-                current_latent = {"samples": lumina2_latent}
-                print(f"[SamplerCompareAdvanced] Created Lumina2 latent (16ch): {lumina2_latent.shape}")
-            
-            # Video models use video_latent if provided
-            elif is_video_model and video_latent is not None:
-                current_latent = video_latent
-                video_samples = video_latent.get("samples", video_latent)
-                if isinstance(video_samples, torch.Tensor) and video_samples.dim() == 5:
-                    num_frames = video_samples.shape[2]
-                    print(f"[SamplerCompareAdvanced] Using video latent: {video_samples.shape}, {num_frames} frames")
+            print(f"[SamplerCompareAdvanced] Dimensions: {latent_width}x{latent_height}" + (f", {num_frames} frames" if is_video_model else ""))
             
             # Clone and patch model
             working_model = current_model
@@ -860,9 +1194,36 @@ class SamplerCompareAdvanced:
                 pos_text = combo.get("prompt_positive", "")
                 neg_text = combo.get("prompt_negative", "")
                 
+                # Get reference images from sampling config if available
+                reference_images = sampling_cfg.get("reference_images", [])
+                
                 try:
                     # Different tokenization for different model types
-                    if model_type in ['flux', 'flux2']:
+                    if model_type == 'qwen_edit':
+                        # QWEN Edit uses reference images with special encoding
+                        if reference_images:
+                            current_positive, current_negative = self._encode_qwen_edit_conditioning(
+                                current_clip, current_vae, pos_text, reference_images
+                            )
+                        else:
+                            # Fall back to regular QWEN encoding if no images
+                            tokens = current_clip.tokenize(pos_text, images=[])
+                            current_positive = current_clip.encode_from_tokens_scheduled(tokens)
+                            tokens = current_clip.tokenize("", images=[])
+                            current_negative = current_clip.encode_from_tokens_scheduled(tokens)
+                    elif model_type in ['flux2', 'flux_kontext']:
+                        # FLUX2/FLUX_KONTEXT with reference images
+                        if reference_images:
+                            current_positive, current_negative = self._encode_flux_reference_conditioning(
+                                current_clip, current_vae, pos_text, reference_images, use_flux_guidance
+                            )
+                        else:
+                            # Standard FLUX encoding
+                            tokens = current_clip.tokenize(pos_text)
+                            current_positive = current_clip.encode_from_tokens_scheduled(tokens, add_dict={"guidance": use_flux_guidance})
+                            tokens = current_clip.tokenize(neg_text)
+                            current_negative = current_clip.encode_from_tokens_scheduled(tokens, add_dict={"guidance": use_flux_guidance})
+                    elif model_type == 'flux':
                         # FLUX uses guidance in encode
                         tokens = current_clip.tokenize(pos_text)
                         current_positive = current_clip.encode_from_tokens_scheduled(tokens, add_dict={"guidance": use_flux_guidance})
@@ -899,6 +1260,23 @@ class SamplerCompareAdvanced:
                     print(f"[SamplerCompareAdvanced] Conditioning error: {e}")
                     import traceback
                     traceback.print_exc()
+            
+            # Apply I2V conditioning for video models with start_frame
+            if is_video_model and start_frame is not None and current_vae is not None:
+                if model_type in ['wan21', 'wan22']:
+                    # WAN I2V or FLF2V
+                    current_positive, current_negative, current_latent = self._prepare_wan_i2v(
+                        current_vae, current_positive, current_negative,
+                        latent_width, latent_height, num_frames,
+                        start_frame=start_frame, end_frame=end_frame
+                    )
+                elif model_type in ['hunyuan', 'hunyuan15']:
+                    # Hunyuan I2V - use v1 (concat) by default
+                    current_positive, current_latent = self._prepare_hunyuan_i2v(
+                        current_vae, current_positive,
+                        latent_width, latent_height, num_frames,
+                        start_frame=start_frame
+                    )
             
             # Apply LoRAs (legacy path for old combo structure)
             lora_names = combo.get("lora_names", [])
@@ -1191,7 +1569,7 @@ class SamplerCompareAdvanced:
         return image
     
     @classmethod
-    def IS_CHANGED(cls, config, latent, num_global_fields=0, video_latent=None, start_image=None, end_image=None, **kwargs):
+    def IS_CHANGED(cls, config, num_global_fields=0, global_width=0, global_height=0, global_num_frames=0, **kwargs):
         """
         Compute a hash to determine if re-execution is needed.
         This prevents unnecessary re-runs when workflow is queued without changes.
@@ -1203,15 +1581,15 @@ class SamplerCompareAdvanced:
         # Hash sampling configs from chain (may be dict or list)
         sampling_configs = config.get("sampling_configs", {}) if config else {}
         if isinstance(sampling_configs, dict):
-            sampling_str = str([(sc.get("config_type"), sc.get("steps"), sc.get("cfg"), sc.get("sampler_name")) for sc in sampling_configs.values()])
+            sampling_str = str([(sc.get("config_type"), sc.get("steps"), sc.get("cfg"), sc.get("sampler_name"), sc.get("width"), sc.get("height"), sc.get("num_frames")) for sc in sampling_configs.values()])
         else:
-            sampling_str = str([(sc.get("config_type"), sc.get("steps"), sc.get("cfg"), sc.get("sampler_name")) for sc in sampling_configs])
+            sampling_str = str([(sc.get("config_type"), sc.get("steps"), sc.get("cfg"), sc.get("sampler_name"), sc.get("width"), sc.get("height"), sc.get("num_frames")) for sc in sampling_configs])
         
-        # Hash latent shape
-        latent_shape = str(latent.get("samples").shape) if isinstance(latent, dict) and latent else "unknown"
+        # Hash global dimension overrides
+        dims_str = f"{global_width}x{global_height}x{global_num_frames}"
         
         # Combine and hash
-        hash_input = f"{combo_str}|{sampling_str}|{num_global_fields}|{latent_shape}"
+        hash_input = f"{combo_str}|{sampling_str}|{num_global_fields}|{dims_str}"
         for key in sorted(kwargs.keys()):
             val = kwargs[key]
             if isinstance(val, (str, int, float, bool)):

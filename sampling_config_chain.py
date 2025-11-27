@@ -49,14 +49,14 @@ class SamplingConfigChain:
                 }),
                 "config_type": ([
                     "STANDARD", "SDXL", "PONY", 
-                    "QWEN", 
+                    "QWEN", "QWEN_EDIT",
                     "WAN2.1", "WAN2.2", 
                     "HUNYUAN_VIDEO", "HUNYUAN_VIDEO_15", 
-                    "FLUX", "FLUX2",
+                    "FLUX", "FLUX2", "FLUX_KONTEXT",
                     "Z_IMAGE"
                 ], {
                     "default": "STANDARD",
-                    "tooltip": "Model type - determines which parameters are shown. Z_IMAGE uses Lumina2 with QWEN3-4B text encoder."
+                    "tooltip": "Model type - determines which parameters are shown. QWEN_EDIT for image editing, FLUX_KONTEXT for reference-based generation."
                 }),
             },
             "optional": {
@@ -99,24 +99,48 @@ class SamplingConfigChain:
                     "tooltip": "Denoising strength (connectable)",
                 }),
                 
+                # === Latent Size Parameters (all types) ===
+                "width": ("INT", {
+                    "default": 1024, 
+                    "min": 64, 
+                    "max": 8192, 
+                    "step": 8,
+                    "tooltip": "Output width in pixels (connectable)",
+                }),
+                "height": ("INT", {
+                    "default": 1024, 
+                    "min": 64, 
+                    "max": 8192, 
+                    "step": 8,
+                    "tooltip": "Output height in pixels (connectable)",
+                }),
+                
+                # === Video Frame Count (video presets only) ===
+                "num_frames": ("INT", {
+                    "default": 81, 
+                    "min": 1, 
+                    "max": 1000,
+                    "tooltip": "[Video Models] Number of frames to generate (connectable)",
+                }),
+                
                 # === QWEN Parameters ===
                 "qwen_shift": ("FLOAT", {
                     "default": 1.15, 
                     "min": 0.0, 
                     "max": 20.0, 
                     "step": 0.1,
-                    "tooltip": "[QWEN] AuraFlow shift parameter - QWEN default is 1.15 (connectable)",
+                    "tooltip": "[QWEN/QWEN_EDIT] AuraFlow shift parameter - QWEN default is 1.15 (connectable)",
                 }),
                 "qwen_cfg_norm": ("BOOLEAN", {
                     "default": True,
-                    "tooltip": "[QWEN] Enable CFG normalization (connectable)",
+                    "tooltip": "[QWEN/QWEN_EDIT] Enable CFG normalization (connectable)",
                 }),
                 "qwen_cfg_norm_multiplier": ("FLOAT", {
                     "default": 0.7, 
                     "min": 0.0, 
                     "max": 1.0, 
                     "step": 0.01,
-                    "tooltip": "[QWEN] CFG normalization multiplier (connectable)",
+                    "tooltip": "[QWEN/QWEN_EDIT] CFG normalization multiplier (connectable)",
                 }),
                 
                 # === WAN Parameters ===
@@ -174,7 +198,7 @@ class SamplingConfigChain:
                     "min": 0.0, 
                     "max": 100.0, 
                     "step": 0.1,
-                    "tooltip": "[FLUX/FLUX2] Guidance scale (connectable)",
+                    "tooltip": "[FLUX/FLUX2/FLUX_KONTEXT] Guidance scale (connectable)",
                 }),
                 
                 # === Video Parameters (WAN, Hunyuan) ===
@@ -183,6 +207,30 @@ class SamplingConfigChain:
                     "min": 1, 
                     "max": 120,
                     "tooltip": "[Video Models] Frames per second (connectable)",
+                }),
+                
+                # === Reference Images (QWEN_EDIT, FLUX2, FLUX_KONTEXT) ===
+                "reference_image_1": ("IMAGE", {
+                    "tooltip": "[QWEN_EDIT/FLUX2/FLUX_KONTEXT] First reference image for conditioning",
+                }),
+                "reference_image_2": ("IMAGE", {
+                    "tooltip": "[QWEN_EDIT/FLUX2/FLUX_KONTEXT] Second reference image (optional)",
+                }),
+                "reference_image_3": ("IMAGE", {
+                    "tooltip": "[QWEN_EDIT/FLUX2/FLUX_KONTEXT] Third reference image (optional)",
+                }),
+                
+                # === Video I2V Frames (WAN2.1, WAN2.2) ===
+                "start_frame": ("IMAGE", {
+                    "tooltip": "[WAN/Hunyuan I2V] Starting frame image for image-to-video",
+                }),
+                "end_frame": ("IMAGE", {
+                    "tooltip": "[WAN2.2 FLF2V] Ending frame image for first-last-frame-to-video",
+                }),
+                
+                # === CLIP Vision (Hunyuan I2V) ===
+                "clip_vision": ("CLIP_VISION", {
+                    "tooltip": "[Hunyuan I2V] CLIP Vision model for image encoding",
                 }),
             },
             "hidden": {
@@ -210,18 +258,36 @@ class SamplingConfigChain:
         sampler_name: str = "euler",
         scheduler: str = "normal",
         denoise: float = 1.0,
+        # Latent size parameters
+        width: int = 1024,
+        height: int = 1024,
+        num_frames: int = 81,
+        # QWEN parameters
         qwen_shift: float = 1.15,
         qwen_cfg_norm: bool = True,
         qwen_cfg_norm_multiplier: float = 0.7,
+        # WAN parameters
         wan_shift: float = 8.0,
         wan22_shift: float = 5.0,
         wan22_high_start: int = 0,
         wan22_high_end: int = 10,
         wan22_low_start: int = 10,
         wan22_low_end: int = 20,
+        # Hunyuan parameters
         hunyuan_shift: float = 7.0,
+        # FLUX parameters
         flux_guidance: float = 3.5,
+        # Video parameters
         fps: int = 24,
+        # Reference images (optional)
+        reference_image_1=None,
+        reference_image_2=None,
+        reference_image_3=None,
+        # I2V frames (optional)
+        start_frame=None,
+        end_frame=None,
+        # CLIP Vision (optional)
+        clip_vision=None,
         unique_id=None,
     ):
         """
@@ -253,19 +319,39 @@ class SamplingConfigChain:
             "scheduler": scheduler,
             "denoise": denoise,
             "fps": fps,
+            "width": width,
+            "height": height,
         }
         
+        # Add video frame count for video models
+        if config_type in ["WAN2.1", "WAN2.2", "HUNYUAN_VIDEO", "HUNYUAN_VIDEO_15"]:
+            sampling_config["num_frames"] = num_frames
+        
         # Add type-specific parameters
-        if config_type == "QWEN":
+        if config_type in ["QWEN", "QWEN_EDIT"]:
             sampling_config.update({
                 "qwen_shift": qwen_shift,
                 "qwen_cfg_norm": qwen_cfg_norm,
                 "qwen_cfg_norm_multiplier": qwen_cfg_norm_multiplier,
             })
+            # QWEN_EDIT can have reference images
+            if config_type == "QWEN_EDIT":
+                ref_images = []
+                if reference_image_1 is not None:
+                    ref_images.append(reference_image_1)
+                if reference_image_2 is not None:
+                    ref_images.append(reference_image_2)
+                if reference_image_3 is not None:
+                    ref_images.append(reference_image_3)
+                if ref_images:
+                    sampling_config["reference_images"] = ref_images
         elif config_type == "WAN2.1":
             sampling_config.update({
                 "wan_shift": wan_shift,
             })
+            # WAN2.1 I2V support
+            if start_frame is not None:
+                sampling_config["start_frame"] = start_frame
         elif config_type == "WAN2.2":
             sampling_config.update({
                 "wan22_shift": wan22_shift,
@@ -274,14 +360,39 @@ class SamplingConfigChain:
                 "wan22_low_start": wan22_low_start,
                 "wan22_low_end": wan22_low_end,
             })
-        elif config_type in ["HUNYUAN_VIDEO", "HUNYUAN_VIDEO_15"]:
+            # WAN2.2 I2V/FLF2V support
+            if start_frame is not None:
+                sampling_config["start_frame"] = start_frame
+            if end_frame is not None:
+                sampling_config["end_frame"] = end_frame
+        elif config_type == "HUNYUAN_VIDEO":
             sampling_config.update({
                 "hunyuan_shift": hunyuan_shift,
             })
-        elif config_type in ["FLUX", "FLUX2"]:
+        elif config_type == "HUNYUAN_VIDEO_15":
+            sampling_config.update({
+                "hunyuan_shift": hunyuan_shift,
+            })
+            # Hunyuan 1.5 I2V support
+            if start_frame is not None:
+                sampling_config["start_frame"] = start_frame
+            if clip_vision is not None:
+                sampling_config["clip_vision"] = clip_vision
+        elif config_type in ["FLUX", "FLUX2", "FLUX_KONTEXT"]:
             sampling_config.update({
                 "flux_guidance": flux_guidance,
             })
+            # FLUX2 and FLUX_KONTEXT can have reference images
+            if config_type in ["FLUX2", "FLUX_KONTEXT"]:
+                ref_images = []
+                if reference_image_1 is not None:
+                    ref_images.append(reference_image_1)
+                if reference_image_2 is not None:
+                    ref_images.append(reference_image_2)
+                if reference_image_3 is not None:
+                    ref_images.append(reference_image_3)
+                if ref_images:
+                    sampling_config["reference_images"] = ref_images
         
         # Store by variation index
         new_config["sampling_configs"][idx] = sampling_config
@@ -295,16 +406,26 @@ class SamplingConfigChain:
         
         print(f"[SamplingConfigChain] Applied config for variation {variation_index} ({config_type})")
         print(f"  Steps: {steps}, CFG: {cfg}, Sampler: {sampler_name}, Scheduler: {scheduler}")
-        if config_type == "QWEN":
-            print(f"  QWEN: shift={qwen_shift}, cfg_norm={qwen_cfg_norm}")
+        print(f"  Size: {width}x{height}")
+        if config_type in ["QWEN", "QWEN_EDIT"]:
+            has_refs = "reference_images" in sampling_config
+            print(f"  QWEN: shift={qwen_shift}, cfg_norm={qwen_cfg_norm}, has_refs={has_refs}")
         elif config_type == "WAN2.1":
-            print(f"  WAN 2.1: shift={wan_shift}")
+            has_start = "start_frame" in sampling_config
+            print(f"  WAN 2.1: shift={wan_shift}, frames={num_frames}, has_start_frame={has_start}")
         elif config_type == "WAN2.2":
-            print(f"  WAN 2.2: shift={wan22_shift}, high={wan22_high_start}-{wan22_high_end}, low={wan22_low_start}-{wan22_low_end}")
-        elif config_type in ["HUNYUAN_VIDEO", "HUNYUAN_VIDEO_15"]:
-            print(f"  Hunyuan: shift={hunyuan_shift}")
-        elif config_type in ["FLUX", "FLUX2"]:
-            print(f"  FLUX: guidance={flux_guidance}")
+            has_start = "start_frame" in sampling_config
+            has_end = "end_frame" in sampling_config
+            print(f"  WAN 2.2: shift={wan22_shift}, high={wan22_high_start}-{wan22_high_end}, low={wan22_low_start}-{wan22_low_end}, frames={num_frames}, has_start={has_start}, has_end={has_end}")
+        elif config_type == "HUNYUAN_VIDEO":
+            print(f"  Hunyuan: shift={hunyuan_shift}, frames={num_frames}")
+        elif config_type == "HUNYUAN_VIDEO_15":
+            has_start = "start_frame" in sampling_config
+            has_clip_vision = "clip_vision" in sampling_config
+            print(f"  Hunyuan 1.5: shift={hunyuan_shift}, frames={num_frames}, has_start_frame={has_start}, has_clip_vision={has_clip_vision}")
+        elif config_type in ["FLUX", "FLUX2", "FLUX_KONTEXT"]:
+            has_refs = "reference_images" in sampling_config
+            print(f"  {config_type}: guidance={flux_guidance}, has_refs={has_refs}")
         elif config_type == "Z_IMAGE":
             print(f"  Z_IMAGE: Using Lumina2 (standard sampling)")
         

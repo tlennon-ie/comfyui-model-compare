@@ -36,9 +36,9 @@ class ModelCompareLoaders:
 
         inputs = {
             "required": {
-                "preset": (["STANDARD", "SDXL", "PONY", "WAN2.1", "WAN2.2", "HUNYUAN_VIDEO", "HUNYUAN_VIDEO_15", "QWEN", "FLUX", "FLUX2", "Z_IMAGE"], {
+                "preset": (["STANDARD", "SDXL", "PONY", "WAN2.1", "WAN2.2", "HUNYUAN_VIDEO", "HUNYUAN_VIDEO_15", "QWEN", "QWEN_EDIT", "FLUX", "FLUX2", "FLUX_KONTEXT", "Z_IMAGE"], {
                     "default": "STANDARD",
-                    "tooltip": "Model preset - determines available configuration options and sampling behavior. FLUX = dual CLIPs, FLUX2 = single CLIP, Z_IMAGE = Lumina2 with QWEN3-4B"
+                    "tooltip": "Model preset - determines available configuration options and sampling behavior. QWEN_EDIT for image editing, FLUX_KONTEXT for reference-based generation"
                 }),
                 "diffusion_model": (
                     ["NONE"] + combined_models,
@@ -80,9 +80,9 @@ class ModelCompareLoaders:
                      "tooltip": "Secondary CLIP (for Hunyuan Dual CLIP and FLUX Dual CLIP). Not used for FLUX2."},
                 ),
                 "clip_type": (
-                    ["default", "sd", "sdxl", "sd3", "flux", "flux2", "wan", "wan22", "hunyuan_video", "hunyuan_video_15", "qwen", "lumina2"],
+                    ["default", "sd", "sdxl", "sd3", "flux", "flux2", "flux_kontext", "wan", "wan22", "hunyuan_video", "hunyuan_video_15", "qwen", "qwen_edit", "lumina2"],
                     {"default": "default",
-                     "tooltip": "CLIP model type (auto-adjusted based on preset). Use wan22 for High/Low noise model pairing. lumina2 for Z Image model."},
+                     "tooltip": "CLIP model type (auto-adjusted based on preset). Use wan22 for High/Low noise model pairing. qwen_edit for QWEN Image Edit. flux_kontext for FLUX Kontext."},
                 ),
                 "clip_device": (
                     ["default", "cpu"],
@@ -164,8 +164,8 @@ class ModelCompareLoaders:
                  "tooltip": f"Variation {i}: Secondary CLIP (Hunyuan/FLUX/WAN Dual CLIP support)"},
             )
             inputs["optional"][f"clip_type_variation_{i}"] = (
-                ["default", "sd", "sdxl", "sd3", "flux", "flux2", "wan", "wan22", "hunyuan_video", "hunyuan_video_15", "qwen", "lumina2"],
-                {"default": "default", "tooltip": f"Variation {i}: CLIP Type (wan22 enables High/Low noise model pairing, lumina2 for Z Image)"}
+                ["default", "sd", "sdxl", "sd3", "flux", "flux2", "flux_kontext", "wan", "wan22", "hunyuan_video", "hunyuan_video_15", "qwen", "qwen_edit", "lumina2"],
+                {"default": "default", "tooltip": f"Variation {i}: CLIP Type (qwen_edit for QWEN Image Edit, flux_kontext for FLUX Kontext)"}
             )
             inputs["optional"][f"clip_device_variation_{i}"] = (
                 ["default", "cpu"],
