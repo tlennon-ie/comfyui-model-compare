@@ -1247,16 +1247,17 @@ class SamplerCompareAdvanced:
                 try:
                     # Different tokenization for different model types
                     if model_type == 'qwen_edit':
-                        # QWEN Edit REQUIRES reference images for proper output
+                        # QWEN Edit - use reference images if provided, otherwise empty latent mode
                         if reference_images:
+                            # With reference images: use special encoding with reference latents
                             current_positive, current_negative = self._encode_qwen_edit_conditioning(
                                 current_clip, current_vae, pos_text, reference_images
                             )
+                            print(f"[SamplerCompareAdvanced] QWEN_EDIT with {len(reference_images)} reference image(s)")
                         else:
-                            # WARNING: QWEN_EDIT without reference images will produce noise!
-                            print(f"[SamplerCompareAdvanced] WARNING: QWEN_EDIT requires reference images!")
-                            print(f"[SamplerCompareAdvanced] Connect reference_image_1 in SamplingConfigChain for proper results.")
-                            # Try to encode without images, but results will be poor
+                            # Without reference images: standard QWEN encoding (empty latent mode)
+                            # This matches ComfyUI's TextEncodeQwenImageEdit with image=None
+                            print(f"[SamplerCompareAdvanced] QWEN_EDIT without reference images (empty latent mode)")
                             tokens = current_clip.tokenize(pos_text, images=[])
                             current_positive = current_clip.encode_from_tokens_scheduled(tokens)
                             tokens = current_clip.tokenize("", images=[])
