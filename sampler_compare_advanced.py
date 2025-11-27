@@ -231,6 +231,8 @@ class SamplerCompareAdvanced:
             "hunyuan_video_15": getattr(comfy.sd.CLIPType, "HUNYUAN_VIDEO_15", comfy.sd.CLIPType.STABLE_DIFFUSION),
             "qwen": getattr(comfy.sd.CLIPType, "QWEN_IMAGE", comfy.sd.CLIPType.STABLE_DIFFUSION),
             "qwen_edit": getattr(comfy.sd.CLIPType, "QWEN_IMAGE", comfy.sd.CLIPType.STABLE_DIFFUSION),  # QWEN_EDIT uses same CLIP type as QWEN
+            "lumina2": getattr(comfy.sd.CLIPType, "LUMINA2", comfy.sd.CLIPType.STABLE_DIFFUSION),
+            "z_image": getattr(comfy.sd.CLIPType, "LUMINA2", comfy.sd.CLIPType.STABLE_DIFFUSION),  # Z_IMAGE uses LUMINA2 CLIP type
         }
         key = clip_type_str.upper().replace("_", "")
         if hasattr(comfy.sd.CLIPType, key):
@@ -276,8 +278,8 @@ class SamplerCompareAdvanced:
                 device=device
             )
             print(f"[SamplerCompareAdvanced] Created {model_type} latent (128ch): {latent.shape}")
-        elif model_type in ['flux', 'qwen', 'qwen_edit', 'lumina2']:
-            # FLUX, QWEN, Lumina2 use 16 channels
+        elif model_type in ['flux', 'qwen', 'qwen_edit', 'lumina2', 'z_image']:
+            # FLUX, QWEN, Lumina2, Z_IMAGE use 16 channels
             channels = 16
             latent = torch.zeros(
                 [batch_size, channels, latent_h, latent_w],
@@ -917,7 +919,7 @@ class SamplerCompareAdvanced:
             "FLUX": "flux",
             "FLUX2": "flux2",
             "FLUX_KONTEXT": "flux_kontext",
-            "Z_IMAGE": "lumina2",
+            "Z_IMAGE": "z_image",  # Z_IMAGE has its own tokenizer, not same as Lumina2
         }
         
         # Start with node defaults
@@ -1293,8 +1295,16 @@ class SamplerCompareAdvanced:
                             # Use empty conditioning for negative
                             tokens = current_clip.tokenize("", images=[])
                             current_negative = current_clip.encode_from_tokens_scheduled(tokens)
+                    elif model_type == 'z_image':
+                        # Z_IMAGE uses ZImageTokenizer which applies its own llama template internally:
+                        # "<|im_start|>user\n{text}<|im_end|>\n<|im_start|>assistant\n"
+                        # Just pass the text directly - tokenizer handles formatting
+                        tokens = current_clip.tokenize(pos_text)
+                        current_positive = current_clip.encode_from_tokens_scheduled(tokens)
+                        tokens = current_clip.tokenize(neg_text if neg_text else "")
+                        current_negative = current_clip.encode_from_tokens_scheduled(tokens)
                     elif model_type == 'lumina2':
-                        # Lumina2/Z_IMAGE uses special system prompt format
+                        # Lumina2 (NOT Z_IMAGE) uses special system prompt format
                         # Based on CLIPTextEncodeLumina2 from ComfyUI
                         system_prompt = "You are an assistant designed to generate superior images with the superior degree of image-text alignment based on textual prompts or user prompts."
                         full_prompt = f'{system_prompt} <Prompt Start> {pos_text}'
@@ -1473,12 +1483,19 @@ class SamplerCompareAdvanced:
             print(f"[SamplerCompareAdvanced] Applied QWEN Edit patches (shift={shift})")
         
         elif model_type == 'lumina2':
-            # Lumina2/Z_IMAGE uses AuraFlow sampling with shift parameter
-            # Default shift=3.0 for Z_IMAGE (NOT 1.15 like QWEN)
-            # NO CFG normalization by default (unlike QWEN)
+            # Lumina2 uses AuraFlow sampling with shift parameter
+            # Default shift=6.0 for Lumina2
+            shift = kwargs.get('lumina_shift', 6.0)
+            model = ModelSamplingAuraFlow().patch(model, shift)[0]
+            print(f"[SamplerCompareAdvanced] Applied Lumina2 patches (shift={shift})")
+        
+        elif model_type == 'z_image':
+            # Z_IMAGE uses AuraFlow sampling with shift parameter
+            # Default shift=3.0 for Z_IMAGE (different from Lumina2's 6.0)
+            # NO CFG normalization (unlike QWEN)
             shift = kwargs.get('lumina_shift', 3.0)
             model = ModelSamplingAuraFlow().patch(model, shift)[0]
-            print(f"[SamplerCompareAdvanced] Applied Lumina2/Z_IMAGE patches (shift={shift}, no CFG norm)")
+            print(f"[SamplerCompareAdvanced] Applied Z_IMAGE patches (shift={shift})")
         
         elif model_type == 'wan21':
             shift = kwargs.get('wan_shift', 8.0)
