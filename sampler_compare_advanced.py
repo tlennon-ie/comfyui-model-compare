@@ -45,7 +45,6 @@ class SamplerCompareAdvanced:
     GLOBAL_PARAM_TYPES = [
         "NONE",
         "seed",
-        "seed_control",
         "steps",
         "cfg",
         "denoise",
@@ -118,13 +117,6 @@ class SamplerCompareAdvanced:
                 "tooltip": f"Global {i+1}: Float value (cfg, denoise)"
             })
             
-            # Seed control selector
-            inputs["optional"][f"global_value_seed_control_{i}"] = (
-                ["fixed", "increment", "decrement", "randomize"], {
-                "default": "fixed",
-                "tooltip": f"Global {i+1}: Seed control mode"
-            })
-            
             # Sampler selector
             inputs["optional"][f"global_value_sampler_{i}"] = (comfy.samplers.KSampler.SAMPLERS, {
                 "default": comfy.samplers.KSampler.SAMPLERS[0],
@@ -143,7 +135,6 @@ class SamplerCompareAdvanced:
         """Build global config from dynamic fields."""
         config = {
             "seed": None,
-            "seed_control": None,
             "steps": None,
             "cfg": None,
             "denoise": None,
@@ -159,8 +150,6 @@ class SamplerCompareAdvanced:
             
             if param_type == "seed":
                 config["seed"] = kwargs.get(f"global_value_int_{i}", 0)
-            elif param_type == "seed_control":
-                config["seed_control"] = kwargs.get(f"global_value_seed_control_{i}", "fixed")
             elif param_type == "steps":
                 config["steps"] = kwargs.get(f"global_value_int_{i}", 20)
             elif param_type == "cfg":
@@ -1209,19 +1198,8 @@ class SamplerCompareAdvanced:
             current_latent = self._create_latent_for_type(model_type, latent_width, latent_height, num_frames)
             
             # Extract sampling parameters (already merged by _get_sampling_config_for_type)
-            base_seed = sampling_cfg.get("seed", 0)
-            seed_control = sampling_cfg.get("seed_control", "fixed")
-            
-            # Apply seed_control logic
-            if seed_control == "randomize":
-                import random
-                use_seed = random.randint(0, 0xffffffffffffffff)
-            elif seed_control == "increment":
-                use_seed = base_seed + idx
-            elif seed_control == "decrement":
-                use_seed = max(0, base_seed - idx)
-            else:  # "fixed" or default
-                use_seed = base_seed
+            # Seed is controlled by ComfyUI's built-in control_after_generate mechanism
+            use_seed = sampling_cfg.get("seed", 0)
             
             use_steps = sampling_cfg.get("steps", 20)
             use_cfg = sampling_cfg.get("cfg", 7.0)

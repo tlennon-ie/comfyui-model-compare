@@ -65,12 +65,8 @@ class SamplingConfigChain:
                     "default": 0, 
                     "min": 0, 
                     "max": 0xffffffffffffffff,
-                    "tooltip": "Random seed for this variation (connectable)",
-                    "forceInput": False,  # Widget by default, convertible to input
-                }),
-                "seed_control": (["fixed", "increment", "decrement", "randomize"], {
-                    "default": "fixed",
-                    "tooltip": "How to handle seed across batches (connectable)",
+                    "tooltip": "Random seed for this variation. Use the control dropdown to set fixed/randomize/increment/decrement.",
+                    "control_after_generate": True,  # Enables ComfyUI's built-in seed control
                 }),
                 "steps": ("INT", {
                     "default": 20, 
@@ -261,7 +257,6 @@ class SamplingConfigChain:
         config_type: str,
         # Optional parameters with defaults (can be connected as inputs)
         seed: int = 0,
-        seed_control: str = "fixed",
         steps: int = 20,
         cfg: float = 7.0,
         sampler_name: str = "euler",
@@ -323,7 +318,6 @@ class SamplingConfigChain:
         sampling_config = {
             "config_type": config_type,
             "seed": seed,
-            "seed_control": seed_control,
             "steps": steps,
             "cfg": cfg,
             "sampler_name": sampler_name,
@@ -456,14 +450,13 @@ class SamplingConfigChain:
         
         # Get values with defaults for optional params
         seed = kwargs.get("seed", 0)
-        seed_control = kwargs.get("seed_control", "fixed")
         steps = kwargs.get("steps", 20)
         cfg = kwargs.get("cfg", 7.0)
         sampler_name = kwargs.get("sampler_name", "euler")
         scheduler = kwargs.get("scheduler", "normal")
         denoise = kwargs.get("denoise", 1.0)
         
-        hash_input = f"{variation_index}|{config_type}|{seed}|{seed_control}|{steps}|{cfg}|{sampler_name}|{scheduler}|{denoise}"
+        hash_input = f"{variation_index}|{config_type}|{seed}|{steps}|{cfg}|{sampler_name}|{scheduler}|{denoise}"
         
         for key in sorted(kwargs.keys()):
             val = kwargs[key]
