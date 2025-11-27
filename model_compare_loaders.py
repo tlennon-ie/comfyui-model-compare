@@ -577,13 +577,9 @@ class ModelCompareLoaders:
             "clip_variations": clip_variations,  # Contains paths and config, not objects
             "lora_configs": lora_configs,  # Per-variation LoRA configs from LoRA Compare nodes
             "prompt_variations": prompt_variations,  # Prompt variations
-            "global_config": global_config,  # Global sampling parameters from ModelCompareGlobals
             "is_grouped": is_grouped,  # Flag for grid to use simple grouped layout
             "num_model_groups": num_models,  # Number of model groups (for grid layout)
         }
-        
-        if global_config:
-            print(f"[ModelCompareLoaders] Global config connected with {sum(1 for v in global_config.values() if v is not None)} parameter(s)")
 
         # LAZY LOADING: All model/VAE/CLIP loading deferred to sampler
         # Config only contains paths and configurations
