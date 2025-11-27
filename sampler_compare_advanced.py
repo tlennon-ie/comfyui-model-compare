@@ -280,7 +280,7 @@ class SamplerCompareAdvanced:
         is_video_model = model_type in ['wan21', 'wan22', 'hunyuan', 'hunyuan15']
         
         if model_type == 'flux2' or model_type == 'flux_kontext':
-            # FLUX2 uses 128 channels with additional spatial compression
+            # FLUX2/FLUX_KONTEXT uses 128 channels with additional spatial compression
             channels = 128
             latent = torch.zeros(
                 [batch_size, channels, latent_h // 2, latent_w // 2],
@@ -295,14 +295,22 @@ class SamplerCompareAdvanced:
                 device=device
             )
             print(f"[SamplerCompareAdvanced] Created {model_type} latent (16ch): {latent.shape}")
-        elif is_video_model:
-            # Video models: 5D tensor [B, C, F, H, W]
+        elif model_type == 'wan22':
+            # WAN 2.2 uses 48 channels (new VAE format)
+            channels = 48
+            latent = torch.zeros(
+                [batch_size, channels, num_frames, latent_h, latent_w],
+                device=device
+            )
+            print(f"[SamplerCompareAdvanced] Created WAN 2.2 video latent (48ch): {latent.shape} ({num_frames} frames)")
+        elif model_type in ['wan21', 'hunyuan', 'hunyuan15']:
+            # WAN 2.1, Hunyuan: 5D tensor [B, C, F, H, W] with 16 channels
             channels = 16
             latent = torch.zeros(
                 [batch_size, channels, num_frames, latent_h, latent_w],
                 device=device
             )
-            print(f"[SamplerCompareAdvanced] Created {model_type} video latent: {latent.shape} ({num_frames} frames)")
+            print(f"[SamplerCompareAdvanced] Created {model_type} video latent (16ch): {latent.shape} ({num_frames} frames)")
         else:
             # SD/SDXL: 4 channels
             channels = 4
@@ -1349,12 +1357,13 @@ class SamplerCompareAdvanced:
             try:
                 if model_type == 'wan22':
                     # WAN 2.2 two-phase sampling (use current_model_low from lazy loading)
-                    # NOTE: WAN 2.2 uses shift=5.0 (not wan_shift which defaults to 8.0 for WAN 2.1)
+                    # WAN 2.2 uses shift=8.0 (same as WAN 2.1) from config chain
+                    wan22_shift = sampling_cfg.get("wan22_shift", 8.0)
                     sampled_latent = self._sample_wan22(
                         working_model, current_model_low,
                         use_seed, use_steps, use_cfg, use_sampler, use_scheduler,
                         current_positive, current_negative, current_latent,
-                        use_denoise, use_wan22_high_end, use_wan22_low_end, wan_shift=5.0
+                        use_denoise, use_wan22_high_end, use_wan22_low_end, wan_shift=wan22_shift
                     )
                 else:
                     # Standard sampling for all other models
@@ -1474,11 +1483,12 @@ class SamplerCompareAdvanced:
             print(f"[SamplerCompareAdvanced] Applied QWEN Edit patches (shift={shift})")
         
         elif model_type == 'lumina2':
-            # Lumina2/Z_IMAGE uses AuraFlow sampling like QWEN
-            # Default shift=1.15 matches QWEN defaults, but user can override via config chain
-            shift = kwargs.get('qwen_shift', 1.15)
+            # Lumina2/Z_IMAGE uses AuraFlow sampling with shift parameter
+            # Default shift=3.0 for Z_IMAGE (NOT 1.15 like QWEN)
+            # NO CFG normalization by default (unlike QWEN)
+            shift = kwargs.get('lumina_shift', 3.0)
             model = ModelSamplingAuraFlow().patch(model, shift)[0]
-            print(f"[SamplerCompareAdvanced] Applied Lumina2/Z_IMAGE patches (shift={shift})")
+            print(f"[SamplerCompareAdvanced] Applied Lumina2/Z_IMAGE patches (shift={shift}, no CFG norm)")
         
         elif model_type == 'wan21':
             shift = kwargs.get('wan_shift', 8.0)
@@ -1486,9 +1496,9 @@ class SamplerCompareAdvanced:
             print(f"[SamplerCompareAdvanced] Applied WAN 2.1 shift={shift}")
         
         elif model_type == 'wan22':
-            # WAN 2.2 needs shift=5.0 (NOT 8.0 like WAN 2.1!)
+            # WAN 2.2 uses shift=8.0 (same as WAN 2.1)
             # This is applied to BOTH high and low noise models
-            shift = 5.0  # WAN 2.2 specific shift
+            shift = kwargs.get('wan22_shift', 8.0)
             model = ModelSamplingSD3().patch(model, shift)[0]
             print(f"[SamplerCompareAdvanced] Applied WAN 2.2 shift={shift}")
         
@@ -1497,25 +1507,26 @@ class SamplerCompareAdvanced:
             model = ModelSamplingSD3().patch(model, shift)[0]
             print(f"[SamplerCompareAdvanced] Applied Hunyuan shift={shift}")
         
-        elif model_type in ['flux', 'flux2']:
-            # FLUX models get shift patching
+        elif model_type in ['flux', 'flux2', 'flux_kontext']:
+            # FLUX, FLUX2, FLUX_KONTEXT models get shift patching
+            # FLUX_KONTEXT uses same shift as FLUX2 (shift=2.02 base)
             latent_width = kwargs.get('latent_width', 1024)
             latent_height = kwargs.get('latent_height', 1024)
             model = ModelSamplingFlux().patch(model, max_shift=1.15, base_shift=0.5, 
                                               width=latent_width, height=latent_height)[0]
-            print(f"[SamplerCompareAdvanced] Applied FLUX patches")
+            print(f"[SamplerCompareAdvanced] Applied {model_type} patches")
         
         return model
     
     def _sample_wan22(self, model_high, model_low, seed, steps, cfg, sampler_name, scheduler,
-                      positive, negative, latent, denoise, high_end_step, low_end_step, wan_shift=5.0):
+                      positive, negative, latent, denoise, high_end_step, low_end_step, wan_shift=8.0):
         """WAN 2.2 two-phase sampling.
         
         Based on reference workflow:
         - Phase 1 (High Noise): add_noise=enable, return_with_leftover_noise=enable
         - Phase 2 (Low Noise): add_noise=disable, return_with_leftover_noise=disable
         - Split point is controlled by high_end_step (where phase 1 ends / phase 2 starts)
-        - Shift = 5.0 for BOTH models (NOT 8.0 like WAN 2.1!)
+        - Shift = 8.0 for BOTH models (same as WAN 2.1)
         
         Args:
             high_end_step: Step where high noise phase ends (e.g., 12 for "high=0-12")

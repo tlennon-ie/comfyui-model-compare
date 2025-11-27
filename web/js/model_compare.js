@@ -554,9 +554,13 @@ function registerExtension(app) {
                                 if (alwaysShow.includes(widget.name)) {
                                     shouldShow = true;
                                 }
-                                // QWEN fields (also used by QWEN_EDIT and Z_IMAGE for shift parameter)
+                                // QWEN fields (QWEN and QWEN_EDIT only - NOT Z_IMAGE)
                                 else if (widget.name.startsWith("qwen_")) {
-                                    shouldShow = isQWEN || isQWEN_EDIT || isZ_IMAGE;
+                                    shouldShow = isQWEN || isQWEN_EDIT;
+                                }
+                                // Z_IMAGE/Lumina2 shift (separate from QWEN)
+                                else if (widget.name === "lumina_shift") {
+                                    shouldShow = isZ_IMAGE;
                                 }
                                 // WAN 2.1 fields
                                 else if (widget.name === "wan_shift") {

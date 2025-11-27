@@ -152,11 +152,11 @@ class SamplingConfigChain:
                     "tooltip": "[WAN 2.1] Shift parameter (connectable)",
                 }),
                 "wan22_shift": ("FLOAT", {
-                    "default": 5.0, 
+                    "default": 8.0, 
                     "min": 0.0, 
                     "max": 20.0, 
                     "step": 0.1,
-                    "tooltip": "[WAN 2.2] Shift parameter (connectable)",
+                    "tooltip": "[WAN 2.2] Shift parameter - default is 8.0 (connectable)",
                 }),
                 "wan22_high_start": ("INT", {
                     "default": 0, 
@@ -190,6 +190,15 @@ class SamplingConfigChain:
                     "max": 20.0, 
                     "step": 0.1,
                     "tooltip": "[Hunyuan] Shift parameter (connectable)",
+                }),
+                
+                # === Z_IMAGE/Lumina2 Parameters ===
+                "lumina_shift": ("FLOAT", {
+                    "default": 3.0, 
+                    "min": 0.0, 
+                    "max": 20.0, 
+                    "step": 0.1,
+                    "tooltip": "[Z_IMAGE/Lumina2] Shift parameter - default is 3.0 (connectable)",
                 }),
                 
                 # === FLUX Parameters ===
@@ -275,6 +284,8 @@ class SamplingConfigChain:
         wan22_low_end: int = 20,
         # Hunyuan parameters
         hunyuan_shift: float = 7.0,
+        # Z_IMAGE/Lumina2 parameters
+        lumina_shift: float = 3.0,
         # FLUX parameters
         flux_guidance: float = 3.5,
         # Video parameters
@@ -395,8 +406,9 @@ class SamplingConfigChain:
                     sampling_config["reference_images"] = ref_images
         elif config_type == "Z_IMAGE":
             # Z_IMAGE (Lumina2) uses AuraFlow sampling with shift parameter
+            # NO CFG normalization by default (unlike QWEN)
             sampling_config.update({
-                "qwen_shift": qwen_shift,  # Lumina2 uses the same shift as QWEN
+                "lumina_shift": lumina_shift,  # Z_IMAGE default is 3.0
             })
         
         # Store by variation index
@@ -432,7 +444,7 @@ class SamplingConfigChain:
             has_refs = "reference_images" in sampling_config
             print(f"  {config_type}: guidance={flux_guidance}, has_refs={has_refs}")
         elif config_type == "Z_IMAGE":
-            print(f"  Z_IMAGE: Using Lumina2 (standard sampling)")
+            print(f"  Z_IMAGE: shift={lumina_shift} (Lumina2, no CFG norm)")
         
         # Return only config
         return (new_config,)
