@@ -1247,13 +1247,16 @@ class SamplerCompareAdvanced:
                 try:
                     # Different tokenization for different model types
                     if model_type == 'qwen_edit':
-                        # QWEN Edit uses reference images with special encoding
+                        # QWEN Edit REQUIRES reference images for proper output
                         if reference_images:
                             current_positive, current_negative = self._encode_qwen_edit_conditioning(
                                 current_clip, current_vae, pos_text, reference_images
                             )
                         else:
-                            # Fall back to regular QWEN encoding if no images
+                            # WARNING: QWEN_EDIT without reference images will produce noise!
+                            print(f"[SamplerCompareAdvanced] WARNING: QWEN_EDIT requires reference images!")
+                            print(f"[SamplerCompareAdvanced] Connect reference_image_1 in SamplingConfigChain for proper results.")
+                            # Try to encode without images, but results will be poor
                             tokens = current_clip.tokenize(pos_text, images=[])
                             current_positive = current_clip.encode_from_tokens_scheduled(tokens)
                             tokens = current_clip.tokenize("", images=[])
@@ -1290,10 +1293,18 @@ class SamplerCompareAdvanced:
                             tokens = current_clip.tokenize("", images=[])
                             current_negative = current_clip.encode_from_tokens_scheduled(tokens)
                     elif model_type == 'lumina2':
-                        # Lumina2/Z_IMAGE may have special requirements
-                        tokens = current_clip.tokenize(pos_text)
+                        # Lumina2/Z_IMAGE uses special system prompt format
+                        # Based on CLIPTextEncodeLumina2 from ComfyUI
+                        system_prompt = "You are an assistant designed to generate superior images with the superior degree of image-text alignment based on textual prompts or user prompts."
+                        full_prompt = f'{system_prompt} <Prompt Start> {pos_text}'
+                        tokens = current_clip.tokenize(full_prompt)
                         current_positive = current_clip.encode_from_tokens_scheduled(tokens)
-                        tokens = current_clip.tokenize(neg_text if neg_text else "")
+                        # Negative can be empty or with system prompt
+                        if neg_text:
+                            full_neg = f'{system_prompt} <Prompt Start> {neg_text}'
+                            tokens = current_clip.tokenize(full_neg)
+                        else:
+                            tokens = current_clip.tokenize("")
                         current_negative = current_clip.encode_from_tokens_scheduled(tokens)
                     else:
                         # Standard tokenization for other models

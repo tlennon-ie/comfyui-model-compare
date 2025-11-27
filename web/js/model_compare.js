@@ -541,8 +541,9 @@ function registerExtension(app) {
                             // Common fields always shown
                             const alwaysShow = [
                                 "config", "variation_index", "config_type",
-                                "seed", "seed_control", "steps", "cfg",
-                                "sampler_name", "scheduler", "denoise"
+                                "seed", "steps", "cfg",
+                                "sampler_name", "scheduler", "denoise",
+                                "width", "height"  // Always show dimensions
                             ];
 
                             self.widgets.forEach((widget) => {
@@ -553,6 +554,10 @@ function registerExtension(app) {
                                 // Always show common fields
                                 if (alwaysShow.includes(widget.name)) {
                                     shouldShow = true;
+                                }
+                                // Video frame count for video models
+                                else if (widget.name === "num_frames") {
+                                    shouldShow = isVideo;
                                 }
                                 // QWEN fields (QWEN and QWEN_EDIT only - NOT Z_IMAGE)
                                 else if (widget.name.startsWith("qwen_")) {
