@@ -774,7 +774,7 @@ class SamplerCompareAdvanced:
         return positive, out_latent
     
     def _unload_current(self, config: Dict = None):
-        """Unload all models and free VRAM."""
+        """Unload all models and free VRAM aggressively."""
         # Clear baked resources from model entries to allow GC
         if config:
             model_variations = config.get("model_variations", [])
@@ -782,13 +782,36 @@ class SamplerCompareAdvanced:
                 entry.pop("_baked_clip", None)
                 entry.pop("_baked_vae", None)
         
-        comfy.model_management.unload_all_models()
-        comfy.model_management.cleanup_models()
-        comfy.model_management.soft_empty_cache()
+        # Unload in specific order: cleanup first, then unload, then clear cache
+        try:
+            comfy.model_management.cleanup_models()
+        except Exception as e:
+            print(f"[SamplerCompareAdvanced] cleanup_models warning: {e}")
+        
+        try:
+            comfy.model_management.unload_all_models()
+        except Exception as e:
+            print(f"[SamplerCompareAdvanced] unload_all_models warning: {e}")
+        
+        try:
+            comfy.model_management.soft_empty_cache()
+        except Exception as e:
+            print(f"[SamplerCompareAdvanced] soft_empty_cache warning: {e}")
+        
+        # Run GC multiple times to ensure all cycles are collected
         gc.collect()
+        gc.collect()
+        
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
             torch.cuda.synchronize()
+            
+            # Additional aggressive cleanup
+            try:
+                torch.cuda.ipc_collect()
+            except Exception:
+                pass
+            
             free_mem = torch.cuda.mem_get_info()[0] / (1024**3)
             total_mem = torch.cuda.mem_get_info()[1] / (1024**3)
             print(f"[SamplerCompareAdvanced] GPU Memory: {free_mem:.2f}GB free / {total_mem:.2f}GB total")
@@ -1088,11 +1111,19 @@ class SamplerCompareAdvanced:
             if needs_reload:
                 if current_key is not None:
                     print(f"[SamplerCompareAdvanced] Config changed - unloading current models")
-                    # Clear local references before unloading to help GC
+                    # Clear ALL references before unloading to help GC
+                    # This includes working_model which holds patched model clones
                     current_model = None
                     current_model_low = None
                     current_vae = None
                     current_clip = None
+                    working_model = None  # Critical: release patched model clone
+                    
+                    # Force garbage collection before unload
+                    gc.collect()
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                    
                     self._unload_current(config)
                 
                 # Get model entry
@@ -1425,6 +1456,21 @@ class SamplerCompareAdvanced:
             if all_images:
                 actual_frame_count = combo.get("output_frame_count", 1)
                 self._cache_result(combo_hash, all_images[-1], label, actual_frame_count)
+            
+            # Per-iteration cleanup - clear intermediate tensors to help GC
+            # Note: 'image' is moved to CPU and stored in all_images, 
+            # but clear local refs to GPU tensors
+            if 'sampled_latent' in dir():
+                del sampled_latent
+            if 'current_latent' in dir():
+                del current_latent
+            if 'current_positive' in dir():
+                del current_positive
+            if 'current_negative' in dir():
+                del current_negative
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
         
         # Log cache stats
         print(f"\n[SamplerCompareAdvanced] Cache stats: {cache_hits} hits, {cache_misses} misses")
