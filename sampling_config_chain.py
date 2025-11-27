@@ -101,11 +101,11 @@ class SamplingConfigChain:
                 
                 # === QWEN Parameters ===
                 "qwen_shift": ("FLOAT", {
-                    "default": 8.0, 
+                    "default": 1.15, 
                     "min": 0.0, 
                     "max": 20.0, 
                     "step": 0.1,
-                    "tooltip": "[QWEN] AuraFlow shift parameter (connectable)",
+                    "tooltip": "[QWEN] AuraFlow shift parameter - QWEN default is 1.15 (connectable)",
                 }),
                 "qwen_cfg_norm": ("BOOLEAN", {
                     "default": True,
@@ -210,7 +210,7 @@ class SamplingConfigChain:
         sampler_name: str = "euler",
         scheduler: str = "normal",
         denoise: float = 1.0,
-        qwen_shift: float = 8.0,
+        qwen_shift: float = 1.15,
         qwen_cfg_norm: bool = True,
         qwen_cfg_norm_multiplier: float = 0.7,
         wan_shift: float = 8.0,

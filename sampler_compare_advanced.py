@@ -24,6 +24,10 @@ class SamplerCompareAdvanced:
     Advanced sampler for cross-model comparison with LAZY LOADING.
     Models are loaded on-demand per combination, then unloaded when config changes.
     Supports: FLUX, FLUX2, QWEN, WAN 2.1/2.2, Hunyuan 1.0/1.5, SDXL, SD
+    
+    PER-COMBINATION CACHING:
+    Results are cached per combination. When only some combinations change,
+    only those will be re-sampled while unchanged combinations use cached results.
     """
     
     RETURN_TYPES = ("IMAGE", "MODEL_COMPARE_CONFIG", "STRING")
@@ -31,67 +35,47 @@ class SamplerCompareAdvanced:
     FUNCTION = "sample_all_combinations"
     CATEGORY = "sampling"
     OUTPUT_NODE = True
+    
+    # Class-level cache for per-combination results
+    # Key: hash of combination config, Value: (image, label, frame_count)
+    _combination_cache = {}
+    _cache_max_size = 50  # Max number of cached combinations
+    
+    # Available global parameter types
+    GLOBAL_PARAM_TYPES = [
+        "NONE",
+        "seed",
+        "seed_control",
+        "steps",
+        "cfg",
+        "denoise",
+        "sampler_name",
+        "scheduler",
+    ]
 
     @classmethod
     def INPUT_TYPES(cls):
-        return {
+        inputs = {
             "required": {
                 "config": ("MODEL_COMPARE_CONFIG",),
                 "latent": ("LATENT",),
-                "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff}),
-                "steps": ("INT", {"default": 20, "min": 1, "max": 10000}),
-                "cfg": ("FLOAT", {"default": 7.0, "min": 0.0, "max": 100.0, "step": 0.1}),
-                "sampler_name": (comfy.samplers.KSampler.SAMPLERS,),
-                "scheduler": (comfy.samplers.KSampler.SCHEDULERS,),
-                "denoise": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01}),
+                # Dynamic global fields slider
+                "num_global_fields": ("INT", {
+                    "default": 0,
+                    "min": 0,
+                    "max": 8,
+                    "step": 1,
+                    "display": "slider",
+                    "tooltip": "Number of global parameters to set (override per-variation configs)"
+                }),
             },
             "optional": {
-                # === FLUX Parameters ===
-                "flux_guidance": ("FLOAT", {
-                    "default": 3.5, "min": 0.0, "max": 100.0, "step": 0.1,
-                    "tooltip": "FLUX guidance scale (used for FLUX/FLUX2 models)"
-                }),
-                
-                # === QWEN Parameters ===
-                "qwen_shift": ("FLOAT", {
-                    "default": 8.0, "min": 0.0, "max": 20.0, "step": 0.1,
-                    "tooltip": "QWEN shift parameter for AuraFlow sampling"
-                }),
-                "cfg_norm": ("BOOLEAN", {
-                    "default": True,
-                    "tooltip": "Enable CFG normalization for QWEN models (RescaleCFG)"
-                }),
-                "cfg_norm_multiplier": ("FLOAT", {
-                    "default": 0.7, "min": 0.0, "max": 1.0, "step": 0.01,
-                    "tooltip": "CFG normalization multiplier (0.7 recommended)"
-                }),
-                
-                # === WAN Parameters ===
-                "wan_shift": ("FLOAT", {
-                    "default": 8.0, "min": 0.0, "max": 20.0, "step": 0.1,
-                    "tooltip": "WAN 2.1 shift parameter"
-                }),
-                "wan22_start_step": ("INT", {
-                    "default": 0, "min": 0, "max": 10000,
-                    "tooltip": "WAN 2.2 High noise start step"
-                }),
-                "wan22_end_step": ("INT", {
-                    "default": 16, "min": 0, "max": 10000,
-                    "tooltip": "WAN 2.2 High noise end step (Low noise continues from here)"
-                }),
-                
-                # === Hunyuan Parameters ===
-                "hunyuan_shift": ("FLOAT", {
-                    "default": 7.0, "min": 0.0, "max": 20.0, "step": 0.1,
-                    "tooltip": "Hunyuan Video shift parameter"
-                }),
-                
-                # === Video Latent Input ===
+                # Video Latent Input (kept for video model support)
                 "video_latent": ("LATENT", {
                     "tooltip": "Optional video latent for Hunyuan/WAN video models"
                 }),
                 
-                # === Image-to-Video Inputs ===
+                # Image-to-Video Inputs (kept for I2V support)
                 "start_image": ("IMAGE", {
                     "tooltip": "Start frame for WAN Image-to-Video"
                 }),
@@ -100,6 +84,87 @@ class SamplerCompareAdvanced:
                 }),
             }
         }
+        
+        # Add dynamic global parameter fields (8 slots)
+        for i in range(8):
+            # Parameter type selector
+            inputs["optional"][f"global_param_type_{i}"] = (cls.GLOBAL_PARAM_TYPES, {
+                "default": "NONE",
+                "tooltip": f"Global {i+1}: Select which parameter to set globally"
+            })
+            
+            # Integer value (for seed, steps)
+            inputs["optional"][f"global_value_int_{i}"] = ("INT", {
+                "default": 0,
+                "min": 0,
+                "max": 0xffffffffffffffff,
+                "tooltip": f"Global {i+1}: Integer value (seed, steps)"
+            })
+            
+            # Float value (for cfg, denoise)
+            inputs["optional"][f"global_value_float_{i}"] = ("FLOAT", {
+                "default": 1.0,
+                "min": 0.0,
+                "max": 100.0,
+                "step": 0.01,
+                "tooltip": f"Global {i+1}: Float value (cfg, denoise)"
+            })
+            
+            # Seed control selector
+            inputs["optional"][f"global_value_seed_control_{i}"] = (
+                ["fixed", "increment", "decrement", "randomize"], {
+                "default": "fixed",
+                "tooltip": f"Global {i+1}: Seed control mode"
+            })
+            
+            # Sampler selector
+            inputs["optional"][f"global_value_sampler_{i}"] = (comfy.samplers.KSampler.SAMPLERS, {
+                "default": comfy.samplers.KSampler.SAMPLERS[0],
+                "tooltip": f"Global {i+1}: Sampler name"
+            })
+            
+            # Scheduler selector
+            inputs["optional"][f"global_value_scheduler_{i}"] = (comfy.samplers.KSampler.SCHEDULERS, {
+                "default": comfy.samplers.KSampler.SCHEDULERS[0],
+                "tooltip": f"Global {i+1}: Scheduler name"
+            })
+        
+        return inputs
+    
+    def _build_global_config(self, num_global_fields: int, kwargs: Dict) -> Dict:
+        """Build global config from dynamic fields."""
+        config = {
+            "seed": None,
+            "seed_control": None,
+            "steps": None,
+            "cfg": None,
+            "denoise": None,
+            "sampler_name": None,
+            "scheduler": None,
+        }
+        
+        for i in range(num_global_fields):
+            param_type = kwargs.get(f"global_param_type_{i}", "NONE")
+            
+            if param_type == "NONE":
+                continue
+            
+            if param_type == "seed":
+                config["seed"] = kwargs.get(f"global_value_int_{i}", 0)
+            elif param_type == "seed_control":
+                config["seed_control"] = kwargs.get(f"global_value_seed_control_{i}", "fixed")
+            elif param_type == "steps":
+                config["steps"] = kwargs.get(f"global_value_int_{i}", 20)
+            elif param_type == "cfg":
+                config["cfg"] = kwargs.get(f"global_value_float_{i}", 7.0)
+            elif param_type == "denoise":
+                config["denoise"] = kwargs.get(f"global_value_float_{i}", 1.0)
+            elif param_type == "sampler_name":
+                config["sampler_name"] = kwargs.get(f"global_value_sampler_{i}", "euler")
+            elif param_type == "scheduler":
+                config["scheduler"] = kwargs.get(f"global_value_scheduler_{i}", "normal")
+        
+        return config
 
     def detect_model_type(self, model_obj) -> str:
         """
@@ -173,11 +238,51 @@ class SamplerCompareAdvanced:
             return getattr(comfy.sd.CLIPType, key)
         return mapping.get(clip_type_str, comfy.sd.CLIPType.STABLE_DIFFUSION)
     
+    def _get_combination_hash(self, combo: Dict, sampling_cfg: Dict, global_config: Dict, latent_shape: tuple) -> str:
+        """
+        Generate a unique hash for a combination including all parameters that affect output.
+        This is used for per-combination caching.
+        """
+        hash_parts = [
+            str(combo.get("model_index", 0)),
+            str(combo.get("vae_name", "")),
+            str(combo.get("prompt_positive", "")),
+            str(combo.get("prompt_negative", "")),
+            str(combo.get("clip_variation", {})),
+            str(combo.get("lora_config", {})),
+            str(sampling_cfg),
+            str(global_config),
+            str(latent_shape),
+        ]
+        hash_input = "|".join(hash_parts)
+        return hashlib.md5(hash_input.encode()).hexdigest()
+    
+    def _get_cached_result(self, combo_hash: str) -> Optional[Tuple[Any, str, int]]:
+        """Get cached result for a combination if available."""
+        return self._combination_cache.get(combo_hash)
+    
+    def _cache_result(self, combo_hash: str, image: Any, label: str, frame_count: int):
+        """Cache the result for a combination."""
+        # Simple LRU: if cache is full, remove oldest entries
+        if len(self._combination_cache) >= self._cache_max_size:
+            # Remove first (oldest) entry
+            oldest_key = next(iter(self._combination_cache))
+            del self._combination_cache[oldest_key]
+        
+        self._combination_cache[combo_hash] = (image, label, frame_count)
+    
+    @classmethod
+    def clear_cache(cls):
+        """Clear all cached results."""
+        cls._combination_cache.clear()
+        print("[SamplerCompareAdvanced] Cache cleared")
+    
     def _load_model(self, model_entry: Dict) -> Tuple[Any, Any]:
         """
         Lazy load a model from stored path.
         Returns (model_obj, model_low_obj) tuple.
         """
+        import sys
         model_obj = None
         model_low_obj = None
         
@@ -188,28 +293,41 @@ class SamplerCompareAdvanced:
             print(f"[SamplerCompareAdvanced] ERROR: No model path in entry")
             return None, None
         
-        print(f"[SamplerCompareAdvanced] Loading model: {model_path}")
+        print(f"[SamplerCompareAdvanced] Loading model: {model_path}", flush=True)
+        sys.stdout.flush()
         
-        if model_type == "checkpoint":
-            out = comfy.sd.load_checkpoint_guess_config(
-                model_path, 
-                output_vae=True, 
-                output_clip=True, 
-                embedding_directory=folder_paths.get_folder_paths("embeddings")
-            )
-            model_obj = out[0]
-            # Store baked VAE/CLIP if use_baked is True
-            if model_entry.get("use_baked_vae_clip"):
-                model_entry["_baked_clip"] = out[1]
-                model_entry["_baked_vae"] = out[2]
-        elif model_type == "diffusion":
-            model_obj = comfy.sd.load_diffusion_model(model_path, model_options={})
-        
-        # Load low noise model if WAN 2.2
-        model_low_path = model_entry.get("model_low_path")
-        if model_low_path:
-            print(f"[SamplerCompareAdvanced] Loading WAN 2.2 low noise model: {model_low_path}")
-            model_low_obj = comfy.sd.load_diffusion_model(model_low_path, model_options={})
+        try:
+            if model_type == "checkpoint":
+                print(f"[SamplerCompareAdvanced] Loading as checkpoint...", flush=True)
+                out = comfy.sd.load_checkpoint_guess_config(
+                    model_path, 
+                    output_vae=True, 
+                    output_clip=True, 
+                    embedding_directory=folder_paths.get_folder_paths("embeddings")
+                )
+                model_obj = out[0]
+                # Store baked VAE/CLIP if use_baked is True
+                if model_entry.get("use_baked_vae_clip"):
+                    model_entry["_baked_clip"] = out[1]
+                    model_entry["_baked_vae"] = out[2]
+            elif model_type == "diffusion":
+                print(f"[SamplerCompareAdvanced] Loading as diffusion model...", flush=True)
+                model_obj = comfy.sd.load_diffusion_model(model_path, model_options={})
+            
+            print(f"[SamplerCompareAdvanced] Model loaded successfully", flush=True)
+            
+            # Load low noise model if WAN 2.2
+            model_low_path = model_entry.get("model_low_path")
+            if model_low_path:
+                print(f"[SamplerCompareAdvanced] Loading WAN 2.2 low noise model: {model_low_path}", flush=True)
+                model_low_obj = comfy.sd.load_diffusion_model(model_low_path, model_options={})
+                print(f"[SamplerCompareAdvanced] Low noise model loaded", flush=True)
+        except Exception as e:
+            print(f"[SamplerCompareAdvanced] ERROR loading model: {e}", flush=True)
+            import traceback
+            traceback.print_exc()
+            sys.stdout.flush()
+            return None, None
         
         return model_obj, model_low_obj
     
@@ -299,8 +417,15 @@ class SamplerCompareAdvanced:
         
         return None
     
-    def _unload_current(self):
+    def _unload_current(self, config: Dict = None):
         """Unload all models and free VRAM."""
+        # Clear baked resources from model entries to allow GC
+        if config:
+            model_variations = config.get("model_variations", [])
+            for entry in model_variations:
+                entry.pop("_baked_clip", None)
+                entry.pop("_baked_vae", None)
+        
         comfy.model_management.unload_all_models()
         comfy.model_management.cleanup_models()
         comfy.model_management.soft_empty_cache()
@@ -408,17 +533,16 @@ class SamplerCompareAdvanced:
         
         return model, model_low, clip
 
-    def _get_sampling_config_for_type(self, config: Dict, model_type: str, defaults: Dict) -> Dict:
+    def _get_sampling_config_for_type(self, config: Dict, model_type: str, defaults: Dict, global_config: Dict = None) -> Dict:
         """
         Get sampling configuration for a specific model type.
         
-        Priority:
-        1. Config chain settings (per-variation)
-        2. Global config (ModelCompareGlobals)
-        3. Node defaults
+        Priority (later overrides earlier):
+        1. Node defaults (lowest)
+        2. Config chain settings (per-variation)
+        3. Global config (from sampler's dynamic fields) - highest priority
         """
         sampling_configs = config.get("sampling_configs", []) if config else []
-        global_config = config.get("global_config") if config else None
         
         # Map internal model types to config_type names
         type_mapping = {
@@ -441,26 +565,28 @@ class SamplerCompareAdvanced:
         # Start with node defaults
         result = dict(defaults)
         
-        # Apply global config values (if set)
+        # Look for matching config in chain (overrides defaults)
+        # sampling_configs is a dict keyed by variation index, so iterate over values
+        configs_to_check = sampling_configs.values() if isinstance(sampling_configs, dict) else sampling_configs
+        found_chain = False
+        for cfg in configs_to_check:
+            if cfg.get("config_type") == config_type:
+                print(f"[SamplerCompareAdvanced] Found config chain settings for {config_type}")
+                found_chain = True
+                # Chain config overrides defaults
+                for key, value in cfg.items():
+                    if key != "config_type" and value is not None:
+                        result[key] = value
+                break
+        
+        # Apply global config values (highest priority - overrides chain)
         if global_config:
             for key, value in global_config.items():
                 if value is not None:
                     result[key] = value
-                    print(f"[SamplerCompareAdvanced] Global: {key} = {value}")
+                    print(f"[SamplerCompareAdvanced] Global override: {key} = {value}")
         
-        # Look for matching config in chain (overrides globals)
-        for cfg in sampling_configs:
-            if cfg.get("config_type") == config_type:
-                print(f"[SamplerCompareAdvanced] Found config chain settings for {config_type}")
-                # Chain config overrides globals
-                for key, value in cfg.items():
-                    if key != "config_type" and value is not None:
-                        result[key] = value
-                return result
-        
-        if global_config:
-            print(f"[SamplerCompareAdvanced] Using global config for {model_type}")
-        else:
+        if not found_chain and not global_config:
             print(f"[SamplerCompareAdvanced] No config chain/globals for {model_type}, using node defaults")
         
         return result
@@ -469,30 +595,18 @@ class SamplerCompareAdvanced:
         self,
         config: Dict,
         latent: Dict,
-        seed: int,
-        steps: int,
-        cfg: float,
-        sampler_name: str,
-        scheduler: str,
-        denoise: float,
-        # Optional parameters
-        flux_guidance: float = 3.5,
-        qwen_shift: float = 8.0,
-        cfg_norm: bool = True,
-        cfg_norm_multiplier: float = 0.7,
-        wan_shift: float = 8.0,
-        wan22_start_step: int = 0,
-        wan22_end_step: int = 16,
-        hunyuan_shift: float = 7.0,
+        num_global_fields: int = 0,
+        # Optional inputs
         video_latent: Optional[Dict] = None,
         start_image: Optional[torch.Tensor] = None,
         end_image: Optional[torch.Tensor] = None,
+        **kwargs,  # Captures dynamic global_param_type_N, global_value_*_N fields
     ):
         """
         Sample all combinations with LAZY LOADING.
         Models are loaded on-demand and unloaded when config changes.
         
-        Uses config chain settings when available, falls back to node parameters.
+        All sampling parameters come from config chain. Global fields override for all variations.
         """
         from nodes import common_ksampler
         
@@ -500,22 +614,31 @@ class SamplerCompareAdvanced:
         if not combinations:
             return (torch.zeros(1, 1, 1, 3), config, "No combinations")
         
-        # Store default values from node inputs for fallback
+        # Build global config from dynamic fields
+        global_config = self._build_global_config(num_global_fields, kwargs)
+        
+        # Log global settings if any
+        configured = sum(1 for v in global_config.values() if v is not None)
+        if configured > 0:
+            print(f"[SamplerCompareAdvanced] {configured} global parameter(s) configured")
+        
+        # Hardcoded defaults (used only if no config chain provided)
         node_defaults = {
-            "seed": seed,
-            "steps": steps,
-            "cfg": cfg,
-            "sampler_name": sampler_name,
-            "scheduler": scheduler,
-            "denoise": denoise,
-            "flux_guidance": flux_guidance,
-            "qwen_shift": qwen_shift,
-            "cfg_norm": cfg_norm,
-            "cfg_norm_multiplier": cfg_norm_multiplier,
-            "wan_shift": wan_shift,
-            "wan22_start_step": wan22_start_step,
-            "wan22_end_step": wan22_end_step,
-            "hunyuan_shift": hunyuan_shift,
+            "seed": 0,
+            "steps": 20,
+            "cfg": 7.0,
+            "sampler_name": "euler",
+            "scheduler": "normal",
+            "denoise": 1.0,
+            # Model-specific defaults
+            "flux_guidance": 3.5,
+            "qwen_shift": 1.15,  # QWEN default (from ComfyUI supported_models.py)
+            "cfg_norm": True,
+            "cfg_norm_multiplier": 0.7,
+            "wan_shift": 8.0,
+            "wan22_start_step": 0,
+            "wan22_end_step": 16,
+            "hunyuan_shift": 7.0,
         }
         
         all_images = []
@@ -538,8 +661,43 @@ class SamplerCompareAdvanced:
         current_key = None
         current_model_entry = None
         
+        # Track cache hits/misses for logging
+        cache_hits = 0
+        cache_misses = 0
+        
         for idx, combo in enumerate(combinations):
             print(f"\n[SamplerCompareAdvanced] === Combination {idx + 1}/{len(combinations)} ===")
+            
+            # Get model type early for cache hash
+            clip_var = combo.get("clip_variation")
+            clip_type_str = clip_var.get("clip_type", "") if clip_var else ""
+            clip_type_to_model_type = {
+                "flux": "flux", "flux2": "flux2", "wan": "wan21", "wan22": "wan22",
+                "hunyuan_video": "hunyuan", "hunyuan_video_15": "hunyuan15",
+                "qwen": "qwen", "sdxl": "sdxl", "sd": "sd", "sd3": "sd3",
+                "lumina2": "lumina2",
+            }
+            early_model_type = clip_type_to_model_type.get(clip_type_str, "sd")
+            
+            # Compute sampling config for cache hash (without loading model)
+            early_sampling_cfg = self._get_sampling_config_for_type(config, early_model_type, node_defaults, global_config)
+            
+            # Generate cache hash for this combination
+            combo_hash = self._get_combination_hash(combo, early_sampling_cfg, global_config, latent_image.shape)
+            
+            # Check cache for existing result
+            cached = self._get_cached_result(combo_hash)
+            if cached is not None:
+                image, label, frame_count = cached
+                print(f"[SamplerCompareAdvanced] Using cached result for combination {idx + 1}")
+                all_images.append(image)
+                combo["output_frame_count"] = frame_count
+                all_labels.append(label)
+                cache_hits += 1
+                continue
+            
+            cache_misses += 1
+            print(f"[SamplerCompareAdvanced] No cache hit, sampling...")
             
             # Check if we need to reload models (smart unloading)
             new_key = self._get_combo_key(combo, config)
@@ -548,21 +706,33 @@ class SamplerCompareAdvanced:
             if needs_reload:
                 if current_key is not None:
                     print(f"[SamplerCompareAdvanced] Config changed - unloading current models")
-                    self._unload_current()
+                    # Clear local references before unloading to help GC
+                    current_model = None
+                    current_model_low = None
+                    current_vae = None
+                    current_clip = None
+                    self._unload_current(config)
                 
                 # Get model entry
                 model_idx = combo.get("model_index", 0)
+                print(f"[SamplerCompareAdvanced] Getting model entry for index {model_idx}", flush=True)
                 current_model_entry = config["model_variations"][model_idx]
+                print(f"[SamplerCompareAdvanced] Model entry: {current_model_entry.get('name', 'unknown')}", flush=True)
                 
                 # LAZY LOAD: Model
+                print(f"[SamplerCompareAdvanced] About to load model...", flush=True)
                 current_model, current_model_low = self._load_model(current_model_entry)
+                print(f"[SamplerCompareAdvanced] Model load returned", flush=True)
                 if current_model is None:
                     print(f"[SamplerCompareAdvanced] ERROR: Failed to load model")
                     continue
                 
                 # LAZY LOAD: VAE
                 vae_name = combo.get("vae_name", "NONE")
+                print(f"[SamplerCompareAdvanced] VAE name for combo: {vae_name}")
                 current_vae = self._load_vae(vae_name, config, current_model_entry)
+                if current_vae is None:
+                    print(f"[SamplerCompareAdvanced] WARNING: Failed to load VAE '{vae_name}'")
                 
                 # LAZY LOAD: CLIP
                 clip_var = combo.get("clip_variation")
@@ -606,26 +776,28 @@ class SamplerCompareAdvanced:
             is_video_model = model_type in ['hunyuan', 'hunyuan15', 'wan21', 'wan22']
             num_frames = 1
             
-            # Get sampling config for this model type (from chain or use node defaults)
-            sampling_cfg = self._get_sampling_config_for_type(config, model_type, node_defaults)
+            # Get sampling config for this model type
+            # Priority: global_config (from sampler) > config chain > node_defaults
+            sampling_cfg = self._get_sampling_config_for_type(config, model_type, node_defaults, global_config)
             
-            # Extract sampling parameters (prefer config chain, fallback to node defaults)
-            use_seed = sampling_cfg.get("seed", seed)
-            use_steps = sampling_cfg.get("steps", steps)
-            use_cfg = sampling_cfg.get("cfg", cfg)
-            use_sampler = sampling_cfg.get("sampler_name", sampler_name)
-            use_scheduler = sampling_cfg.get("scheduler", scheduler)
-            use_denoise = sampling_cfg.get("denoise", denoise)
+            # Extract sampling parameters (already merged by _get_sampling_config_for_type)
+            use_seed = sampling_cfg.get("seed", 0)
+            use_steps = sampling_cfg.get("steps", 20)
+            use_cfg = sampling_cfg.get("cfg", 7.0)
+            use_sampler = sampling_cfg.get("sampler_name", "euler")
+            use_scheduler = sampling_cfg.get("scheduler", "normal")
+            use_denoise = sampling_cfg.get("denoise", 1.0)
             
-            # Model-specific parameters
-            use_flux_guidance = sampling_cfg.get("flux_guidance", flux_guidance)
-            use_qwen_shift = sampling_cfg.get("qwen_shift", qwen_shift)
-            use_cfg_norm = sampling_cfg.get("cfg_norm", cfg_norm)
-            use_cfg_norm_mult = sampling_cfg.get("cfg_norm_multiplier", cfg_norm_multiplier)
-            use_wan_shift = sampling_cfg.get("wan_shift", wan_shift)
-            use_wan22_start = sampling_cfg.get("wan22_start_step", wan22_start_step)
-            use_wan22_end = sampling_cfg.get("wan22_end_step", wan22_end_step)
-            use_hunyuan_shift = sampling_cfg.get("hunyuan_shift", hunyuan_shift)
+            # Model-specific parameters (from config chain or defaults)
+            use_flux_guidance = sampling_cfg.get("flux_guidance", 3.5)
+            use_qwen_shift = sampling_cfg.get("qwen_shift", 1.15)  # QWEN default (from ComfyUI supported_models.py)
+            use_cfg_norm = sampling_cfg.get("cfg_norm", True)
+            use_cfg_norm_mult = sampling_cfg.get("cfg_norm_multiplier", 0.7)
+            use_wan_shift = sampling_cfg.get("wan_shift", 8.0)
+            # WAN 2.2 step ranges: high=0-high_end, low=high_end-low_end
+            use_wan22_high_end = sampling_cfg.get("wan22_high_end", 10)
+            use_wan22_low_end = sampling_cfg.get("wan22_low_end", 20)
+            use_hunyuan_shift = sampling_cfg.get("hunyuan_shift", 7.0)
             
             print(f"[SamplerCompareAdvanced] Using: steps={use_steps}, cfg={use_cfg}, sampler={use_sampler}, scheduler={use_scheduler}")
             
@@ -638,6 +810,27 @@ class SamplerCompareAdvanced:
                 )
                 current_latent = {"samples": flux2_latent}
                 print(f"[SamplerCompareAdvanced] Created FLUX2 latent: {flux2_latent.shape}")
+            
+            # QWEN uses Wan21 latent format (16 channels) for image generation
+            elif model_type == 'qwen' and latent_channels != 16:
+                device = comfy.model_management.intermediate_device()
+                # QWEN uses Wan21 latent format: 16 channels, 2D image (not video)
+                qwen_latent = torch.zeros(
+                    [latent_image.shape[0], 16, latent_image.shape[2], latent_image.shape[3]],
+                    device=device
+                )
+                current_latent = {"samples": qwen_latent}
+                print(f"[SamplerCompareAdvanced] Created QWEN latent (16ch): {qwen_latent.shape}")
+            
+            # Lumina2/Z_IMAGE uses Flux latent format (16 channels)
+            elif model_type == 'lumina2' and latent_channels != 16:
+                device = comfy.model_management.intermediate_device()
+                lumina2_latent = torch.zeros(
+                    [latent_image.shape[0], 16, latent_image.shape[2], latent_image.shape[3]],
+                    device=device
+                )
+                current_latent = {"samples": lumina2_latent}
+                print(f"[SamplerCompareAdvanced] Created Lumina2 latent (16ch): {lumina2_latent.shape}")
             
             # Video models use video_latent if provided
             elif is_video_model and video_latent is not None:
@@ -668,27 +861,50 @@ class SamplerCompareAdvanced:
                 neg_text = combo.get("prompt_negative", "")
                 
                 try:
-                    tokens = current_clip.tokenize(pos_text)
+                    # Different tokenization for different model types
                     if model_type in ['flux', 'flux2']:
+                        # FLUX uses guidance in encode
+                        tokens = current_clip.tokenize(pos_text)
                         current_positive = current_clip.encode_from_tokens_scheduled(tokens, add_dict={"guidance": use_flux_guidance})
-                    else:
-                        current_positive = current_clip.encode_from_tokens_scheduled(tokens)
-                    
-                    tokens = current_clip.tokenize(neg_text)
-                    if model_type in ['flux', 'flux2']:
+                        tokens = current_clip.tokenize(neg_text)
                         current_negative = current_clip.encode_from_tokens_scheduled(tokens, add_dict={"guidance": use_flux_guidance})
+                    elif model_type == 'qwen':
+                        # QWEN needs images=[] for text-only mode and uses special template
+                        tokens = current_clip.tokenize(pos_text, images=[])
+                        current_positive = current_clip.encode_from_tokens_scheduled(tokens)
+                        # QWEN typically doesn't use negative prompts in the same way
+                        # But we'll encode it anyway for compatibility
+                        if neg_text:
+                            tokens = current_clip.tokenize(neg_text, images=[])
+                            current_negative = current_clip.encode_from_tokens_scheduled(tokens)
+                        else:
+                            # Use empty conditioning for negative
+                            tokens = current_clip.tokenize("", images=[])
+                            current_negative = current_clip.encode_from_tokens_scheduled(tokens)
+                    elif model_type == 'lumina2':
+                        # Lumina2/Z_IMAGE may have special requirements
+                        tokens = current_clip.tokenize(pos_text)
+                        current_positive = current_clip.encode_from_tokens_scheduled(tokens)
+                        tokens = current_clip.tokenize(neg_text if neg_text else "")
+                        current_negative = current_clip.encode_from_tokens_scheduled(tokens)
                     else:
+                        # Standard tokenization for other models
+                        tokens = current_clip.tokenize(pos_text)
+                        current_positive = current_clip.encode_from_tokens_scheduled(tokens)
+                        tokens = current_clip.tokenize(neg_text)
                         current_negative = current_clip.encode_from_tokens_scheduled(tokens)
                     
                     print(f"[SamplerCompareAdvanced] Encoded conditioning for {model_type}")
                 except Exception as e:
                     print(f"[SamplerCompareAdvanced] Conditioning error: {e}")
+                    import traceback
+                    traceback.print_exc()
             
-            # Apply LoRAs
+            # Apply LoRAs (legacy path for old combo structure)
             lora_names = combo.get("lora_names", [])
             lora_strengths = combo.get("lora_strengths", ())
             if lora_names:
-                working_model = self._apply_loras(working_model, lora_names, lora_strengths)
+                working_model = self._apply_loras_legacy(working_model, lora_names, lora_strengths)
             
             # Sample based on model type (using config chain settings)
             try:
@@ -699,7 +915,7 @@ class SamplerCompareAdvanced:
                         working_model, current_model_low,
                         use_seed, use_steps, use_cfg, use_sampler, use_scheduler,
                         current_positive, current_negative, current_latent,
-                        use_denoise, use_wan22_start, use_wan22_end, wan_shift=5.0
+                        use_denoise, use_wan22_high_end, use_wan22_low_end, wan_shift=5.0
                     )
                 else:
                     # Standard sampling for all other models
@@ -733,6 +949,17 @@ class SamplerCompareAdvanced:
                 # Log video output info
                 if is_video_model and image.shape[0] > 1:
                     print(f"[SamplerCompareAdvanced] Video output: {image.shape[0]} frames")
+            
+            except comfy.model_management.InterruptProcessingException:
+                # Re-raise interrupt so job can be properly cancelled
+                print(f"[SamplerCompareAdvanced] Processing interrupted by user")
+                current_model = None
+                current_model_low = None
+                current_vae = None
+                current_clip = None
+                working_model = None
+                self._unload_current(config)
+                raise
                 
             except Exception as e:
                 print(f"[SamplerCompareAdvanced] Sampling error: {e}")
@@ -742,11 +969,26 @@ class SamplerCompareAdvanced:
             
             # Generate label
             label = current_model_entry.get("display_name", current_model_entry.get("name", f"Model {model_idx}"))
-            all_labels.append(f"{label} ({model_type})")
-            print(f"[SamplerCompareAdvanced] Label: {label} ({model_type})")
+            full_label = f"{label} ({model_type})"
+            all_labels.append(full_label)
+            print(f"[SamplerCompareAdvanced] Label: {full_label}")
+            
+            # Cache the result for future runs
+            # Use all_images[-1] since we just appended
+            if all_images:
+                actual_frame_count = combo.get("output_frame_count", 1)
+                self._cache_result(combo_hash, all_images[-1], full_label, actual_frame_count)
         
-        # Final cleanup
-        self._unload_current()
+        # Log cache stats
+        print(f"\n[SamplerCompareAdvanced] Cache stats: {cache_hits} hits, {cache_misses} misses")
+        
+        # Final cleanup - clear all references and unload
+        current_model = None
+        current_model_low = None
+        current_vae = None
+        current_clip = None
+        working_model = None
+        self._unload_current(config)
         
         # Combine images
         if not all_images:
@@ -771,8 +1013,9 @@ class SamplerCompareAdvanced:
         """Apply model-specific patches based on detected type."""
         
         if model_type == 'qwen':
-            # Apply AuraFlow shift
-            shift = kwargs.get('qwen_shift', 8.0)
+            # QWEN uses shift=1.15 by default (NOT 8.0!)
+            # From comfy/supported_models.py: sampling_settings = {"multiplier": 1.0, "shift": 1.15}
+            shift = kwargs.get('qwen_shift', 1.15)
             model = ModelSamplingAuraFlow().patch(model, shift)[0]
             
             # Apply CFG normalization
@@ -809,34 +1052,48 @@ class SamplerCompareAdvanced:
         return model
     
     def _sample_wan22(self, model_high, model_low, seed, steps, cfg, sampler_name, scheduler,
-                      positive, negative, latent, denoise, start_step, end_step, wan_shift=5.0):
+                      positive, negative, latent, denoise, high_end_step, low_end_step, wan_shift=5.0):
         """WAN 2.2 two-phase sampling.
         
         Based on reference workflow:
         - Phase 1 (High Noise): add_noise=enable, return_with_leftover_noise=enable
         - Phase 2 (Low Noise): add_noise=disable, return_with_leftover_noise=disable
-        - Split at 50% of steps
+        - Split point is controlled by high_end_step (where phase 1 ends / phase 2 starts)
         - Shift = 5.0 for BOTH models (NOT 8.0 like WAN 2.1!)
+        
+        Args:
+            high_end_step: Step where high noise phase ends (e.g., 12 for "high=0-12")
+            low_end_step: Step where low noise phase ends (e.g., 20 for "low=12-20")
+        
+        IMPORTANT: HIGH and LOW LoRAs must be applied to their respective models.
+        The HIGH LoRA is already applied to model_high by _apply_loras().
+        The LOW LoRA data is stored in model_high._low_loras and applied here.
         """
         from nodes import common_ksampler
         from comfy_extras.nodes_model_advanced import ModelSamplingSD3
         
-        # WAN 2.2 splits sampling 50/50 between high and low noise models
-        mid_step = steps // 2
+        # Use config chain settings for step split
+        # high_end_step is where phase 1 ends (and phase 2 starts)
+        # low_end_step is where phase 2 ends (typically = steps)
+        # If high_end_step is 0 or not set, default to 50% split
+        if high_end_step <= 0:
+            high_end_step = steps // 2
+        if low_end_step <= 0:
+            low_end_step = steps
         
-        print(f"[SamplerCompareAdvanced] WAN 2.2 Phase 1: steps 0-{mid_step} (high noise model)")
+        print(f"[SamplerCompareAdvanced] WAN 2.2 Phase 1: steps 0-{high_end_step} (high noise model)")
         
-        # Phase 1: High noise model
+        # Phase 1: High noise model (already has HIGH LoRA applied)
         # add_noise=enable -> disable_noise=False
         # return_with_leftover_noise=enable -> force_full_denoise=False
         samples_1 = common_ksampler(
-            model=model_high, seed=seed, steps=steps, cfg=cfg,
+            model=model_high, seed=seed, steps=low_end_step, cfg=cfg,
             sampler_name=sampler_name, scheduler=scheduler,
             positive=positive, negative=negative, latent=latent,
             denoise=denoise,
             disable_noise=False,
             start_step=0,
-            last_step=mid_step,
+            last_step=high_end_step,
             force_full_denoise=False
         )[0]
         
@@ -844,31 +1101,48 @@ class SamplerCompareAdvanced:
             print(f"[SamplerCompareAdvanced] No low noise model, returning after phase 1")
             return samples_1
         
+        # Clone low model before patching
+        if hasattr(model_low, 'clone'):
+            model_low_working = model_low.clone()
+        else:
+            model_low_working = model_low
+        
+        # Apply LOW LoRAs to the low noise model (stored in model_high._low_loras)
+        if hasattr(model_high, '_low_loras') and model_high._low_loras:
+            for low_lora in model_high._low_loras:
+                lora_data = low_lora["data"]
+                strength = low_lora["strength"]
+                label = low_lora["label"]
+                model_low_working, _ = comfy.sd.load_lora_for_models(
+                    model_low_working, None, lora_data, strength, strength
+                )
+                print(f"[SamplerCompareAdvanced] Applied LOW LoRA to low model: {label} (strength={strength})")
+        
         # Apply shift=5.0 to low noise model (same as high noise model)
-        model_low_patched = ModelSamplingSD3().patch(model_low, wan_shift)[0]
+        model_low_patched = ModelSamplingSD3().patch(model_low_working, wan_shift)[0]
         print(f"[SamplerCompareAdvanced] Applied WAN 2.2 shift={wan_shift} to low noise model")
         
-        print(f"[SamplerCompareAdvanced] WAN 2.2 Phase 2: steps {mid_step}-{steps} (low noise model)")
+        print(f"[SamplerCompareAdvanced] WAN 2.2 Phase 2: steps {high_end_step}-{low_end_step} (low noise model)")
         
         # Phase 2: Low noise model
         # add_noise=disable -> disable_noise=True
         # return_with_leftover_noise=disable -> force_full_denoise=True
         samples_2 = common_ksampler(
-            model=model_low_patched, seed=seed, steps=steps, cfg=cfg,
+            model=model_low_patched, seed=seed, steps=low_end_step, cfg=cfg,
             sampler_name=sampler_name, scheduler=scheduler,
             positive=positive, negative=negative, latent=samples_1,
             denoise=denoise,
             disable_noise=True,
-            start_step=mid_step,
-            last_step=steps,
+            start_step=high_end_step,
+            last_step=low_end_step,
             force_full_denoise=True
         )[0]
         
         return samples_2
     
     @staticmethod
-    def _apply_loras(model, lora_names: List[str], strengths: Tuple[float, ...]):
-        """Apply LoRAs to the model."""
+    def _apply_loras_legacy(model, lora_names: List[str], strengths: Tuple[float, ...]):
+        """Apply LoRAs to the model (legacy method for old combo structure)."""
         working_model = model
         for lora_name, strength in zip(lora_names, strengths):
             if strength == 0.0:
@@ -917,7 +1191,7 @@ class SamplerCompareAdvanced:
         return image
     
     @classmethod
-    def IS_CHANGED(cls, config, latent, seed, steps, cfg, sampler_name, scheduler, denoise, **kwargs):
+    def IS_CHANGED(cls, config, latent, num_global_fields=0, video_latent=None, start_image=None, end_image=None, **kwargs):
         """
         Compute a hash to determine if re-execution is needed.
         This prevents unnecessary re-runs when workflow is queued without changes.
@@ -926,18 +1200,18 @@ class SamplerCompareAdvanced:
         combos = config.get("combinations", []) if config else []
         combo_str = str([(c.get("model_index"), c.get("vae_name"), c.get("prompt_positive", "")) for c in combos])
         
-        # Hash sampling configs from chain
-        sampling_configs = config.get("sampling_configs", []) if config else []
-        sampling_str = str([(sc.get("config_type"), sc.get("steps"), sc.get("cfg"), sc.get("sampler_name")) for sc in sampling_configs])
-        
-        # Hash node's own sampling params (used as defaults)
-        params = f"{seed}|{steps}|{cfg}|{sampler_name}|{scheduler}|{denoise}"
+        # Hash sampling configs from chain (may be dict or list)
+        sampling_configs = config.get("sampling_configs", {}) if config else {}
+        if isinstance(sampling_configs, dict):
+            sampling_str = str([(sc.get("config_type"), sc.get("steps"), sc.get("cfg"), sc.get("sampler_name")) for sc in sampling_configs.values()])
+        else:
+            sampling_str = str([(sc.get("config_type"), sc.get("steps"), sc.get("cfg"), sc.get("sampler_name")) for sc in sampling_configs])
         
         # Hash latent shape
         latent_shape = str(latent.get("samples").shape) if isinstance(latent, dict) and latent else "unknown"
         
         # Combine and hash
-        hash_input = f"{combo_str}|{sampling_str}|{params}|{latent_shape}"
+        hash_input = f"{combo_str}|{sampling_str}|{num_global_fields}|{latent_shape}"
         for key in sorted(kwargs.keys()):
             val = kwargs[key]
             if isinstance(val, (str, int, float, bool)):

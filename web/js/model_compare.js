@@ -757,8 +757,8 @@ function registerExtension(app) {
                 });
             }
 
-            // --- ModelCompareGlobals Logic ---
-            if (nodeData.name === "ModelCompareGlobals") {
+            // --- SamplerCompareAdvanced Logic ---
+            if (nodeData.name === "SamplerCompareAdvanced") {
                 chainCallback(nodeType.prototype, "configure", function (info) {
                     setTimeout(() => {
                         if (this.size) {
@@ -783,19 +783,19 @@ function registerExtension(app) {
                             }
                         });
 
-                        const updateGlobalsVisibility = () => {
-                            const numFieldsWidget = self.widgets.find(w => w.name === "num_fields");
-                            const numFields = numFieldsWidget ? parseInt(numFieldsWidget.value, 10) : 2;
+                        const updateSamplerVisibility = () => {
+                            const numFieldsWidget = self.widgets.find(w => w.name === "num_global_fields");
+                            const numFields = numFieldsWidget ? parseInt(numFieldsWidget.value, 10) : 0;
 
                             // Map param types to which value widget should be shown
                             const paramTypeToValueWidget = {
-                                "seed": "value_int",
-                                "steps": "value_int",
-                                "cfg": "value_float",
-                                "denoise": "value_float",
-                                "seed_control": "value_seed_control",
-                                "sampler_name": "value_sampler",
-                                "scheduler": "value_scheduler",
+                                "seed": "global_value_int",
+                                "steps": "global_value_int",
+                                "cfg": "global_value_float",
+                                "denoise": "global_value_float",
+                                "seed_control": "global_value_seed_control",
+                                "sampler_name": "global_value_sampler",
+                                "scheduler": "global_value_scheduler",
                             };
 
                             self.widgets.forEach((widget) => {
@@ -803,25 +803,30 @@ function registerExtension(app) {
 
                                 let shouldShow = false;
 
-                                // Always show num_fields and buttons
-                                if (widget.name === "num_fields" || widget.type === "button") {
+                                // Always show required fields and video inputs
+                                const alwaysShow = [
+                                    "config", "latent", "num_global_fields",
+                                    "video_latent", "start_image", "end_image"
+                                ];
+                                
+                                if (alwaysShow.includes(widget.name) || widget.type === "button") {
                                     shouldShow = true;
                                 }
-                                // Handle param_type_N widgets
-                                else if (widget.name.startsWith("param_type_")) {
-                                    const idx = parseInt(widget.name.split("_")[2], 10);
+                                // Handle global_param_type_N widgets
+                                else if (widget.name.startsWith("global_param_type_")) {
+                                    const idx = parseInt(widget.name.split("_")[3], 10);
                                     shouldShow = idx < numFields;
                                 }
-                                // Handle value_*_N widgets
-                                else if (widget.name.startsWith("value_")) {
-                                    // Parse: value_int_0, value_float_1, value_seed_control_2, etc.
+                                // Handle global_value_*_N widgets
+                                else if (widget.name.startsWith("global_value_")) {
+                                    // Parse: global_value_int_0, global_value_float_1, etc.
                                     const parts = widget.name.split("_");
                                     const idx = parseInt(parts[parts.length - 1], 10);
                                     
-                                    // Only show if within num_fields
+                                    // Only show if within num_global_fields
                                     if (idx < numFields) {
                                         // Get the param_type for this index
-                                        const paramTypeWidget = self.widgets.find(w => w.name === `param_type_${idx}`);
+                                        const paramTypeWidget = self.widgets.find(w => w.name === `global_param_type_${idx}`);
                                         const paramType = paramTypeWidget ? paramTypeWidget.value : "NONE";
                                         
                                         // Determine which value widget type should be shown
@@ -858,40 +863,40 @@ function registerExtension(app) {
                             }
                         };
 
-                        // Hook num_fields widget change
-                        const numFieldsWidget = self.widgets.find(w => w.name === "num_fields");
+                        // Hook num_global_fields widget change
+                        const numFieldsWidget = self.widgets.find(w => w.name === "num_global_fields");
                         if (numFieldsWidget) {
                             const originalCallback = numFieldsWidget.callback;
                             numFieldsWidget.callback = function (value) {
                                 if (originalCallback) originalCallback.call(this, value);
-                                updateGlobalsVisibility();
+                                updateSamplerVisibility();
                             };
                         }
 
-                        // Hook all param_type_N widgets
+                        // Hook all global_param_type_N widgets
                         for (let i = 0; i < 8; i++) {
-                            const paramTypeWidget = self.widgets.find(w => w.name === `param_type_${i}`);
+                            const paramTypeWidget = self.widgets.find(w => w.name === `global_param_type_${i}`);
                             if (paramTypeWidget) {
                                 const originalCallback = paramTypeWidget.callback;
                                 paramTypeWidget.callback = function (value) {
                                     if (originalCallback) originalCallback.call(this, value);
-                                    updateGlobalsVisibility();
+                                    updateSamplerVisibility();
                                 };
                             }
                         }
 
                         // Add update button
                         this.addWidget("button", "Update Fields", null, () => {
-                            updateGlobalsVisibility();
+                            updateSamplerVisibility();
                         });
 
                         // Initial visibility update
                         setTimeout(() => {
-                            updateGlobalsVisibility();
+                            updateSamplerVisibility();
                         }, 100);
 
                     } catch (e) {
-                        console.error("[ModelCompareGlobals] Error:", e);
+                        console.error("[SamplerCompareAdvanced] Error:", e);
                     }
                 });
             }

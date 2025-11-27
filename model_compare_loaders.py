@@ -372,12 +372,26 @@ class ModelCompareLoaders:
         elif vae != "NONE":
             get_vae_path(vae)  # Store path in map
             
+        # VAE variations should match model variations (NOT num_vae_variations!)
+        # Each model variation has its own VAE setting via vae_variation_{i}
         vae_variations = [{"name": vae if vae != "NONE" else "__baked__" if base_entry.get("use_baked_vae_clip") else "NONE"}]
-        for i in range(1, num_vae_variations):
+        print(f"[ModelCompareLoaders] VAE[0]: {vae_variations[0]['name']}")
+        for i in range(1, num_diffusion_models):
+            # Get VAE for this model variation (use baked if specified, or explicit VAE)
+            var_baked = kwargs.get(f"baked_vae_clip_variation_{i}", False)
             v_name = kwargs.get(f"vae_variation_{i}", "NONE")
-            if v_name != "NONE":
+            
+            if var_baked:
+                vae_variations.append({"name": "__baked__"})
+                print(f"[ModelCompareLoaders] VAE[{i}]: __baked__ (from baked_vae_clip_variation_{i})")
+            elif v_name != "NONE":
                 get_vae_path(v_name)  # Store path in map
                 vae_variations.append({"name": v_name})
+                print(f"[ModelCompareLoaders] VAE[{i}]: {v_name}")
+            else:
+                # Fallback to base VAE if no variation specified
+                vae_variations.append({"name": vae_variations[0]["name"]})
+                print(f"[ModelCompareLoaders] VAE[{i}]: {vae_variations[0]['name']} (fallback to base)")
 
         # 4. Store CLIP configurations (LAZY LOADING - no CLIPs loaded here)
         # Determine if BASE preset needs dual CLIP based on its OWN clip_type
@@ -432,13 +446,23 @@ class ModelCompareLoaders:
                 "device": clip_device,
             })
 
-        for i in range(1, num_clip_variations):
+        # CLIP variations should match model variations (NOT num_clip_variations!)
+        # Each model variation has its own CLIP settings
+        for i in range(1, num_diffusion_models):
             c_name = kwargs.get(f"clip_model_variation_{i}", "NONE")
             c_name_2 = kwargs.get(f"clip_model_variation_{i}_2", "NONE")
             c_type = kwargs.get(f"clip_type_variation_{i}", "default")
             c_device = kwargs.get(f"clip_device_variation_{i}", "default")
+            var_baked = kwargs.get(f"baked_vae_clip_variation_{i}", False)
             
-            if c_name != "NONE":
+            # Check if this variation uses baked CLIP
+            if var_baked:
+                clip_variations.append({
+                    "type": "baked",
+                    "clip_type": c_type if c_type != "default" else base_resolved_clip_type,
+                    "device": c_device,
+                })
+            elif c_name != "NONE":
                 # Store variation CLIP path - no loading
                 path = folder_paths.get_full_path("clip", c_name)
                 
@@ -492,6 +516,18 @@ class ModelCompareLoaders:
                         "model_path": path,
                         "clip_type": resolved_clip_type,
                         "device": c_device,
+                    })
+            else:
+                # No CLIP specified for this variation - copy base CLIP config
+                if clip_variations:
+                    clip_variations.append(clip_variations[0].copy())
+                else:
+                    clip_variations.append({
+                        "type": "single",
+                        "model": "NONE",
+                        "model_path": None,
+                        "clip_type": base_resolved_clip_type,
+                        "device": "default",
                     })
 
         # 5. Store LoRA configs per model variation
@@ -679,12 +715,11 @@ class ModelCompareLoaders:
             v_name = vaes[v_idx]["name"] if num_vaes > 0 else "NONE"
             c_clip = clips[c_idx] if num_clips > 0 else None
             
-            # Get LoRA config for this model variation (or reuse last valid one)
+            # Get LoRA config for this model variation ONLY (no fallback to other models)
+            # Each model should ONLY use its own LoRA config - don't apply LoRAs meant for other models
             lora_config = None
-            for i in range(m_idx, -1, -1):
-                if i < len(lora_configs) and lora_configs[i] is not None:
-                    lora_config = lora_configs[i]
-                    break
+            if m_idx < len(lora_configs) and lora_configs[m_idx] is not None:
+                lora_config = lora_configs[m_idx]
             
             # Generate LoRA combinations for this variation
             lora_combos = get_lora_combos_for_config(lora_config)
