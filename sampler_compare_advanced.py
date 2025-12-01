@@ -36,6 +36,16 @@ except ImportError:
     WARNING_THRESHOLD = 20
     print("[SamplerCompareAdvanced] Warning: variation_expander not found, multi-value support disabled")
 
+# Import tracker for progress updates
+try:
+    from .compare_tracker import update_tracker_state, add_tracker_warning, reset_tracker_state
+    TRACKER_SUPPORT = True
+except ImportError:
+    TRACKER_SUPPORT = False
+    def update_tracker_state(**kwargs): pass
+    def add_tracker_warning(warning): pass
+    def reset_tracker_state(): pass
+
 class SamplerCompareAdvanced:
     """
     Advanced sampler for cross-model comparison with LAZY LOADING.
@@ -1321,6 +1331,27 @@ class SamplerCompareAdvanced:
         if expanded_count > original_count:
             print(f"[SamplerCompareAdvanced] Expanded {original_count} base combinations to {expanded_count} with sampling variations")
         
+        # CRITICAL: Sort combinations by model_index to minimize model switching
+        # This ensures all variations for model 0 are processed before moving to model 1, etc.
+        # Use stable sort to preserve relative order of variations within each model group
+        original_indices = {id(c): i for i, c in enumerate(combinations)}
+        combinations = sorted(combinations, key=lambda c: (
+            c.get("model_index", 0),  # Primary: group by model
+            c.get("_sampling_override", {}).get("variation_index", 0),  # Secondary: by chain/variation index
+            original_indices.get(id(c), 0)  # Tertiary: preserve original order within group
+        ))
+        
+        # Log model ordering
+        model_order = []
+        prev_model = None
+        for c in combinations:
+            m_idx = c.get("model_index", 0)
+            if m_idx != prev_model:
+                model_order.append(m_idx)
+                prev_model = m_idx
+        if len(model_order) > 1:
+            print(f"[SamplerCompareAdvanced] Optimized order: processing models in sequence {model_order}")
+        
         all_images = []
         all_labels = []
         
@@ -1347,6 +1378,30 @@ class SamplerCompareAdvanced:
         cache_hits = 0
         cache_misses = 0
         
+        # Initialize progress tracker
+        model_variations = config.get("model_variations", [])
+        total_models = len(model_variations)
+        sampling_configs = config.get("sampling_configs", {})
+        chain_indices = set()
+        for idx_tmp in range(len(combinations)):
+            chain_cfg = sampling_configs.get(combinations[idx_tmp].get("model_index", 0), {})
+            chain_indices.add(chain_cfg.get("variation_index", 1))
+        total_chains = len(chain_indices) if chain_indices else 1
+        
+        # Reset and initialize tracker state
+        reset_tracker_state()
+        update_tracker_state(
+            total_combinations=len(combinations),
+            completed_combinations=0,
+            total_models=total_models,
+            total_chains=total_chains,
+            status="sampling",
+        )
+        
+        # Add warnings to tracker
+        if len(combinations) > WARNING_THRESHOLD:
+            add_tracker_warning(f"⚠️ High combination count: {len(combinations)} combinations")
+        
         # Seed control: track running seed and control mode
         # Note: seed_control can also come from per-variation config chains,
         # so we check global first, then override per-variation in the loop if needed
@@ -1360,6 +1415,26 @@ class SamplerCompareAdvanced:
         
         for idx, combo in enumerate(combinations):
             print(f"\n[SamplerCompareAdvanced] === Combination {idx + 1}/{len(combinations)} ===")
+            
+            # Get model entry early for progress tracking and cache hash
+            model_idx = combo.get("model_index", 0)
+            early_model_entry = config.get("model_variations", [])[model_idx] if model_idx < len(config.get("model_variations", [])) else {}
+            current_model_name = early_model_entry.get("display_name", early_model_entry.get("name", f"Model {model_idx + 1}"))
+            
+            # Get chain index for tracking
+            base_combo_idx = combo.get("model_index", 0)
+            chain_cfg = sampling_configs.get(base_combo_idx, {})
+            current_chain_idx = chain_cfg.get("variation_index", 1)
+            
+            # Update progress tracker
+            update_tracker_state(
+                completed_combinations=idx,
+                current_model=current_model_name,
+                current_model_index=model_idx,
+                current_chain=current_chain_idx,
+                current_label=combo.get("_variation_label", ""),
+                status="sampling",
+            )
             
             # Update global_config with running seed (for seed control modes)
             if running_seed is not None:
@@ -1378,13 +1453,8 @@ class SamplerCompareAdvanced:
             }
             early_model_type = clip_type_to_model_type.get(clip_type_str, "sd")
             
-            # Get model entry early for cache hash (includes display_name/label)
-            model_idx = combo.get("model_index", 0)
-            early_model_entry = config.get("model_variations", [])[model_idx] if model_idx < len(config.get("model_variations", [])) else {}
-            
             # Compute sampling config for cache hash (without loading model)
             # Use the original model_index from combo, not the loop idx (which may be different after expansion)
-            base_combo_idx = combo.get("model_index", 0)
             early_sampling_cfg, _ = self._get_sampling_config_for_type(config, early_model_type, node_defaults, global_config, base_combo_idx)
             
             # CRITICAL: Apply _sampling_override to early_sampling_cfg for cache hash
@@ -1856,6 +1926,12 @@ class SamplerCompareAdvanced:
         
         # Log cache stats
         print(f"\n[SamplerCompareAdvanced] Cache stats: {cache_hits} hits, {cache_misses} misses")
+        
+        # Update tracker to complete status
+        update_tracker_state(
+            completed_combinations=len(combinations),
+            status="complete",
+        )
         
         # Final cleanup - clear all references and unload
         current_model = None

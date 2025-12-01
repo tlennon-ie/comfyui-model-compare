@@ -1319,8 +1319,414 @@ function registerExtension(app) {
                     }
                 });
             }
+
+            // --- CompareTracker Logic ---
+            if (nodeData.name === "CompareTracker") {
+                // Set default size on configure
+                chainCallback(nodeType.prototype, "configure", function (info) {
+                    setTimeout(() => {
+                        if (this.size) {
+                            this.size[0] = 280;
+                            this.size[1] = 220;
+                        }
+                    }, 10);
+                });
+
+                chainCallback(nodeType.prototype, "onNodeCreated", function () {
+                    try {
+                        const self = this;
+                        const appRef = app;
+
+                        // Initialize tracker state on the node
+                        self._trackerData = {
+                            status: "idle",
+                            total: 0,
+                            completed: 0,
+                            currentModel: "",
+                            modelIndex: 0,
+                            totalModels: 0,
+                            chain: 0,
+                            totalChains: 0,
+                            warnings: [],
+                            startTime: null,
+                        };
+
+                        // Set default size
+                        self.size = [280, 220];
+
+                        // Custom draw function for the tracker display
+                        const originalOnDrawForeground = self.onDrawForeground;
+                        self.onDrawForeground = function(ctx) {
+                            if (originalOnDrawForeground) {
+                                originalOnDrawForeground.call(this, ctx);
+                            }
+                            
+                            const data = this._trackerData || {};
+                            const x = 10;
+                            let y = 40; // Start below title
+                            const lineHeight = 18;
+                            const width = this.size[0] - 20;
+                            
+                            // Background
+                            ctx.fillStyle = "#1a1a2e";
+                            ctx.fillRect(5, 30, this.size[0] - 10, this.size[1] - 35);
+                            
+                            // Border
+                            ctx.strokeStyle = "#4a4a6a";
+                            ctx.lineWidth = 1;
+                            ctx.strokeRect(5, 30, this.size[0] - 10, this.size[1] - 35);
+                            
+                            ctx.font = "12px monospace";
+                            
+                            // Title
+                            ctx.fillStyle = "#88ccff";
+                            ctx.textAlign = "center";
+                            ctx.fillText("═══ COMPARE TRACKER ═══", this.size[0] / 2, y);
+                            y += lineHeight + 5;
+                            
+                            ctx.textAlign = "left";
+                            
+                            if (data.status === "idle" || !data.total) {
+                                // Idle state
+                                ctx.fillStyle = "#888888";
+                                ctx.fillText("⏸ Waiting for workflow...", x, y);
+                            } else if (data.status === "complete") {
+                                // Complete state
+                                ctx.fillStyle = "#88ff88";
+                                ctx.fillText(`✓ Complete! ${data.total} generated`, x, y);
+                                y += lineHeight;
+                                
+                                // Show elapsed time if available
+                                if (data.elapsed) {
+                                    ctx.fillStyle = "#aaaaaa";
+                                    ctx.fillText(`  Time: ${data.elapsed}`, x, y);
+                                }
+                            } else {
+                                // Active/sampling state
+                                const pct = data.total > 0 ? (data.completed / data.total) * 100 : 0;
+                                
+                                // Progress text
+                                ctx.fillStyle = "#ffffff";
+                                ctx.fillText(`Progress: ${data.completed}/${data.total} (${pct.toFixed(0)}%)`, x, y);
+                                y += lineHeight;
+                                
+                                // Progress bar
+                                const barWidth = width - 10;
+                                const barHeight = 12;
+                                const barX = x + 5;
+                                const fillWidth = (pct / 100) * barWidth;
+                                
+                                // Bar background
+                                ctx.fillStyle = "#333355";
+                                ctx.fillRect(barX, y - 10, barWidth, barHeight);
+                                
+                                // Bar fill with gradient
+                                const gradient = ctx.createLinearGradient(barX, 0, barX + fillWidth, 0);
+                                gradient.addColorStop(0, "#4488ff");
+                                gradient.addColorStop(1, "#88ccff");
+                                ctx.fillStyle = gradient;
+                                ctx.fillRect(barX, y - 10, fillWidth, barHeight);
+                                
+                                // Bar border
+                                ctx.strokeStyle = "#6666aa";
+                                ctx.strokeRect(barX, y - 10, barWidth, barHeight);
+                                
+                                y += lineHeight + 5;
+                                
+                                // Current model
+                                if (data.currentModel) {
+                                    ctx.fillStyle = "#cccccc";
+                                    const modelText = data.currentModel.length > 25 
+                                        ? data.currentModel.substring(0, 22) + "..." 
+                                        : data.currentModel;
+                                    ctx.fillText(`Model: ${modelText}`, x, y);
+                                    y += lineHeight;
+                                    
+                                    ctx.fillStyle = "#888888";
+                                    ctx.fillText(`  (${data.modelIndex + 1}/${data.totalModels})`, x, y);
+                                    y += lineHeight;
+                                }
+                                
+                                // Chain info
+                                if (data.totalChains > 1) {
+                                    ctx.fillStyle = "#aaaaaa";
+                                    ctx.fillText(`Chain: ${data.chain}/${data.totalChains}`, x, y);
+                                    y += lineHeight;
+                                }
+                            }
+                            
+                            // Warnings section
+                            const warnings = data.warnings || [];
+                            if (warnings.length > 0) {
+                                y += 5;
+                                ctx.fillStyle = "#ffaa44";
+                                ctx.fillText("⚠ Warnings:", x, y);
+                                y += lineHeight;
+                                
+                                ctx.fillStyle = "#ff8844";
+                                ctx.font = "11px monospace";
+                                warnings.slice(0, 2).forEach(w => {
+                                    const warnText = w.length > 30 ? w.substring(0, 27) + "..." : w;
+                                    ctx.fillText(`  ${warnText}`, x, y);
+                                    y += lineHeight - 2;
+                                });
+                            }
+                        };
+
+                        // Trigger initial redraw
+                        setTimeout(() => {
+                            if (appRef && appRef.graph) {
+                                appRef.graph.setDirtyCanvas(true, true);
+                            }
+                        }, 100);
+
+                    } catch (e) {
+                        console.error("[CompareTracker] Error:", e);
+                    }
+                });
+
+                // Handle execution output to update display
+                chainCallback(nodeType.prototype, "onExecuted", function (output) {
+                    try {
+                        if (output) {
+                            this._trackerData = {
+                                status: output.status || "preparing",
+                                total: output.total || 0,
+                                completed: 0,
+                                currentModel: "",
+                                modelIndex: 0,
+                                totalModels: output.models || 0,
+                                chain: 0,
+                                totalChains: output.chains || 0,
+                                warnings: output.warnings || [],
+                                startTime: Date.now(),
+                            };
+                            
+                            // Request redraw
+                            if (window.comfyAPI && window.comfyAPI.app && window.comfyAPI.app.app) {
+                                window.comfyAPI.app.app.graph.setDirtyCanvas(true, true);
+                            }
+                        }
+                    } catch (e) {
+                        console.error("[CompareTracker] onExecuted error:", e);
+                    }
+                });
+            }
         }
     });
 }
+
+// Function to update tracker display with progress data from websocket
+function updateTrackerDisplay(node, data) {
+    if (!node) return;
+    
+    // Update the node's tracker data
+    node._trackerData = {
+        status: data.status || "sampling",
+        total: data.total_combinations || 0,
+        completed: data.completed_combinations || 0,
+        currentModel: data.current_model || "",
+        modelIndex: data.current_model_index || 0,
+        totalModels: data.total_models || 1,
+        chain: data.current_chain || 0,
+        totalChains: data.total_chains || 1,
+        warnings: data.warnings || [],
+        startTime: data.start_time,
+    };
+    
+    // Request redraw
+    if (window.comfyAPI && window.comfyAPI.app && window.comfyAPI.app.app) {
+        window.comfyAPI.app.app.graph.setDirtyCanvas(true, true);
+    }
+}
+
+// Listen for websocket progress messages from the sampler
+function setupProgressListener() {
+    // Store reference to our handler
+    window._modelCompareProgressHandler = function(data) {
+        if (!data) return;
+        
+        // Find all CompareTracker nodes and update them
+        if (window.comfyAPI && window.comfyAPI.app && window.comfyAPI.app.app) {
+            const app = window.comfyAPI.app.app;
+            if (app.graph) {
+                const nodes = app.graph._nodes || [];
+                nodes.forEach(node => {
+                    if (node.type === "CompareTracker") {
+                        updateTrackerDisplay(node, data);
+                    }
+                });
+            }
+        }
+    };
+    
+    // Track if we've successfully hooked
+    let hooked = false;
+    
+    // Method: Find and hook the websocket by searching the api object
+    function tryHookApi() {
+        try {
+            // Try to find the api object in various locations
+            let api = null;
+            
+            // Check common locations
+            if (window.comfyAPI?.api) {
+                api = window.comfyAPI.api;
+            } else if (window.app?.api) {
+                api = window.app.api;
+            }
+            
+            if (!api) {
+                // Debug: log what we can find
+                if (window.comfyAPI) {
+                    console.log("[ModelCompare] comfyAPI keys:", Object.keys(window.comfyAPI));
+                }
+                return false;
+            }
+            
+            // The socket might be a private property or accessed differently
+            // Let's search for it
+            let socket = null;
+            
+            // Try direct property
+            if (api.socket) {
+                socket = api.socket;
+            }
+            // Try as a getter or through prototype
+            else if (api._socket) {
+                socket = api._socket;
+            }
+            // Search through api properties
+            else {
+                for (const key of Object.keys(api)) {
+                    const val = api[key];
+                    if (val && val instanceof WebSocket) {
+                        socket = val;
+                        console.log("[ModelCompare] Found socket at api." + key);
+                        break;
+                    }
+                }
+            }
+            
+            // Also check if api itself might have addEventListener (event emitter pattern)
+            if (!socket && api.addEventListener) {
+                // ComfyUI api might be an EventTarget
+                api.addEventListener("model_compare_progress", function(event) {
+                    console.log("[ModelCompare] Got event via api EventTarget");
+                    window._modelCompareProgressHandler(event.detail);
+                });
+                console.log("[ModelCompare] Attached to api as EventTarget");
+                hooked = true;
+                return true;
+            }
+            
+            if (socket && !socket._modelCompareHooked) {
+                socket.addEventListener('message', function(event) {
+                    try {
+                        const msg = JSON.parse(event.data);
+                        if (msg.type === "model_compare_progress") {
+                            console.log("[ModelCompare] Progress:", msg.data.completed_combinations, "/", msg.data.total_combinations);
+                            window._modelCompareProgressHandler(msg.data);
+                        }
+                    } catch (e) {}
+                });
+                socket._modelCompareHooked = true;
+                console.log("[ModelCompare] WebSocket listener attached successfully");
+                hooked = true;
+                return true;
+            }
+        } catch (e) {
+            console.log("[ModelCompare] Hook error:", e);
+        }
+        return false;
+    }
+    
+    // Also try to find ALL websockets on the page
+    function findAllWebSockets() {
+        // Check if there are any websockets in the global scope
+        const checkLocations = [
+            'window.comfyAPI.api.socket',
+            'window.comfyAPI.api._socket', 
+            'window.app.api.socket',
+            'window.app.api._socket',
+            'window.comfyAPI.app.app.api.socket',
+        ];
+        
+        for (const loc of checkLocations) {
+            try {
+                const socket = eval(loc);
+                if (socket && socket instanceof WebSocket && !socket._modelCompareHooked) {
+                    socket.addEventListener('message', function(event) {
+                        try {
+                            const msg = JSON.parse(event.data);
+                            if (msg.type === "model_compare_progress") {
+                                console.log("[ModelCompare] Progress via", loc);
+                                window._modelCompareProgressHandler(msg.data);
+                            }
+                        } catch (e) {}
+                    });
+                    socket._modelCompareHooked = true;
+                    console.log("[ModelCompare] Hooked socket at:", loc);
+                    return true;
+                }
+            } catch (e) {
+                // Location doesn't exist
+            }
+        }
+        return false;
+    }
+    
+    // Try hooking periodically until successful
+    let attempts = 0;
+    const maxAttempts = 60;
+    const retryInterval = setInterval(() => {
+        attempts++;
+        if (tryHookApi() || findAllWebSockets() || attempts >= maxAttempts) {
+            clearInterval(retryInterval);
+            if (attempts >= maxAttempts && !hooked) {
+                console.log("[ModelCompare] WebSocket hook failed. Trying fallback polling...");
+                // Fallback: poll for websocket messages by checking a global
+                startPollingFallback();
+            }
+        }
+    }, 500);
+    
+    console.log("[ModelCompare] Progress listener initializing...");
+}
+
+// Fallback: Create our own websocket connection to receive messages
+function startPollingFallback() {
+    console.log("[ModelCompare] Starting polling fallback");
+    
+    // Create a separate websocket to the same endpoint
+    try {
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const wsUrl = `${protocol}//${window.location.host}/ws`;
+        const ws = new WebSocket(wsUrl);
+        
+        ws.onopen = function() {
+            console.log("[ModelCompare] Fallback WebSocket connected");
+        };
+        
+        ws.onmessage = function(event) {
+            try {
+                const msg = JSON.parse(event.data);
+                if (msg.type === "model_compare_progress") {
+                    console.log("[ModelCompare] Progress via fallback WS");
+                    window._modelCompareProgressHandler(msg.data);
+                }
+            } catch (e) {}
+        };
+        
+        ws.onerror = function(e) {
+            console.log("[ModelCompare] Fallback WS error:", e);
+        };
+    } catch (e) {
+        console.log("[ModelCompare] Could not create fallback WS:", e);
+    }
+}
+
+// Setup listener after a short delay
+setTimeout(setupProgressListener, 100);
 
 tryRegisterExtension();

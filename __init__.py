@@ -30,6 +30,8 @@ from .histogram_analyzer import NODE_CLASS_MAPPINGS as HISTOGRAM_MAPPINGS
 from .histogram_analyzer import NODE_DISPLAY_NAME_MAPPINGS as HISTOGRAM_DISPLAYS
 from .video_preview import NODE_CLASS_MAPPINGS as VIDEO_PREVIEW_MAPPINGS
 from .video_preview import NODE_DISPLAY_NAME_MAPPINGS as VIDEO_PREVIEW_DISPLAYS
+from .compare_tracker import NODE_CLASS_MAPPINGS as TRACKER_MAPPINGS
+from .compare_tracker import NODE_DISPLAY_NAME_MAPPINGS as TRACKER_DISPLAYS
 
 # Merge all node mappings - only include the active nodes
 NODE_CLASS_MAPPINGS = {
@@ -41,6 +43,7 @@ NODE_CLASS_MAPPINGS = {
     **GRID_MAPPINGS,
     **HISTOGRAM_MAPPINGS,
     **VIDEO_PREVIEW_MAPPINGS,
+    **TRACKER_MAPPINGS,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -52,6 +55,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     **GRID_DISPLAYS,
     **HISTOGRAM_DISPLAYS,
     **VIDEO_PREVIEW_DISPLAYS,
+    **TRACKER_DISPLAYS,
 }
 
 # Required for ComfyUI to recognize this as a valid custom node package
