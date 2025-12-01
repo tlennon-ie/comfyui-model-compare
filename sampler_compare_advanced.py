@@ -5,10 +5,15 @@ All sampling parameters exposed - auto-detects which to use per model.
 
 LAZY LOADING: Models are loaded on-demand per combination to minimize VRAM usage.
 Smart unloading occurs only when model/VAE/CLIP config changes between combinations.
+
+MULTI-VALUE VARIATIONS: Sampling configs can contain comma-separated values for
+samplers, schedulers, steps, cfg, dimensions, and shift parameters. These are
+expanded into additional variations automatically.
 """
 
 import gc
 import hashlib
+import itertools
 import torch
 import folder_paths
 import comfy.sd
@@ -18,6 +23,18 @@ import comfy.samplers
 import comfy.model_management
 from typing import List, Dict, Tuple, Any, Optional
 from comfy_extras.nodes_model_advanced import ModelSamplingSD3, ModelSamplingAuraFlow, RescaleCFG, ModelSamplingFlux
+
+# Import variation expander for multi-value support
+try:
+    from .variation_expander import (
+        expand_sampling_config, count_variations, check_variation_warning,
+        WARNING_THRESHOLD
+    )
+    VARIATION_SUPPORT = True
+except ImportError:
+    VARIATION_SUPPORT = False
+    WARNING_THRESHOLD = 20
+    print("[SamplerCompareAdvanced] Warning: variation_expander not found, multi-value support disabled")
 
 class SamplerCompareAdvanced:
     """
@@ -1032,6 +1049,64 @@ class SamplerCompareAdvanced:
         
         return result, resolved_model_type
 
+    def _expand_combinations_with_sampling_variations(self, combinations: List[Dict], config: Dict, node_defaults: Dict, global_config: Dict) -> Tuple[List[Dict], int]:
+        """
+        Expand combinations to include sampling parameter variations.
+        
+        When sampling configs contain multi-value fields (e.g., "euler, dpmpp_2m" for sampler_name),
+        this creates additional combinations for each value.
+        
+        Args:
+            combinations: Original list of model/vae/clip/lora/prompt combos
+            config: Full config dict with sampling_configs
+            node_defaults: Default sampling parameters
+            global_config: Global overrides
+        
+        Returns:
+            Tuple of (expanded_combinations, warning_count)
+            Each expanded combo has a "_sampling_override" dict with specific values
+        """
+        if not VARIATION_SUPPORT:
+            return combinations, 0
+        
+        sampling_configs = config.get("sampling_configs", {}) if config else {}
+        expanded_combos = []
+        total_variations = 0
+        
+        for original_combo in combinations:
+            combo_idx = original_combo.get("model_index", 0)
+            
+            # Get the sampling config for this combo
+            if combo_idx in sampling_configs:
+                sampling_cfg = sampling_configs[combo_idx]
+                
+                # Expand the sampling config multi-value fields
+                expanded_configs, variation_labels = expand_sampling_config(sampling_cfg)
+                
+                if len(expanded_configs) > 1:
+                    # Multiple variations - create copies of the combo for each
+                    for exp_cfg, var_label in zip(expanded_configs, variation_labels):
+                        new_combo = dict(original_combo)
+                        new_combo["_sampling_override"] = exp_cfg
+                        new_combo["_variation_label"] = var_label
+                        expanded_combos.append(new_combo)
+                else:
+                    # Single value - no expansion needed
+                    expanded_combos.append(original_combo)
+                
+                total_variations += len(expanded_configs)
+            else:
+                # No sampling config for this combo - pass through
+                expanded_combos.append(original_combo)
+                total_variations += 1
+        
+        # Check for warning
+        warning = check_variation_warning(len(expanded_combos))
+        if warning:
+            print(f"[SamplerCompareAdvanced] {warning}")
+        
+        return expanded_combos, len(expanded_combos)
+
     def sample_all_combinations(
         self,
         config: Dict,
@@ -1048,6 +1123,10 @@ class SamplerCompareAdvanced:
         
         Latents are now generated internally based on config chain width/height/num_frames.
         Global overrides can set width/height/num_frames for all variations.
+        
+        MULTI-VALUE SUPPORT: If sampling configs contain comma-separated values for
+        samplers, schedulers, steps, cfg, etc., they are expanded into additional
+        combinations automatically.
         """
         from nodes import common_ksampler
         
@@ -1081,6 +1160,15 @@ class SamplerCompareAdvanced:
             "wan22_end_step": 16,
             "hunyuan_shift": 7.0,
         }
+        
+        # Expand combinations with sampling config variations
+        original_count = len(combinations)
+        combinations, expanded_count = self._expand_combinations_with_sampling_variations(
+            combinations, config, node_defaults, global_config
+        )
+        
+        if expanded_count > original_count:
+            print(f"[SamplerCompareAdvanced] Expanded {original_count} base combinations to {expanded_count} with sampling variations")
         
         all_images = []
         all_labels = []
@@ -1265,10 +1353,19 @@ class SamplerCompareAdvanced:
             is_video_model = model_type in ['hunyuan', 'hunyuan15', 'wan21', 'wan22']
             
             # Get sampling config for this model variation
-            # Priority: global_config (from sampler) > config chain > node_defaults
+            # Priority: _sampling_override (from expansion) > global_config (from sampler) > config chain > node_defaults
             # Also get the resolved model_type from config chain (overrides clip_type detection)
-            # Use combination idx (0-indexed) to match config chain's variation_index-1
-            sampling_cfg, resolved_model_type = self._get_sampling_config_for_type(config, model_type, node_defaults, global_config, idx)
+            # Use model_index to match config chain (not loop idx, which could be different after expansion)
+            base_model_idx = combo.get("model_index", 0)
+            sampling_cfg, resolved_model_type = self._get_sampling_config_for_type(config, model_type, node_defaults, global_config, base_model_idx)
+            
+            # Apply sampling override from expanded variations (highest priority for expanded fields)
+            sampling_override = combo.get("_sampling_override")
+            if sampling_override:
+                for key, value in sampling_override.items():
+                    if value is not None and not key.startswith("_"):
+                        sampling_cfg[key] = value
+                print(f"[SamplerCompareAdvanced] Applied sampling override: {combo.get('_variation_label', 'N/A')}")
             
             # Use resolved model_type from config chain (handles QWEN_EDIT, Z_IMAGE, FLUX_KONTEXT properly)
             if resolved_model_type != model_type:
@@ -1542,6 +1639,12 @@ class SamplerCompareAdvanced:
             
             # Generate label (use user's custom label without model_type suffix)
             label = current_model_entry.get("display_name", current_model_entry.get("name", f"Model {model_idx}"))
+            
+            # Append variation label if this is an expanded combo
+            variation_label = combo.get("_variation_label", "")
+            if variation_label:
+                label = f"{label} | {variation_label}"
+            
             all_labels.append(label)
             print(f"[SamplerCompareAdvanced] Label: {label}")
             

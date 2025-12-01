@@ -8,12 +8,32 @@ model-specific sampling parameters.
 All parameters are "convertible widgets" - they can be used as regular widgets
 OR converted to inputs to receive values from other nodes/chains.
 
+Multi-Value Support:
+Many fields now support comma-separated values for variation expansion.
+- Samplers: "euler, dpmpp_2m, ddim" → samples with each
+- Schedulers: "normal, karras" → samples with each
+- Steps: "15, 20, 30" → samples with each step count
+- CFG: "1.0, 1.5, 2.0" → samples with each CFG value
+- Dimensions: "1024, 768" → samples with each width/height
+
 Flow:
 ModelCompareLoaders -> ConfigChain1 -> ConfigChain2 -> ... -> SamplerCompareAdvanced
 """
 
 import time
 import comfy.samplers
+
+# Import variation expander for multi-value support
+try:
+    from .variation_expander import (
+        parse_samplers, parse_schedulers, parse_steps, parse_cfg,
+        parse_denoise, parse_dimensions, parse_shift, parse_frames, parse_fps,
+        parse_numeric_list, count_variations, check_variation_warning
+    )
+    VARIATION_SUPPORT = True
+except ImportError:
+    VARIATION_SUPPORT = False
+    print("[SamplingConfigChain] Warning: variation_expander not found, multi-value support disabled")
 
 
 class SamplingConfigChain:
@@ -68,24 +88,21 @@ class SamplingConfigChain:
                     "tooltip": "Random seed for this variation. Use the control dropdown to set fixed/randomize/increment/decrement.",
                     "control_after_generate": True,  # Enables ComfyUI's built-in seed control
                 }),
-                "steps": ("INT", {
-                    "default": 20, 
-                    "min": 1, 
-                    "max": 10000,
-                    "tooltip": "Number of sampling steps (connectable)",
+                "steps": ("STRING", {
+                    "default": "20",
+                    "tooltip": "Number of sampling steps. Comma-separated for variations (e.g., '15, 20, 30')",
                 }),
-                "cfg": ("FLOAT", {
-                    "default": 7.0, 
-                    "min": 0.0, 
-                    "max": 100.0, 
-                    "step": 0.1,
-                    "tooltip": "Classifier-free guidance scale (connectable)",
+                "cfg": ("STRING", {
+                    "default": "7.0",
+                    "tooltip": "Classifier-free guidance scale. Comma-separated for variations (e.g., '1.0, 1.5, 2.0')",
                 }),
-                "sampler_name": (comfy.samplers.KSampler.SAMPLERS, {
-                    "tooltip": "Sampling algorithm (connectable)",
+                "sampler_name": ("STRING", {
+                    "default": "euler",
+                    "tooltip": "Sampling algorithm(s). Comma-separated for variations (e.g., 'euler, dpmpp_2m, ddim')",
                 }),
-                "scheduler": (comfy.samplers.KSampler.SCHEDULERS, {
-                    "tooltip": "Noise schedule (connectable)",
+                "scheduler": ("STRING", {
+                    "default": "normal",
+                    "tooltip": "Noise schedule(s). Comma-separated for variations (e.g., 'normal, karras, sgm_uniform')",
                 }),
                 "denoise": ("FLOAT", {
                     "default": 1.0, 
@@ -96,19 +113,13 @@ class SamplingConfigChain:
                 }),
                 
                 # === Latent Size Parameters (all types) ===
-                "width": ("INT", {
-                    "default": 1024, 
-                    "min": 64, 
-                    "max": 8192, 
-                    "step": 8,
-                    "tooltip": "Output width in pixels (connectable)",
+                "width": ("STRING", {
+                    "default": "1024",
+                    "tooltip": "Output width in pixels. Comma-separated for variations (e.g., '1024, 768, 512')",
                 }),
-                "height": ("INT", {
-                    "default": 1024, 
-                    "min": 64, 
-                    "max": 8192, 
-                    "step": 8,
-                    "tooltip": "Output height in pixels (connectable)",
+                "height": ("STRING", {
+                    "default": "1024",
+                    "tooltip": "Output height in pixels. Comma-separated for variations (e.g., '1024, 768, 512')",
                 }),
                 
                 # === Video Frame Count (video presets only) ===
@@ -120,12 +131,9 @@ class SamplingConfigChain:
                 }),
                 
                 # === QWEN Parameters ===
-                "qwen_shift": ("FLOAT", {
-                    "default": 1.15, 
-                    "min": 0.0, 
-                    "max": 20.0, 
-                    "step": 0.1,
-                    "tooltip": "[QWEN/QWEN_EDIT] AuraFlow shift parameter - QWEN default is 1.15 (connectable)",
+                "qwen_shift": ("STRING", {
+                    "default": "1.15",
+                    "tooltip": "[QWEN/QWEN_EDIT] AuraFlow shift. Comma-separated for variations (e.g., '1.0, 1.15, 1.5')",
                 }),
                 "qwen_cfg_norm": ("BOOLEAN", {
                     "default": True,
@@ -140,19 +148,13 @@ class SamplingConfigChain:
                 }),
                 
                 # === WAN Parameters ===
-                "wan_shift": ("FLOAT", {
-                    "default": 8.0, 
-                    "min": 0.0, 
-                    "max": 20.0, 
-                    "step": 0.1,
-                    "tooltip": "[WAN 2.1] Shift parameter (connectable)",
+                "wan_shift": ("STRING", {
+                    "default": "8.0",
+                    "tooltip": "[WAN 2.1] Shift. Comma-separated for variations (e.g., '6.0, 8.0, 10.0')",
                 }),
-                "wan22_shift": ("FLOAT", {
-                    "default": 8.0, 
-                    "min": 0.0, 
-                    "max": 20.0, 
-                    "step": 0.1,
-                    "tooltip": "[WAN 2.2] Shift parameter - default is 8.0 (connectable)",
+                "wan22_shift": ("STRING", {
+                    "default": "8.0",
+                    "tooltip": "[WAN 2.2] Shift. Comma-separated for variations (e.g., '6.0, 8.0, 10.0')",
                 }),
                 "wan22_high_start": ("INT", {
                     "default": 0, 
@@ -180,30 +182,21 @@ class SamplingConfigChain:
                 }),
                 
                 # === Hunyuan Parameters ===
-                "hunyuan_shift": ("FLOAT", {
-                    "default": 7.0, 
-                    "min": 0.0, 
-                    "max": 20.0, 
-                    "step": 0.1,
-                    "tooltip": "[Hunyuan] Shift parameter (connectable)",
+                "hunyuan_shift": ("STRING", {
+                    "default": "7.0",
+                    "tooltip": "[Hunyuan] Shift. Comma-separated for variations (e.g., '5.0, 7.0, 9.0')",
                 }),
                 
                 # === Z_IMAGE/Lumina2 Parameters ===
-                "lumina_shift": ("FLOAT", {
-                    "default": 3.0, 
-                    "min": 0.0, 
-                    "max": 20.0, 
-                    "step": 0.1,
-                    "tooltip": "[Z_IMAGE/Lumina2] Shift parameter - default is 3.0 (connectable)",
+                "lumina_shift": ("STRING", {
+                    "default": "3.0",
+                    "tooltip": "[Z_IMAGE/Lumina2] Shift. Comma-separated for variations (e.g., '2.0, 3.0, 4.0')",
                 }),
                 
                 # === FLUX Parameters ===
-                "flux_guidance": ("FLOAT", {
-                    "default": 3.5, 
-                    "min": 0.0, 
-                    "max": 100.0, 
-                    "step": 0.1,
-                    "tooltip": "[FLUX/FLUX2/FLUX_KONTEXT] Guidance scale (connectable)",
+                "flux_guidance": ("STRING", {
+                    "default": "3.5",
+                    "tooltip": "[FLUX/FLUX2/FLUX_KONTEXT] Guidance. Comma-separated for variations (e.g., '2.5, 3.5, 4.5')",
                 }),
                 
                 # === Video Parameters (WAN, Hunyuan) ===
@@ -256,33 +249,34 @@ class SamplingConfigChain:
         variation_index: int,
         config_type: str,
         # Optional parameters with defaults (can be connected as inputs)
+        # Now STRING types for multi-value support
         seed: int = 0,
-        steps: int = 20,
-        cfg: float = 7.0,
+        steps: str = "20",
+        cfg: str = "7.0",
         sampler_name: str = "euler",
         scheduler: str = "normal",
         denoise: float = 1.0,
         # Latent size parameters
-        width: int = 1024,
-        height: int = 1024,
+        width: str = "1024",
+        height: str = "1024",
         num_frames: int = 81,
         # QWEN parameters
-        qwen_shift: float = 1.15,
+        qwen_shift: str = "1.15",
         qwen_cfg_norm: bool = True,
         qwen_cfg_norm_multiplier: float = 0.7,
         # WAN parameters
-        wan_shift: float = 8.0,
-        wan22_shift: float = 5.0,
+        wan_shift: str = "8.0",
+        wan22_shift: str = "8.0",
         wan22_high_start: int = 0,
         wan22_high_end: int = 10,
         wan22_low_start: int = 10,
         wan22_low_end: int = 20,
         # Hunyuan parameters
-        hunyuan_shift: float = 7.0,
+        hunyuan_shift: str = "7.0",
         # Z_IMAGE/Lumina2 parameters
-        lumina_shift: float = 3.0,
+        lumina_shift: str = "3.0",
         # FLUX parameters
-        flux_guidance: float = 3.5,
+        flux_guidance: str = "3.5",
         # Video parameters
         fps: int = 24,
         # Reference images (optional)
@@ -300,7 +294,7 @@ class SamplingConfigChain:
         Apply sampling configuration to a specific model variation.
         The config is passed through with sampling_configs added/updated.
         
-        All parameters are also output for chaining to other nodes.
+        Multi-value fields (comma-separated) are parsed into lists for expansion.
         """
         import copy
         
@@ -314,31 +308,78 @@ class SamplingConfigChain:
         # Zero-indexed internally (user sees 1-indexed)
         idx = variation_index - 1
         
+        # Parse multi-value fields into lists
+        if VARIATION_SUPPORT:
+            samplers_list = parse_samplers(sampler_name)
+            schedulers_list = parse_schedulers(scheduler)
+            steps_list = parse_steps(steps)
+            cfg_list = parse_cfg(cfg)
+            width_list = parse_dimensions(width)
+            height_list = parse_dimensions(height)
+            qwen_shift_list = parse_shift(qwen_shift, 1.15)
+            wan_shift_list = parse_shift(wan_shift, 8.0)
+            wan22_shift_list = parse_shift(wan22_shift, 8.0)
+            hunyuan_shift_list = parse_shift(hunyuan_shift, 7.0)
+            lumina_shift_list = parse_shift(lumina_shift, 3.0)
+            flux_guidance_list = parse_numeric_list(flux_guidance, float, 3.5, 0.0, 100.0)
+        else:
+            # Fallback: single values
+            samplers_list = [sampler_name]
+            schedulers_list = [scheduler]
+            steps_list = [int(steps) if isinstance(steps, str) else steps]
+            cfg_list = [float(cfg) if isinstance(cfg, str) else cfg]
+            width_list = [int(width) if isinstance(width, str) else width]
+            height_list = [int(height) if isinstance(height, str) else height]
+            qwen_shift_list = [float(qwen_shift) if isinstance(qwen_shift, str) else qwen_shift]
+            wan_shift_list = [float(wan_shift) if isinstance(wan_shift, str) else wan_shift]
+            wan22_shift_list = [float(wan22_shift) if isinstance(wan22_shift, str) else wan22_shift]
+            hunyuan_shift_list = [float(hunyuan_shift) if isinstance(hunyuan_shift, str) else hunyuan_shift]
+            lumina_shift_list = [float(lumina_shift) if isinstance(lumina_shift, str) else lumina_shift]
+            flux_guidance_list = [float(flux_guidance) if isinstance(flux_guidance, str) else flux_guidance]
+        
         # Build the sampling config for this variation
+        # Store BOTH single values (first item, for backward compat) AND full lists
         sampling_config = {
             "config_type": config_type,
             "seed": seed,
-            "steps": steps,
-            "cfg": cfg,
-            "sampler_name": sampler_name,
-            "scheduler": scheduler,
+            # Single values (first from each list) for backward compatibility
+            "steps": steps_list[0],
+            "cfg": cfg_list[0],
+            "sampler_name": samplers_list[0],
+            "scheduler": schedulers_list[0],
             "denoise": denoise,
             "fps": fps,
-            "width": width,
-            "height": height,
+            "width": width_list[0],
+            "height": height_list[0],
+            # Full lists for expansion
+            "steps_list": steps_list,
+            "cfg_list": cfg_list,
+            "sampler_names": samplers_list,
+            "schedulers": schedulers_list,
+            "width_list": width_list,
+            "height_list": height_list,
         }
+        
+        # Calculate variation count for this config
+        variation_count = (
+            len(samplers_list) * len(schedulers_list) * len(steps_list) * 
+            len(cfg_list) * len(width_list) * len(height_list)
+        )
+        sampling_config["_variation_count"] = variation_count
         
         # Add video frame count for video models
         if config_type in ["WAN2.1", "WAN2.2", "HUNYUAN_VIDEO", "HUNYUAN_VIDEO_15"]:
             sampling_config["num_frames"] = num_frames
         
-        # Add type-specific parameters
+        # Add type-specific parameters (with lists)
         if config_type in ["QWEN", "QWEN_EDIT"]:
             sampling_config.update({
-                "qwen_shift": qwen_shift,
+                "qwen_shift": qwen_shift_list[0],
+                "qwen_shift_list": qwen_shift_list,
                 "qwen_cfg_norm": qwen_cfg_norm,
                 "qwen_cfg_norm_multiplier": qwen_cfg_norm_multiplier,
             })
+            variation_count *= len(qwen_shift_list)
             # QWEN_EDIT can have reference images
             if config_type == "QWEN_EDIT":
                 ref_images = []
@@ -352,19 +393,23 @@ class SamplingConfigChain:
                     sampling_config["reference_images"] = ref_images
         elif config_type == "WAN2.1":
             sampling_config.update({
-                "wan_shift": wan_shift,
+                "wan_shift": wan_shift_list[0],
+                "wan_shift_list": wan_shift_list,
             })
+            variation_count *= len(wan_shift_list)
             # WAN2.1 I2V support
             if start_frame is not None:
                 sampling_config["start_frame"] = start_frame
         elif config_type == "WAN2.2":
             sampling_config.update({
-                "wan22_shift": wan22_shift,
+                "wan22_shift": wan22_shift_list[0],
+                "wan22_shift_list": wan22_shift_list,
                 "wan22_high_start": wan22_high_start,
                 "wan22_high_end": wan22_high_end,
                 "wan22_low_start": wan22_low_start,
                 "wan22_low_end": wan22_low_end,
             })
+            variation_count *= len(wan22_shift_list)
             # WAN2.2 I2V/FLF2V support
             if start_frame is not None:
                 sampling_config["start_frame"] = start_frame
@@ -372,12 +417,16 @@ class SamplingConfigChain:
                 sampling_config["end_frame"] = end_frame
         elif config_type == "HUNYUAN_VIDEO":
             sampling_config.update({
-                "hunyuan_shift": hunyuan_shift,
+                "hunyuan_shift": hunyuan_shift_list[0],
+                "hunyuan_shift_list": hunyuan_shift_list,
             })
+            variation_count *= len(hunyuan_shift_list)
         elif config_type == "HUNYUAN_VIDEO_15":
             sampling_config.update({
-                "hunyuan_shift": hunyuan_shift,
+                "hunyuan_shift": hunyuan_shift_list[0],
+                "hunyuan_shift_list": hunyuan_shift_list,
             })
+            variation_count *= len(hunyuan_shift_list)
             # Hunyuan 1.5 I2V support
             if start_frame is not None:
                 sampling_config["start_frame"] = start_frame
@@ -385,8 +434,10 @@ class SamplingConfigChain:
                 sampling_config["clip_vision"] = clip_vision
         elif config_type in ["FLUX", "FLUX2", "FLUX_KONTEXT"]:
             sampling_config.update({
-                "flux_guidance": flux_guidance,
+                "flux_guidance": flux_guidance_list[0],
+                "flux_guidance_list": flux_guidance_list,
             })
+            variation_count *= len(flux_guidance_list)
             # FLUX2 and FLUX_KONTEXT can have reference images
             if config_type in ["FLUX2", "FLUX_KONTEXT"]:
                 ref_images = []
@@ -402,8 +453,18 @@ class SamplingConfigChain:
             # Z_IMAGE (Lumina2) uses AuraFlow sampling with shift parameter
             # NO CFG normalization by default (unlike QWEN)
             sampling_config.update({
-                "lumina_shift": lumina_shift,  # Z_IMAGE default is 3.0
+                "lumina_shift": lumina_shift_list[0],
+                "lumina_shift_list": lumina_shift_list,
             })
+            variation_count *= len(lumina_shift_list)
+        
+        # Update final variation count
+        sampling_config["_variation_count"] = variation_count
+        
+        # Check for warning threshold
+        warning_msg = None
+        if VARIATION_SUPPORT:
+            warning_msg = check_variation_warning(variation_count)
         
         # Store by variation index
         new_config["sampling_configs"][idx] = sampling_config
@@ -418,27 +479,59 @@ class SamplingConfigChain:
         print(f"[SamplingConfigChain] Applied config for variation {variation_index} ({config_type})")
         print(f"  Steps: {steps}, CFG: {cfg}, Sampler: {sampler_name}, Scheduler: {scheduler}")
         print(f"  Size: {width}x{height}")
+        
+        # Show variation count
+        if variation_count > 1:
+            print(f"  ⚡ Variations: {variation_count} combinations will be generated from this chain")
+            # Show what's being varied
+            varied_fields = []
+            if len(samplers_list) > 1:
+                varied_fields.append(f"samplers({len(samplers_list)})")
+            if len(schedulers_list) > 1:
+                varied_fields.append(f"schedulers({len(schedulers_list)})")
+            if len(steps_list) > 1:
+                varied_fields.append(f"steps({len(steps_list)})")
+            if len(cfg_list) > 1:
+                varied_fields.append(f"cfg({len(cfg_list)})")
+            if len(width_list) > 1:
+                varied_fields.append(f"width({len(width_list)})")
+            if len(height_list) > 1:
+                varied_fields.append(f"height({len(height_list)})")
+            if varied_fields:
+                print(f"  Varied: {', '.join(varied_fields)}")
+        
+        # Show warning if threshold exceeded
+        if warning_msg:
+            print(f"  {warning_msg}")
+        
         if config_type in ["QWEN", "QWEN_EDIT"]:
             has_refs = "reference_images" in sampling_config
-            print(f"  QWEN: shift={qwen_shift}, cfg_norm={qwen_cfg_norm}, has_refs={has_refs}")
+            shift_info = f"shift={qwen_shift_list}" if len(qwen_shift_list) > 1 else f"shift={qwen_shift_list[0]}"
+            print(f"  QWEN: {shift_info}, cfg_norm={qwen_cfg_norm}, has_refs={has_refs}")
         elif config_type == "WAN2.1":
             has_start = "start_frame" in sampling_config
-            print(f"  WAN 2.1: shift={wan_shift}, frames={num_frames}, has_start_frame={has_start}")
+            shift_info = f"shift={wan_shift_list}" if len(wan_shift_list) > 1 else f"shift={wan_shift_list[0]}"
+            print(f"  WAN 2.1: {shift_info}, frames={num_frames}, has_start_frame={has_start}")
         elif config_type == "WAN2.2":
             has_start = "start_frame" in sampling_config
             has_end = "end_frame" in sampling_config
-            print(f"  WAN 2.2: shift={wan22_shift}, high={wan22_high_start}-{wan22_high_end}, low={wan22_low_start}-{wan22_low_end}, frames={num_frames}, has_start={has_start}, has_end={has_end}")
+            shift_info = f"shift={wan22_shift_list}" if len(wan22_shift_list) > 1 else f"shift={wan22_shift_list[0]}"
+            print(f"  WAN 2.2: {shift_info}, high={wan22_high_start}-{wan22_high_end}, low={wan22_low_start}-{wan22_low_end}, frames={num_frames}, has_start={has_start}, has_end={has_end}")
         elif config_type == "HUNYUAN_VIDEO":
-            print(f"  Hunyuan: shift={hunyuan_shift}, frames={num_frames}")
+            shift_info = f"shift={hunyuan_shift_list}" if len(hunyuan_shift_list) > 1 else f"shift={hunyuan_shift_list[0]}"
+            print(f"  Hunyuan: {shift_info}, frames={num_frames}")
         elif config_type == "HUNYUAN_VIDEO_15":
             has_start = "start_frame" in sampling_config
             has_clip_vision = "clip_vision" in sampling_config
-            print(f"  Hunyuan 1.5: shift={hunyuan_shift}, frames={num_frames}, has_start_frame={has_start}, has_clip_vision={has_clip_vision}")
+            shift_info = f"shift={hunyuan_shift_list}" if len(hunyuan_shift_list) > 1 else f"shift={hunyuan_shift_list[0]}"
+            print(f"  Hunyuan 1.5: {shift_info}, frames={num_frames}, has_start_frame={has_start}, has_clip_vision={has_clip_vision}")
         elif config_type in ["FLUX", "FLUX2", "FLUX_KONTEXT"]:
             has_refs = "reference_images" in sampling_config
-            print(f"  {config_type}: guidance={flux_guidance}, has_refs={has_refs}")
+            guidance_info = f"guidance={flux_guidance_list}" if len(flux_guidance_list) > 1 else f"guidance={flux_guidance_list[0]}"
+            print(f"  {config_type}: {guidance_info}, has_refs={has_refs}")
         elif config_type == "Z_IMAGE":
-            print(f"  Z_IMAGE: shift={lumina_shift} (Lumina2, no CFG norm)")
+            shift_info = f"shift={lumina_shift_list}" if len(lumina_shift_list) > 1 else f"shift={lumina_shift_list[0]}"
+            print(f"  Z_IMAGE: {shift_info} (Lumina2, no CFG norm)")
         
         # Return only config
         return (new_config,)
