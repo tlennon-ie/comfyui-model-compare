@@ -120,33 +120,40 @@ class SamplerCompareAdvanced:
                 "tooltip": f"Global {i+1}: Select which parameter to set globally"
             })
             
-            # Integer value (for seed, steps)
-            inputs["optional"][f"global_value_int_{i}"] = ("INT", {
-                "default": 0,
-                "min": 0,
-                "max": 0xffffffffffffffff,
-                "tooltip": f"Global {i+1}: Integer value (seed, steps)"
+            # Seed value - STRING to support comma-separated multi-values
+            inputs["optional"][f"global_value_seed_{i}"] = ("STRING", {
+                "default": "0",
+                "tooltip": f"Global {i+1}: Seed value(s) - comma-separated for variations (e.g., '123, 456, 789')"
             })
             
-            # Float value (for cfg, denoise)
-            inputs["optional"][f"global_value_float_{i}"] = ("FLOAT", {
-                "default": 1.0,
-                "min": 0.0,
-                "max": 100.0,
-                "step": 0.01,
-                "tooltip": f"Global {i+1}: Float value (cfg, denoise)"
+            # Steps value - STRING to support comma-separated multi-values
+            inputs["optional"][f"global_value_steps_{i}"] = ("STRING", {
+                "default": "20",
+                "tooltip": f"Global {i+1}: Step count(s) - comma-separated for variations (e.g., '15, 20, 30')"
             })
             
-            # Sampler selector
-            inputs["optional"][f"global_value_sampler_{i}"] = (comfy.samplers.KSampler.SAMPLERS, {
-                "default": comfy.samplers.KSampler.SAMPLERS[0],
-                "tooltip": f"Global {i+1}: Sampler name"
+            # CFG value - STRING to support comma-separated multi-values
+            inputs["optional"][f"global_value_cfg_{i}"] = ("STRING", {
+                "default": "7.0",
+                "tooltip": f"Global {i+1}: CFG value(s) - comma-separated for variations (e.g., '1.0, 1.5, 2.0')"
             })
             
-            # Scheduler selector
-            inputs["optional"][f"global_value_scheduler_{i}"] = (comfy.samplers.KSampler.SCHEDULERS, {
-                "default": comfy.samplers.KSampler.SCHEDULERS[0],
-                "tooltip": f"Global {i+1}: Scheduler name"
+            # Denoise value - STRING to support comma-separated multi-values
+            inputs["optional"][f"global_value_denoise_{i}"] = ("STRING", {
+                "default": "1.0",
+                "tooltip": f"Global {i+1}: Denoise value(s) - comma-separated for variations (e.g., '0.5, 0.75, 1.0')"
+            })
+            
+            # Sampler selector - STRING to support comma-separated multi-values
+            inputs["optional"][f"global_value_sampler_{i}"] = ("STRING", {
+                "default": "euler",
+                "tooltip": f"Global {i+1}: Sampler name(s) - comma-separated for variations (e.g., 'euler, dpmpp_2m, ddim')"
+            })
+            
+            # Scheduler selector - STRING to support comma-separated multi-values
+            inputs["optional"][f"global_value_scheduler_{i}"] = ("STRING", {
+                "default": "normal",
+                "tooltip": f"Global {i+1}: Scheduler name(s) - comma-separated for variations (e.g., 'normal, karras, beta')"
             })
             
             # Seed control mode (only used when param_type is 'seed')
@@ -158,10 +165,15 @@ class SamplerCompareAdvanced:
         return inputs
     
     def _build_global_config(self, num_global_fields: int, kwargs: Dict) -> Dict:
-        """Build global config from dynamic fields."""
+        """
+        Build global config from dynamic fields.
+        
+        Stores RAW STRING values for multi-value fields so they can be expanded later.
+        The expansion happens in _expand_combinations_with_global_variations.
+        """
         config = {
             "seed": None,
-            "seed_control": "fixed",  # Seed control mode
+            "seed_control": "fixed",
             "steps": None,
             "cfg": None,
             "denoise": None,
@@ -175,15 +187,16 @@ class SamplerCompareAdvanced:
             if param_type == "NONE":
                 continue
             
+            # Store raw string values - parsing/expansion happens later
             if param_type == "seed":
-                config["seed"] = kwargs.get(f"global_value_int_{i}", 0)
+                config["seed"] = kwargs.get(f"global_value_seed_{i}", "0")
                 config["seed_control"] = kwargs.get(f"global_seed_control_{i}", "fixed")
             elif param_type == "steps":
-                config["steps"] = kwargs.get(f"global_value_int_{i}", 20)
+                config["steps"] = kwargs.get(f"global_value_steps_{i}", "20")
             elif param_type == "cfg":
-                config["cfg"] = kwargs.get(f"global_value_float_{i}", 7.0)
+                config["cfg"] = kwargs.get(f"global_value_cfg_{i}", "7.0")
             elif param_type == "denoise":
-                config["denoise"] = kwargs.get(f"global_value_float_{i}", 1.0)
+                config["denoise"] = kwargs.get(f"global_value_denoise_{i}", "1.0")
             elif param_type == "sampler_name":
                 config["sampler_name"] = kwargs.get(f"global_value_sampler_{i}", "euler")
             elif param_type == "scheduler":
@@ -1051,63 +1064,199 @@ class SamplerCompareAdvanced:
         
         return result, resolved_model_type
 
+    def _expand_global_config(self, global_config: Dict) -> Tuple[List[Dict], List[str]]:
+        """
+        Expand global config multi-value fields into individual configs.
+        
+        Args:
+            global_config: Dict with potential comma-separated string values
+        
+        Returns:
+            Tuple of (list of expanded configs, list of variation labels)
+        """
+        if not VARIATION_SUPPORT or not global_config:
+            return [global_config] if global_config else [{}], [""]
+        
+        # Import parsers
+        from .variation_expander import (
+            parse_samplers, parse_schedulers, parse_steps, parse_cfg,
+            parse_denoise, parse_numeric_list
+        )
+        
+        # Parse multi-value fields
+        parsed = {}
+        for key, value in global_config.items():
+            if value is None:
+                continue
+            
+            if key == "sampler_name" and isinstance(value, str):
+                parsed["sampler_name"] = parse_samplers(value)
+            elif key == "scheduler" and isinstance(value, str):
+                parsed["scheduler"] = parse_schedulers(value)
+            elif key == "steps" and isinstance(value, str):
+                parsed["steps"] = parse_steps(value)
+            elif key == "cfg" and isinstance(value, str):
+                parsed["cfg"] = parse_cfg(value)
+            elif key == "denoise" and isinstance(value, str):
+                parsed["denoise"] = parse_denoise(value)
+            elif key == "seed" and isinstance(value, str):
+                # Parse seeds as integers
+                parsed["seed"] = parse_numeric_list(value, int, 0, min_val=0)
+            else:
+                # Non-expandable field, keep as single value
+                parsed[key] = [value]
+        
+        # Find fields with multiple values
+        expansion_fields = []
+        expansion_values = []
+        for key, values in parsed.items():
+            if isinstance(values, list) and len(values) > 1:
+                expansion_fields.append(key)
+                expansion_values.append(values)
+        
+        # If no multi-value fields, return single config
+        if not expansion_fields:
+            # Convert parsed lists back to single values
+            single_config = {}
+            for key, values in parsed.items():
+                if isinstance(values, list) and len(values) > 0:
+                    single_config[key] = values[0]
+                else:
+                    single_config[key] = values
+            return [single_config], [""]
+        
+        # Generate cartesian product of all expansions
+        import itertools
+        expanded_configs = []
+        variation_labels = []
+        
+        # Format helpers
+        def format_label(field):
+            return {"sampler_name": "S", "scheduler": "Sch", "steps": "st", "cfg": "cfg", "seed": "sd", "denoise": "dn"}.get(field, field)
+        def format_value(val):
+            if isinstance(val, float):
+                return f"{val:.2f}".rstrip('0').rstrip('.')
+            return str(val)
+        
+        for combo_values in itertools.product(*expansion_values):
+            # Build config for this combination
+            new_config = {}
+            label_parts = []
+            
+            # Copy non-expansion fields
+            for key, values in parsed.items():
+                if key not in expansion_fields:
+                    new_config[key] = values[0] if isinstance(values, list) else values
+            
+            # Set expansion field values
+            for field, value in zip(expansion_fields, combo_values):
+                new_config[field] = value
+                label_parts.append(f"{format_label(field)}:{format_value(value)}")
+            
+            expanded_configs.append(new_config)
+            variation_labels.append(" | ".join(label_parts))
+        
+        print(f"[SamplerCompareAdvanced] Expanded global config to {len(expanded_configs)} variations")
+        return expanded_configs, variation_labels
+
     def _expand_combinations_with_sampling_variations(self, combinations: List[Dict], config: Dict, node_defaults: Dict, global_config: Dict) -> Tuple[List[Dict], int]:
         """
         Expand combinations to include sampling parameter variations.
         
-        When sampling configs contain multi-value fields (e.g., "euler, dpmpp_2m" for sampler_name),
-        this creates additional combinations for each value.
+        PRIORITY (highest to lowest):
+        1. Global config multi-values (from sampler node) - OVERRIDE everything
+        2. Chain config multi-values (from SamplingConfigChain)
+        3. Node defaults
+        
+        If global config has multi-values for a field, chain values for that field are IGNORED.
         
         Args:
             combinations: Original list of model/vae/clip/lora/prompt combos
             config: Full config dict with sampling_configs
             node_defaults: Default sampling parameters
-            global_config: Global overrides
+            global_config: Global overrides (may have multi-value strings)
         
         Returns:
-            Tuple of (expanded_combinations, warning_count)
+            Tuple of (expanded_combinations, total_count)
             Each expanded combo has a "_sampling_override" dict with specific values
         """
         if not VARIATION_SUPPORT:
-            return combinations, 0
+            return combinations, len(combinations)
         
         sampling_configs = config.get("sampling_configs", {}) if config else {}
-        expanded_combos = []
-        total_variations = 0
         
-        for original_combo in combinations:
-            combo_idx = original_combo.get("model_index", 0)
-            
-            # Get the sampling config for this combo
-            if combo_idx in sampling_configs:
-                sampling_cfg = sampling_configs[combo_idx]
+        # First, expand global config multi-values
+        global_expansions, global_labels = self._expand_global_config(global_config)
+        
+        # Determine which fields are controlled globally (have values)
+        global_fields = set()
+        for gc in global_expansions:
+            global_fields.update(k for k, v in gc.items() if v is not None and k != "seed_control")
+        
+        if global_fields:
+            print(f"[SamplerCompareAdvanced] Global fields will override chain: {global_fields}")
+        
+        expanded_combos = []
+        
+        # For each global expansion...
+        for global_exp, global_label in zip(global_expansions, global_labels):
+            # For each original combo...
+            for original_combo in combinations:
+                combo_idx = original_combo.get("model_index", 0)
                 
-                # Expand the sampling config multi-value fields
-                expanded_configs, variation_labels = expand_sampling_config(sampling_cfg)
+                # Get chain config for this combo
+                chain_cfg = sampling_configs.get(combo_idx, {})
                 
-                if len(expanded_configs) > 1:
-                    # Multiple variations - create copies of the combo for each
-                    for exp_cfg, var_label in zip(expanded_configs, variation_labels):
-                        new_combo = dict(original_combo)
-                        new_combo["_sampling_override"] = exp_cfg
-                        new_combo["_variation_label"] = var_label
-                        expanded_combos.append(new_combo)
-                else:
-                    # Single value - no expansion needed
-                    expanded_combos.append(original_combo)
+                # Expand chain config (but only for non-global fields)
+                # First, mask global fields in chain config
+                filtered_chain_cfg = {k: v for k, v in chain_cfg.items() if k not in global_fields}
                 
-                total_variations += len(expanded_configs)
-            else:
-                # No sampling config for this combo - pass through
-                expanded_combos.append(original_combo)
-                total_variations += 1
+                # Expand the filtered chain config
+                chain_expansions, chain_labels = expand_sampling_config(filtered_chain_cfg) if filtered_chain_cfg else ([{}], [""])
+                
+                # For each chain expansion...
+                for chain_exp, chain_label in zip(chain_expansions, chain_labels):
+                    new_combo = dict(original_combo)
+                    
+                    # Build final sampling override: chain first, then global (global wins)
+                    sampling_override = {}
+                    
+                    # Copy original chain config (for non-expanded fields like config_type)
+                    for k, v in chain_cfg.items():
+                        if v is not None and k not in global_fields:
+                            sampling_override[k] = v
+                    
+                    # Apply chain expansion
+                    for k, v in chain_exp.items():
+                        if v is not None and k not in global_fields:
+                            sampling_override[k] = v
+                    
+                    # Apply global expansion (highest priority)
+                    for k, v in global_exp.items():
+                        if v is not None:
+                            sampling_override[k] = v
+                    
+                    new_combo["_sampling_override"] = sampling_override
+                    
+                    # Build combined label
+                    label_parts = []
+                    if global_label:
+                        label_parts.append(f"[G]{global_label}")
+                    if chain_label:
+                        label_parts.append(chain_label)
+                    new_combo["_variation_label"] = " ".join(label_parts)
+                    
+                    expanded_combos.append(new_combo)
         
         # Check for warning
         warning = check_variation_warning(len(expanded_combos))
         if warning:
             print(f"[SamplerCompareAdvanced] {warning}")
         
-        return expanded_combos, len(expanded_combos)
+        total = len(expanded_combos)
+        print(f"[SamplerCompareAdvanced] Total expanded combinations: {total}")
+        
+        return expanded_combos, total
 
     def sample_all_combinations(
         self,
@@ -1199,12 +1348,15 @@ class SamplerCompareAdvanced:
         cache_misses = 0
         
         # Seed control: track running seed and control mode
-        seed_control_mode = global_config.get("seed_control", "fixed")
+        # Note: seed_control can also come from per-variation config chains,
+        # so we check global first, then override per-variation in the loop if needed
+        global_seed_control_mode = global_config.get("seed_control", "fixed")
+        seed_control_mode = global_seed_control_mode  # Will be updated per-variation if config chain specifies
         initial_seed = global_config.get("seed")
         running_seed = initial_seed  # Will be updated after each combination based on control mode
         
         if initial_seed is not None:
-            print(f"[SamplerCompareAdvanced] Seed control: {seed_control_mode}, starting seed: {initial_seed}")
+            print(f"[SamplerCompareAdvanced] Initial seed control: {seed_control_mode}, starting seed: {initial_seed}")
         
         for idx, combo in enumerate(combinations):
             print(f"\n[SamplerCompareAdvanced] === Combination {idx + 1}/{len(combinations)} ===")
@@ -1418,7 +1570,15 @@ class SamplerCompareAdvanced:
             current_latent = self._create_latent_for_type(model_type, latent_width, latent_height, num_frames)
             
             # Extract sampling parameters (already merged by _get_sampling_config_for_type)
-            # Seed is controlled by ComfyUI's built-in control_after_generate mechanism
+            # Seed control can come from config chain or global config
+            # Per-variation seed_control takes priority over global
+            variation_seed_control = sampling_cfg.get("seed_control")
+            if variation_seed_control and variation_seed_control != global_seed_control_mode:
+                seed_control_mode = variation_seed_control
+                print(f"[SamplerCompareAdvanced] Using per-variation seed_control: {seed_control_mode}")
+            else:
+                seed_control_mode = global_seed_control_mode  # Reset to global default
+            
             use_seed = sampling_cfg.get("seed", 0)
             
             use_steps = sampling_cfg.get("steps", 20)
@@ -1744,6 +1904,11 @@ class SamplerCompareAdvanced:
             images_tensor = torch.cat(padded_images, dim=0)
         
         labels_str = "\n".join(all_labels)
+        
+        # CRITICAL: Update config with expanded combinations so GridCompare can access _sampling_override
+        # This allows the grid to properly detect varying dimensions
+        config = dict(config) if config else {}
+        config["combinations"] = combinations  # Now includes _sampling_override for each combo
         
         return (images_tensor, config, labels_str)
     

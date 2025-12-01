@@ -85,8 +85,12 @@ class SamplingConfigChain:
                     "default": 0, 
                     "min": 0, 
                     "max": 0xffffffffffffffff,
-                    "tooltip": "Random seed for this variation. Use the control dropdown to set fixed/randomize/increment/decrement.",
-                    "control_after_generate": True,  # Enables ComfyUI's built-in seed control
+                    "control_after_generate": False,  # Disable auto-randomize - we have explicit seed_control
+                    "tooltip": "Random seed for this variation. Use seed_control to set behavior.",
+                }),
+                "seed_control": (["fixed", "randomize", "increment", "decrement"], {
+                    "default": "fixed",
+                    "tooltip": "Seed behavior: fixed=exact value, randomize=new random each run, increment=+1 each combo, decrement=-1 each combo",
                 }),
                 "steps": ("STRING", {
                     "default": "20",
@@ -251,6 +255,7 @@ class SamplingConfigChain:
         # Optional parameters with defaults (can be connected as inputs)
         # Now STRING types for multi-value support
         seed: int = 0,
+        seed_control: str = "fixed",
         steps: str = "20",
         cfg: str = "7.0",
         sampler_name: str = "euler",
@@ -342,6 +347,7 @@ class SamplingConfigChain:
         sampling_config = {
             "config_type": config_type,
             "seed": seed,
+            "seed_control": seed_control,  # fixed, randomize, increment, decrement
             # Single values (first from each list) for backward compatibility
             "steps": steps_list[0],
             "cfg": cfg_list[0],
