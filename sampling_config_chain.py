@@ -98,11 +98,11 @@ class SamplingConfigChain:
                 }),
                 "sampler_name": ("STRING", {
                     "default": "euler",
-                    "tooltip": "Sampling algorithm(s). Comma-separated for variations (e.g., 'euler, dpmpp_2m, ddim')",
+                    "tooltip": "Sampling algorithm(s). Comma-separated for variations. Valid: euler, euler_ancestral, heun, dpm_2, dpm_2_ancestral, lms, dpm_fast, dpm_adaptive, dpmpp_2s_ancestral, dpmpp_sde, dpmpp_2m, dpmpp_2m_sde, dpmpp_3m_sde, ddpm, lcm, ipndm, ipndm_v, deis, ddim, uni_pc, uni_pc_bh2",
                 }),
                 "scheduler": ("STRING", {
                     "default": "normal",
-                    "tooltip": "Noise schedule(s). Comma-separated for variations (e.g., 'normal, karras, sgm_uniform')",
+                    "tooltip": "Noise schedule(s). Comma-separated for variations. Valid: normal, karras, exponential, sgm_uniform, simple, ddim_uniform, beta, linear_quadratic, kl_optimal",
                 }),
                 "denoise": ("FLOAT", {
                     "default": 1.0, 
