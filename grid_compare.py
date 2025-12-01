@@ -482,8 +482,34 @@ class GridCompare:
         all_pil_images = self._tensor_to_pil_list(images)
         print(f"  Converted {len(all_pil_images)} images to PIL")
         
-        # For image grid, extract only first frame per combination if we have multi-frame outputs
+        # Check if images were padded (different original sizes stored in config)
+        # If so, crop each image back to its original size
         combinations = config.get("combinations", [])
+        has_different_sizes = any(
+            combo.get("output_width") and combo.get("output_height") 
+            for combo in combinations
+        )
+        
+        if has_different_sizes and len(combinations) == len(all_pil_images):
+            print(f"[GridCompare] Extracting original image sizes from padded tensor...")
+            cropped_images = []
+            for i, (pil_img, combo) in enumerate(zip(all_pil_images, combinations)):
+                orig_w = combo.get("output_width")
+                orig_h = combo.get("output_height")
+                if orig_w and orig_h and (orig_w != pil_img.width or orig_h != pil_img.height):
+                    # Image was padded - crop to original size (centered)
+                    pad_w = pil_img.width
+                    pad_h = pil_img.height
+                    x_offset = (pad_w - orig_w) // 2
+                    y_offset = (pad_h - orig_h) // 2
+                    cropped = pil_img.crop((x_offset, y_offset, x_offset + orig_w, y_offset + orig_h))
+                    print(f"    Image {i+1}: cropped from {pad_w}x{pad_h} to {orig_w}x{orig_h}")
+                    cropped_images.append(cropped)
+                else:
+                    cropped_images.append(pil_img)
+            all_pil_images = cropped_images
+        
+        # For image grid, extract only first frame per combination if we have multi-frame outputs
         has_frame_counts = any(combo.get("output_frame_count", 1) > 1 for combo in combinations)
         
         if has_frame_counts:
@@ -1774,6 +1800,8 @@ class GridCompare:
                         break
                     img_counter += 1
                 
+                # Log actual image size being saved (for debugging resolution issues)
+                print(f"[GridCompare] Saving image {idx}: {img.size[0]}x{img.size[1]} -> {img_path}")
                 img.save(img_path, pnginfo=metadata, compress_level=4)
             
             print(f"[GridCompare] Saved {len(individual_images)} individual images to {save_dir}")

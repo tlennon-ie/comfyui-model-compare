@@ -956,14 +956,18 @@ class SamplerCompareAdvanced:
         
         return model, model_low, clip
 
-    def _get_sampling_config_for_type(self, config: Dict, model_type: str, defaults: Dict, global_config: Dict = None, model_idx: int = 0) -> Tuple[Dict, str]:
+    def _get_sampling_config_for_type(self, config: Dict, model_type: str, defaults: Dict, global_config: Dict = None, combo_idx: int = 0) -> Tuple[Dict, str]:
         """
-        Get sampling configuration for a specific model variation.
+        Get sampling configuration for a specific combination.
         
         Priority (later overrides earlier):
         1. Node defaults (lowest)
-        2. Config chain settings (matched by variation_index, NOT config_type)
+        2. Config chain settings (matched by combo_idx, which maps to variation_index-1)
         3. Global config (from sampler's dynamic fields) - highest priority
+        
+        Args:
+            combo_idx: The 0-indexed combination index. Config chains with variation_index=N
+                       are stored at key N-1, so combo_idx=0 matches variation_index=1, etc.
         
         Returns:
             Tuple of (sampling_config_dict, resolved_model_type)
@@ -993,12 +997,15 @@ class SamplerCompareAdvanced:
         result = dict(defaults)
         resolved_model_type = model_type  # Start with detected model_type
         
-        # Look for matching config by variation_index (PRIMARY matching method)
+        # Look for matching config by combo_idx (maps to variation_index-1)
+        # Config chain with variation_index=1 is stored at key 0, variation_index=2 at key 1, etc.
         found_chain = False
-        if isinstance(sampling_configs, dict) and model_idx in sampling_configs:
-            cfg = sampling_configs[model_idx]
+        if isinstance(sampling_configs, dict) and combo_idx in sampling_configs:
+            cfg = sampling_configs[combo_idx]
             chain_config_type = cfg.get("config_type", "STANDARD")
-            print(f"[SamplerCompareAdvanced] Found config chain for variation {model_idx} (config_type={chain_config_type})")
+            chain_width = cfg.get("width", "not set")
+            chain_height = cfg.get("height", "not set")
+            print(f"[SamplerCompareAdvanced] Found config chain for combo {combo_idx} (variation_index={combo_idx+1}): config_type={chain_config_type}, size={chain_width}x{chain_height}")
             found_chain = True
             
             # Override model_type from config chain's config_type
@@ -1021,7 +1028,7 @@ class SamplerCompareAdvanced:
                     print(f"[SamplerCompareAdvanced] Global override: {key} = {value}")
         
         if not found_chain and not global_config:
-            print(f"[SamplerCompareAdvanced] No config chain for variation {model_idx}, using node defaults")
+            print(f"[SamplerCompareAdvanced] No config chain for combo {combo_idx} (expected variation_index={combo_idx+1}), using node defaults")
         
         return result, resolved_model_type
 
@@ -1134,8 +1141,9 @@ class SamplerCompareAdvanced:
             early_model_entry = config.get("model_variations", [])[model_idx] if model_idx < len(config.get("model_variations", [])) else {}
             
             # Compute sampling config for cache hash (without loading model)
-            # Pass model_idx so config chain is matched by variation index
-            early_sampling_cfg, _ = self._get_sampling_config_for_type(config, early_model_type, node_defaults, global_config, model_idx)
+            # Pass combination idx (0-indexed) so config chain is matched by variation_index
+            # Config chain stores at variation_index-1, so variation_index=1 -> key=0, variation_index=2 -> key=1, etc.
+            early_sampling_cfg, _ = self._get_sampling_config_for_type(config, early_model_type, node_defaults, global_config, idx)
             
             # Determine dimensions for cache hash
             cache_width = use_global_width if use_global_width else early_sampling_cfg.get("width", 1024)
@@ -1259,7 +1267,8 @@ class SamplerCompareAdvanced:
             # Get sampling config for this model variation
             # Priority: global_config (from sampler) > config chain > node_defaults
             # Also get the resolved model_type from config chain (overrides clip_type detection)
-            sampling_cfg, resolved_model_type = self._get_sampling_config_for_type(config, model_type, node_defaults, global_config, model_idx)
+            # Use combination idx (0-indexed) to match config chain's variation_index-1
+            sampling_cfg, resolved_model_type = self._get_sampling_config_for_type(config, model_type, node_defaults, global_config, idx)
             
             # Use resolved model_type from config chain (handles QWEN_EDIT, Z_IMAGE, FLUX_KONTEXT properly)
             if resolved_model_type != model_type:
@@ -1310,16 +1319,20 @@ class SamplerCompareAdvanced:
             # Model-specific parameters (from config chain or defaults)
             use_flux_guidance = sampling_cfg.get("flux_guidance", 3.5)
             use_qwen_shift = sampling_cfg.get("qwen_shift", 1.15)  # QWEN default (from ComfyUI supported_models.py)
-            use_cfg_norm = sampling_cfg.get("cfg_norm", True)
-            use_cfg_norm_mult = sampling_cfg.get("cfg_norm_multiplier", 0.7)
+            use_cfg_norm = sampling_cfg.get("qwen_cfg_norm", True)  # Fixed: correct key name from config chain
+            use_cfg_norm_mult = sampling_cfg.get("qwen_cfg_norm_multiplier", 0.7)  # Fixed: correct key name from config chain
             use_wan_shift = sampling_cfg.get("wan_shift", 8.0)
+            use_wan22_shift = sampling_cfg.get("wan22_shift", 8.0)  # Added: WAN 2.2 shift
             # WAN 2.2 step ranges: high=0-high_end, low=high_end-low_end
             use_wan22_high_end = sampling_cfg.get("wan22_high_end", 10)
             use_wan22_low_end = sampling_cfg.get("wan22_low_end", 20)
             use_hunyuan_shift = sampling_cfg.get("hunyuan_shift", 7.0)
+            use_lumina_shift = sampling_cfg.get("lumina_shift", 3.0)  # Added: Z_IMAGE/Lumina2 shift
             
             print(f"[SamplerCompareAdvanced] Using: steps={use_steps}, cfg={use_cfg}, sampler={use_sampler}, scheduler={use_scheduler}")
             print(f"[SamplerCompareAdvanced] Dimensions: {latent_width}x{latent_height}" + (f", {num_frames} frames" if is_video_model else ""))
+            if model_type == 'z_image':
+                print(f"[SamplerCompareAdvanced] Z_IMAGE lumina_shift={use_lumina_shift} (from config chain)")
             
             # Clone and patch model
             working_model = current_model
@@ -1328,9 +1341,15 @@ class SamplerCompareAdvanced:
             
             working_model = self._apply_model_patches(
                 working_model, model_type,
-                qwen_shift=use_qwen_shift, wan_shift=use_wan_shift, hunyuan_shift=use_hunyuan_shift,
-                cfg_norm=use_cfg_norm, cfg_norm_multiplier=use_cfg_norm_mult,
-                latent_width=latent_width, latent_height=latent_height
+                qwen_shift=use_qwen_shift, 
+                wan_shift=use_wan_shift, 
+                wan22_shift=use_wan22_shift,
+                hunyuan_shift=use_hunyuan_shift,
+                lumina_shift=use_lumina_shift,
+                cfg_norm=use_cfg_norm, 
+                cfg_norm_multiplier=use_cfg_norm_mult,
+                latent_width=latent_width, 
+                latent_height=latent_height
             )
             
             # Encode conditioning with CLIP
@@ -1486,11 +1505,19 @@ class SamplerCompareAdvanced:
                     print(f"[SamplerCompareAdvanced] ERROR: No VAE loaded for decoding")
                     continue
                 image = self._decode_latent(sampled_latent, current_vae, is_video=is_video_model, num_frames=num_frames)
+                
+                # Log decoded image dimensions (for debugging resolution issues)
+                if image.dim() >= 3:
+                    h, w = image.shape[-3], image.shape[-2]
+                    print(f"[SamplerCompareAdvanced] Decoded image: {w}x{h} (requested: {latent_width}x{latent_height})")
+                
                 all_images.append(image)
                 
-                # Store actual frame count for this combination
+                # Store actual frame count and dimensions for this combination
                 actual_frame_count = image.shape[0]
                 combo["output_frame_count"] = actual_frame_count
+                combo["output_width"] = image.shape[2]  # W dimension
+                combo["output_height"] = image.shape[1]  # H dimension
                 
                 # Log video output info
                 if is_video_model and image.shape[0] > 1:
@@ -1565,17 +1592,40 @@ class SamplerCompareAdvanced:
         if not all_images:
             return (torch.zeros(1, 1, 1, 3), config, "No images")
         
-        # Resize if needed
-        target_h, target_w = all_images[0].shape[1], all_images[0].shape[2]
-        resized_images = []
-        for img in all_images:
-            if img.shape[1] != target_h or img.shape[2] != target_w:
-                img_p = img.permute(0, 3, 1, 2)
-                img_r = torch.nn.functional.interpolate(img_p, size=(target_h, target_w), mode='bilinear')
-                img = img_r.permute(0, 2, 3, 1)
-            resized_images.append(img)
+        # Check if all images have the same dimensions
+        shapes = [(img.shape[1], img.shape[2]) for img in all_images]
+        all_same_size = all(s == shapes[0] for s in shapes)
         
-        images_tensor = torch.cat(resized_images, dim=0)
+        if all_same_size:
+            # All same size - can concatenate directly
+            images_tensor = torch.cat(all_images, dim=0)
+        else:
+            # Different sizes - pad to largest dimensions instead of resizing
+            # This preserves the original resolution of each image
+            max_h = max(img.shape[1] for img in all_images)
+            max_w = max(img.shape[2] for img in all_images)
+            
+            print(f"[SamplerCompareAdvanced] Images have different sizes, padding to {max_w}x{max_h}")
+            for i, (h, w) in enumerate(shapes):
+                print(f"  Image {i+1}: {w}x{h}")
+            
+            padded_images = []
+            for img in all_images:
+                h, w = img.shape[1], img.shape[2]
+                if h == max_h and w == max_w:
+                    padded_images.append(img)
+                else:
+                    # Pad with white (1.0) to max dimensions
+                    # img shape is [B, H, W, C]
+                    padded = torch.ones((img.shape[0], max_h, max_w, img.shape[3]), dtype=img.dtype, device=img.device)
+                    # Center the original image in the padded tensor
+                    y_offset = (max_h - h) // 2
+                    x_offset = (max_w - w) // 2
+                    padded[:, y_offset:y_offset+h, x_offset:x_offset+w, :] = img
+                    padded_images.append(padded)
+            
+            images_tensor = torch.cat(padded_images, dim=0)
+        
         labels_str = "\n".join(all_labels)
         
         return (images_tensor, config, labels_str)
