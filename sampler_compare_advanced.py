@@ -2145,6 +2145,15 @@ class SamplerCompareAdvanced:
             force_full_denoise=True
         )[0]
         
+        # IMPORTANT: Clean up cloned models to prevent memory leak
+        # The clones hold references to the original model's tensors
+        del model_low_working
+        del model_low_patched
+        del samples_1
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        
         return samples_2
     
     @staticmethod

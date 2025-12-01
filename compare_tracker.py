@@ -31,6 +31,8 @@ _tracker_state = {
     "last_update": None,
     "status": "idle",  # idle, preparing, sampling, complete, error
     "current_label": "",
+    "html_grid_path": None,  # Path to generated HTML grid file
+    "html_grid_url": None,   # URL to open HTML grid in browser
 }
 
 
@@ -50,6 +52,8 @@ def reset_tracker_state():
         "last_update": None,
         "status": "idle",
         "current_label": "",
+        "html_grid_path": None,
+        "html_grid_url": None,
     }
 
 
@@ -68,6 +72,26 @@ def update_tracker_state(**kwargs):
             PromptServer.instance.send_sync("model_compare_progress", _tracker_state)
     except Exception:
         pass  # Server not available
+
+
+def set_html_grid_available(html_path: str, relative_url: str = None):
+    """Set HTML grid as available for the tracker to display.
+    
+    Args:
+        html_path: Full filesystem path to the HTML file
+        relative_url: URL path to serve the file (e.g., "/view?filename=...")
+    """
+    global _tracker_state
+    _tracker_state["html_grid_path"] = html_path
+    _tracker_state["html_grid_url"] = relative_url
+    
+    # Broadcast update
+    try:
+        from server import PromptServer
+        if PromptServer.instance is not None:
+            PromptServer.instance.send_sync("model_compare_progress", _tracker_state)
+    except Exception:
+        pass
 
 
 def get_tracker_state() -> Dict[str, Any]:

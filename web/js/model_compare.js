@@ -1327,7 +1327,7 @@ function registerExtension(app) {
                     setTimeout(() => {
                         if (this.size) {
                             this.size[0] = 280;
-                            this.size[1] = 220;
+                            this.size[1] = 240;
                         }
                     }, 10);
                 });
@@ -1349,10 +1349,12 @@ function registerExtension(app) {
                             totalChains: 0,
                             warnings: [],
                             startTime: null,
+                            htmlGridPath: null,
+                            htmlGridUrl: null,
                         };
 
                         // Set default size
-                        self.size = [280, 220];
+                        self.size = [280, 240];
 
                         // Custom draw function for the tracker display
                         const originalOnDrawForeground = self.onDrawForeground;
@@ -1400,6 +1402,42 @@ function registerExtension(app) {
                                 if (data.elapsed) {
                                     ctx.fillStyle = "#aaaaaa";
                                     ctx.fillText(`  Time: ${data.elapsed}`, x, y);
+                                    y += lineHeight;
+                                }
+                                
+                                // Show HTML Grid Available button
+                                if (data.htmlGridUrl) {
+                                    y += 5;
+                                    ctx.fillStyle = "#88ccff";
+                                    ctx.fillText("📊 HTML Grid Available", x, y);
+                                    y += lineHeight;
+                                    
+                                    // Draw a clickable button
+                                    const btnX = x;
+                                    const btnY = y - 12;
+                                    const btnWidth = 130;
+                                    const btnHeight = 22;
+                                    
+                                    // Store button bounds for click detection
+                                    this._htmlGridButton = { x: btnX, y: btnY, width: btnWidth, height: btnHeight, url: data.htmlGridUrl };
+                                    
+                                    // Button background
+                                    ctx.fillStyle = "#336699";
+                                    ctx.fillRect(btnX, btnY, btnWidth, btnHeight);
+                                    
+                                    // Button border
+                                    ctx.strokeStyle = "#5588bb";
+                                    ctx.lineWidth = 1;
+                                    ctx.strokeRect(btnX, btnY, btnWidth, btnHeight);
+                                    
+                                    // Button text
+                                    ctx.fillStyle = "#ffffff";
+                                    ctx.font = "11px monospace";
+                                    ctx.textAlign = "center";
+                                    ctx.fillText("🔗 Open HTML Grid", btnX + btnWidth/2, btnY + 15);
+                                    ctx.textAlign = "left";
+                                    
+                                    y += lineHeight + 5;
                                 }
                             } else {
                                 // Active/sampling state
@@ -1472,6 +1510,27 @@ function registerExtension(app) {
                                 });
                             }
                         };
+                        
+                        // Add click handler for the HTML Grid button
+                        const originalOnMouseDown = self.onMouseDown;
+                        self.onMouseDown = function(e, local_pos, graphCanvas) {
+                            // Check if click is on HTML Grid button
+                            if (this._htmlGridButton && this._trackerData && this._trackerData.htmlGridUrl) {
+                                const btn = this._htmlGridButton;
+                                const nodeY = 30; // Offset for node title
+                                if (local_pos[0] >= btn.x && local_pos[0] <= btn.x + btn.width &&
+                                    local_pos[1] >= btn.y && local_pos[1] <= btn.y + btn.height) {
+                                    // Open the HTML grid in a new tab
+                                    const url = window.location.origin + this._trackerData.htmlGridUrl;
+                                    window.open(url, '_blank');
+                                    return true;
+                                }
+                            }
+                            if (originalOnMouseDown) {
+                                return originalOnMouseDown.call(this, e, local_pos, graphCanvas);
+                            }
+                            return false;
+                        };
 
                         // Trigger initial redraw
                         setTimeout(() => {
@@ -1532,6 +1591,8 @@ function updateTrackerDisplay(node, data) {
         totalChains: data.total_chains || 1,
         warnings: data.warnings || [],
         startTime: data.start_time,
+        htmlGridPath: data.html_grid_path || null,
+        htmlGridUrl: data.html_grid_url || null,
     };
     
     // Request redraw
