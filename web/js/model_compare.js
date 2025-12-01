@@ -1,5 +1,21 @@
 // Model Compare Web Extension
 // Adds "Update Inputs" button to Model Compare nodes and handles dynamic visibility
+// Supports multi-value input fields with autocomplete append functionality
+
+// Valid samplers and schedulers from ComfyUI (updated dynamically if possible)
+const VALID_SAMPLERS = [
+    "euler", "euler_cfg_pp", "euler_ancestral", "euler_ancestral_cfg_pp",
+    "heun", "heunpp2", "dpm_2", "dpm_2_ancestral", "lms", "dpm_fast", 
+    "dpm_adaptive", "dpmpp_2s_ancestral", "dpmpp_2s_ancestral_cfg_pp",
+    "dpmpp_sde", "dpmpp_sde_gpu", "dpmpp_2m", "dpmpp_2m_cfg_pp",
+    "dpmpp_2m_sde", "dpmpp_2m_sde_gpu", "dpmpp_3m_sde", "dpmpp_3m_sde_gpu",
+    "ddpm", "lcm", "ipndm", "ipndm_v", "deis", "ddim", "uni_pc", "uni_pc_bh2"
+];
+
+const VALID_SCHEDULERS = [
+    "normal", "karras", "exponential", "sgm_uniform", "simple",
+    "ddim_uniform", "beta", "linear_quadratic", "kl_optimal"
+];
 
 function chainCallback(object, property, callback) {
     if (object == undefined) {
@@ -14,6 +30,97 @@ function chainCallback(object, property, callback) {
         };
     } else {
         object[property] = callback;
+    }
+}
+
+/**
+ * Create an autocomplete dropdown for multi-value string fields
+ * @param {Object} widget - The LiteGraph widget
+ * @param {Array} validOptions - Array of valid option strings
+ * @param {Object} node - The node instance
+ */
+function addAutocompleteDropdown(widget, validOptions, node) {
+    if (!widget || !widget.element) return;
+    
+    const container = document.createElement('div');
+    container.className = 'model-compare-autocomplete';
+    container.style.cssText = 'position: relative; display: inline-block;';
+    
+    // Create dropdown button
+    const dropdownBtn = document.createElement('button');
+    dropdownBtn.textContent = '▼';
+    dropdownBtn.style.cssText = `
+        position: absolute;
+        right: 4px;
+        top: 50%;
+        transform: translateY(-50%);
+        background: #444;
+        border: 1px solid #666;
+        border-radius: 3px;
+        color: #fff;
+        cursor: pointer;
+        padding: 2px 6px;
+        font-size: 10px;
+    `;
+    
+    // Create dropdown menu
+    const dropdown = document.createElement('div');
+    dropdown.style.cssText = `
+        position: absolute;
+        top: 100%;
+        right: 0;
+        background: #333;
+        border: 1px solid #666;
+        border-radius: 4px;
+        max-height: 200px;
+        overflow-y: auto;
+        display: none;
+        z-index: 1000;
+        min-width: 150px;
+    `;
+    
+    validOptions.forEach(option => {
+        const item = document.createElement('div');
+        item.textContent = option;
+        item.style.cssText = `
+            padding: 4px 8px;
+            cursor: pointer;
+            font-size: 12px;
+        `;
+        item.onmouseenter = () => item.style.background = '#555';
+        item.onmouseleave = () => item.style.background = 'transparent';
+        item.onclick = () => {
+            // Append to current value
+            const currentValue = widget.value || '';
+            const values = currentValue.split(',').map(v => v.trim()).filter(v => v);
+            if (!values.includes(option)) {
+                values.push(option);
+                widget.value = values.join(', ');
+                if (widget.callback) widget.callback(widget.value);
+                if (node.onPropertyChanged) node.onPropertyChanged(widget.name, widget.value);
+            }
+            dropdown.style.display = 'none';
+        };
+        dropdown.appendChild(item);
+    });
+    
+    dropdownBtn.onclick = (e) => {
+        e.stopPropagation();
+        dropdown.style.display = dropdown.style.display === 'none' ? 'block' : 'none';
+    };
+    
+    // Close dropdown when clicking outside
+    document.addEventListener('click', () => {
+        dropdown.style.display = 'none';
+    });
+    
+    container.appendChild(dropdownBtn);
+    container.appendChild(dropdown);
+    
+    // Try to attach to widget element
+    if (widget.element && widget.element.parentNode) {
+        widget.element.parentNode.style.position = 'relative';
+        widget.element.parentNode.appendChild(container);
     }
 }
 
