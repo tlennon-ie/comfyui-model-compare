@@ -218,6 +218,35 @@ body {
     font-weight: 600;
 }
 
+.header-tagline {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    margin-top: 4px;
+}
+
+.header-tagline a {
+    color: var(--accent);
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    transition: color 0.2s;
+}
+
+.header-tagline a:hover {
+    color: var(--accent-hover);
+    text-decoration: underline;
+}
+
+.github-icon {
+    width: 16px;
+    height: 16px;
+    fill: currentColor;
+}
+
 .header-controls {
     display: flex;
     gap: 10px;
@@ -356,8 +385,11 @@ body {
 .grid-item img {
     width: 100%;
     aspect-ratio: 1;
-    object-fit: cover;
+    object-fit: contain;
     display: block;
+    background: var(--bg-secondary);
+    padding: 4px;
+    box-sizing: border-box;
 }
 
 .grid-item-info {
@@ -384,7 +416,79 @@ body {
     background: var(--bg-secondary);
     border-radius: 4px;
     color: var(--text-secondary);
+    display: flex;
+    align-items: center;
+    gap: 4px;
 }
+
+.meta-tag-label {
+    font-weight: 600;
+    opacity: 0.7;
+}
+
+/* Color-coded meta tags by field type */
+.meta-tag-sampler {
+    background: rgba(233, 69, 96, 0.2);
+    border: 1px solid rgba(233, 69, 96, 0.4);
+    color: #e94560;
+}
+
+.meta-tag-scheduler {
+    background: rgba(129, 140, 248, 0.2);
+    border: 1px solid rgba(129, 140, 248, 0.4);
+    color: #818cf8;
+}
+
+.meta-tag-steps {
+    background: rgba(52, 211, 153, 0.2);
+    border: 1px solid rgba(52, 211, 153, 0.4);
+    color: #34d399;
+}
+
+.meta-tag-cfg {
+    background: rgba(251, 191, 36, 0.2);
+    border: 1px solid rgba(251, 191, 36, 0.4);
+    color: #fbbf24;
+}
+
+.meta-tag-denoise {
+    background: rgba(236, 72, 153, 0.2);
+    border: 1px solid rgba(236, 72, 153, 0.4);
+    color: #ec4899;
+}
+
+.meta-tag-seed {
+    background: rgba(14, 165, 233, 0.2);
+    border: 1px solid rgba(14, 165, 233, 0.4);
+    color: #0ea5e9;
+}
+
+.meta-tag-model {
+    background: rgba(168, 85, 247, 0.2);
+    border: 1px solid rgba(168, 85, 247, 0.4);
+    color: #a855f7;
+}
+
+.meta-tag-lora {
+    background: rgba(249, 115, 22, 0.2);
+    border: 1px solid rgba(249, 115, 22, 0.4);
+    color: #f97316;
+}
+
+.meta-tag-default {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+}
+
+/* Light theme adjustments for tags */
+[data-theme="light"] .meta-tag-sampler { color: #be123c; }
+[data-theme="light"] .meta-tag-scheduler { color: #4f46e5; }
+[data-theme="light"] .meta-tag-steps { color: #059669; }
+[data-theme="light"] .meta-tag-cfg { color: #d97706; }
+[data-theme="light"] .meta-tag-denoise { color: #be185d; }
+[data-theme="light"] .meta-tag-seed { color: #0284c7; }
+[data-theme="light"] .meta-tag-model { color: #7c3aed; }
+[data-theme="light"] .meta-tag-lora { color: #c2410c; }
 
 /* Lightbox */
 .lightbox {
@@ -701,13 +805,19 @@ JS_TEMPLATE = """
             const meta = document.createElement('div');
             meta.className = 'grid-item-meta';
             
-            // Add key parameter tags
-            const keyParams = ['sampler_name', 'scheduler', 'steps', 'cfg'];
+            // Add key parameter tags with labels and color coding
+            const keyParams = ['sampler_name', 'scheduler', 'steps', 'cfg', 'denoise', 'seed'];
             keyParams.forEach(param => {
                 if (item.params[param] !== undefined) {
                     const tag = document.createElement('span');
-                    tag.className = 'meta-tag';
-                    tag.textContent = formatValue(item.params[param]);
+                    tag.className = 'meta-tag ' + getTagClass(param);
+                    
+                    const labelSpan = document.createElement('span');
+                    labelSpan.className = 'meta-tag-label';
+                    labelSpan.textContent = getTagLabel(param);
+                    
+                    tag.appendChild(labelSpan);
+                    tag.appendChild(document.createTextNode(formatValue(item.params[param])));
                     meta.appendChild(tag);
                 }
             });
@@ -1024,6 +1134,44 @@ JS_TEMPLATE = """
         return String(value);
     }
     
+    // Get CSS class for tag based on field type
+    function getTagClass(field) {
+        const classes = {
+            'sampler_name': 'meta-tag-sampler',
+            'scheduler': 'meta-tag-scheduler',
+            'steps': 'meta-tag-steps',
+            'cfg': 'meta-tag-cfg',
+            'denoise': 'meta-tag-denoise',
+            'seed': 'meta-tag-seed',
+            'model': 'meta-tag-model',
+            'lora_name': 'meta-tag-lora',
+            'lora_names': 'meta-tag-lora',
+            'lora_strength': 'meta-tag-lora',
+            'lora_strengths': 'meta-tag-lora'
+        };
+        return classes[field] || 'meta-tag-default';
+    }
+    
+    // Get label prefix for tag
+    function getTagLabel(field) {
+        const labels = {
+            'sampler_name': 'Sampler: ',
+            'scheduler': 'Scheduler: ',
+            'steps': 'Steps: ',
+            'cfg': 'CFG: ',
+            'denoise': 'Denoise: ',
+            'seed': 'Seed: ',
+            'model': 'Model: ',
+            'lora_name': 'LoRA: ',
+            'lora_names': 'LoRAs: ',
+            'lora_strength': 'Strength: ',
+            'lora_strengths': 'Strengths: ',
+            'width': 'W: ',
+            'height': 'H: '
+        };
+        return labels[field] || '';
+    }
+    
     function buildLabel(params) {
         const parts = [];
         if (params.sampler_name) parts.push(params.sampler_name);
@@ -1129,6 +1277,15 @@ def generate_html_grid(
         <header class="header">
             <div>
                 <h1>{html.escape(title)}</h1>
+                <div class="header-tagline">
+                    Generated with 
+                    <a href="https://github.com/tlennon-ie/comfyui-model-compare" target="_blank" rel="noopener">
+                        <svg class="github-icon" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg">
+                            <path fill-rule="evenodd" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
+                        </svg>
+                        ComfyUI Model Compare
+                    </a>
+                </div>
                 <div class="stats">
                     <span class="stat">📊 Total: <strong id="statsTotal">{len(images)}</strong></span>
                     <span class="stat">👁️ Visible: <strong id="statsVisible">{len(images)}</strong></span>
