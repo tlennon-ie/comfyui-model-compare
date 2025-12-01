@@ -133,6 +133,16 @@ class GridCompare:
                     "step": 1,
                     "tooltip": "Video quality (CRF: lower = better, 18-28 recommended)"
                 }),
+                # Grid split options for multi-value variations
+                "grid_split_by": (["none", "model", "sampler", "scheduler", "chain", "auto"], {
+                    "default": "none",
+                    "tooltip": "Split into multiple grids by grouping dimension (useful for many variations)"
+                }),
+                "output_prefix": ("STRING", {
+                    "default": "compare",
+                    "multiline": False,
+                    "tooltip": "Prefix for individual image filenames (structured naming)"
+                }),
             },
             "hidden": {
                 "prompt": "PROMPT",
@@ -456,6 +466,8 @@ class GridCompare:
         video_format: str = "mp4",
         video_codec: str = "libx264",
         video_quality: int = 23,
+        grid_split_by: str = "none",
+        output_prefix: str = "compare",
         prompt=None,
         extra_pnginfo=None,
         **kwargs  # Ignore any optional x_label, y_label, z_label
@@ -638,12 +650,38 @@ class GridCompare:
                     title=grid_title,
                 )
 
-        # Save images
-        save_path = self._save_images(
-            grid_image=grid_image,
+        # Handle grid splitting if requested
+        all_grid_images = [grid_image]
+        grid_labels = [grid_title]
+        
+        if grid_split_by != "none":
+            split_grids = self._split_grids_by_dimension(
+                images=pil_images,
+                labels=label_list,
+                config=config,
+                split_by=grid_split_by,
+                gap_size=gap_size,
+                border_color=border_color,
+                border_width=border_width,
+                text_color=text_color,
+                font_size=font_size,
+                font_name=font_name,
+                title=grid_title,
+            )
+            if split_grids:
+                all_grid_images = [g["image"] for g in split_grids]
+                grid_labels = [g["label"] for g in split_grids]
+                print(f"[GridCompare] Split into {len(all_grid_images)} grids by {grid_split_by}")
+
+        # Save images with enhanced individual naming
+        save_path = self._save_images_enhanced(
+            grid_images=all_grid_images,
+            grid_labels=grid_labels,
             individual_images=pil_images if save_individuals else [],
+            individual_labels=label_list if save_individuals else [],
+            combinations=combinations if save_individuals else [],
             save_location=save_location,
-            title=grid_title,
+            output_prefix=output_prefix,
             save_metadata=save_metadata,
             prompt=prompt,
             extra_pnginfo=extra_pnginfo,
@@ -672,8 +710,12 @@ class GridCompare:
                 show_positive_prompt=show_positive_prompt,
             )
 
-        # Convert PIL back to tensor for output
-        output_tensor = self._pil_to_tensor(grid_image)
+        # Convert PIL back to tensor for output (all grids stacked)
+        if len(all_grid_images) > 1:
+            output_tensors = [self._pil_to_tensor(g) for g in all_grid_images]
+            output_tensor = torch.cat(output_tensors, dim=0)
+        else:
+            output_tensor = self._pil_to_tensor(all_grid_images[0])
 
         return (output_tensor, save_path, video_path)
 
@@ -1745,6 +1787,238 @@ class GridCompare:
             current_y += img_height + gap_size
         
         return grid_img
+
+    def _split_grids_by_dimension(
+        self,
+        images: List[Image.Image],
+        labels: List[str],
+        config: Dict[str, Any],
+        split_by: str,
+        gap_size: int,
+        border_color: str,
+        border_width: int,
+        text_color: str,
+        font_size: int,
+        font_name: str,
+        title: str,
+    ) -> List[Dict[str, Any]]:
+        """
+        Split images into multiple grids based on a grouping dimension.
+        
+        Args:
+            split_by: One of "model", "sampler", "scheduler", "chain", "auto"
+        
+        Returns:
+            List of {"image": PIL.Image, "label": str} for each split grid
+        """
+        combinations = config.get("combinations", [])
+        
+        if not combinations or not images:
+            return []
+        
+        # Determine grouping key based on split_by
+        def get_group_key(combo: Dict, idx: int) -> str:
+            if split_by == "model":
+                model = combo.get("model", "")
+                # Clean up model name
+                if model.endswith(".safetensors"):
+                    model = model[:-12]
+                return model
+            elif split_by == "sampler":
+                override = combo.get("_sampling_override", {})
+                return override.get("sampler_name", combo.get("sampler_name", "default"))
+            elif split_by == "scheduler":
+                override = combo.get("_sampling_override", {})
+                return override.get("scheduler", combo.get("scheduler", "default"))
+            elif split_by == "chain":
+                return str(combo.get("chain_index", 0))
+            elif split_by == "auto":
+                # Auto-detect: use first dimension with > 1 unique values
+                # Priority: model > sampler > scheduler > chain
+                override = combo.get("_sampling_override", {})
+                return f"{combo.get('model', '')}|{override.get('sampler_name', '')}|{override.get('scheduler', '')}"
+            else:
+                return "default"
+        
+        # Group images by key
+        groups: Dict[str, List[Tuple[int, Image.Image, str, Dict]]] = {}
+        for idx, (combo, img) in enumerate(zip(combinations, images)):
+            if idx >= len(labels):
+                label = f"Image {idx}"
+            else:
+                label = labels[idx]
+            
+            key = get_group_key(combo, idx)
+            if key not in groups:
+                groups[key] = []
+            groups[key].append((idx, img, label, combo))
+        
+        # If only one group, don't split
+        if len(groups) <= 1:
+            print(f"[GridCompare] Only one group found for split_by={split_by}, no split needed")
+            return []
+        
+        print(f"[GridCompare] Splitting into {len(groups)} grids by {split_by}: {list(groups.keys())}")
+        
+        # Create a grid for each group
+        result = []
+        for group_key, group_items in groups.items():
+            group_images = [item[1] for item in group_items]
+            group_labels = [item[2] for item in group_items]
+            
+            # Create title for this sub-grid
+            sub_title = f"{title} - {split_by.title()}: {group_key}"
+            
+            # Create simple grid for this group
+            sub_grid = self._create_simple_grid(
+                images=group_images,
+                labels=group_labels,
+                gap_size=gap_size,
+                border_color=border_color,
+                border_width=border_width,
+                text_color=text_color,
+                font_size=font_size,
+                font_name=font_name,
+                title=sub_title,
+            )
+            
+            result.append({
+                "image": sub_grid,
+                "label": f"{title}_{split_by}_{group_key}",
+            })
+        
+        return result
+
+    def _save_images_enhanced(
+        self,
+        grid_images: List[Image.Image],
+        grid_labels: List[str],
+        individual_images: List[Image.Image],
+        individual_labels: List[str],
+        combinations: List[Dict[str, Any]],
+        save_location: str,
+        output_prefix: str,
+        save_metadata: bool = False,
+        prompt=None,
+        extra_pnginfo=None,
+    ) -> str:
+        """
+        Save grids and individual images with enhanced structured naming.
+        
+        Individual images are saved as:
+        {output_prefix}_{idx}_{model}_{sampler}_{sched}_{cfg}_{steps}.png
+        
+        Also saves a metadata JSON file for easy programmatic access.
+        """
+        # Create metadata if requested
+        metadata = None
+        if save_metadata and not args.disable_metadata:
+            metadata = PngInfo()
+            if prompt is not None:
+                metadata.add_text("prompt", json.dumps(prompt))
+            if extra_pnginfo is not None:
+                for key in extra_pnginfo:
+                    metadata.add_text(key, json.dumps(extra_pnginfo[key]))
+        
+        # Create save directory
+        output_dir = folder_paths.get_output_directory()
+        save_dir = os.path.join(output_dir, save_location)
+        os.makedirs(save_dir, exist_ok=True)
+        
+        # Save all grid images
+        saved_paths = []
+        for grid_img, grid_label in zip(grid_images, grid_labels):
+            # Find next available counter
+            counter = 0
+            while True:
+                grid_path = os.path.join(save_dir, f"{grid_label}_{counter}.png")
+                if not os.path.exists(grid_path):
+                    break
+                counter += 1
+            
+            grid_img.save(grid_path, pnginfo=metadata, compress_level=4)
+            saved_paths.append(grid_path)
+            print(f"[GridCompare] Saved grid: {grid_path}")
+        
+        # Save individual images with structured naming
+        if individual_images:
+            # Create subfolder for individuals
+            individuals_dir = os.path.join(save_dir, "individuals")
+            os.makedirs(individuals_dir, exist_ok=True)
+            
+            # Metadata list for JSON
+            images_metadata = []
+            
+            for idx, img in enumerate(individual_images):
+                # Build structured filename from combination data
+                combo = combinations[idx] if idx < len(combinations) else {}
+                label = individual_labels[idx] if idx < len(individual_labels) else f"img_{idx}"
+                
+                # Extract components for filename
+                model = combo.get("model", "unknown")
+                if model.endswith(".safetensors"):
+                    model = model[:-12]
+                # Sanitize model name for filename
+                model = "".join(c if c.isalnum() or c in "._-" else "_" for c in model)[:30]
+                
+                # Get sampling override values if present
+                override = combo.get("_sampling_override", {})
+                sampler = override.get("sampler_name", combo.get("sampler_name", "default"))[:15]
+                scheduler = override.get("scheduler", combo.get("scheduler", "normal"))[:15]
+                cfg = override.get("cfg", combo.get("cfg", 7.0))
+                steps = override.get("steps", combo.get("steps", 20))
+                
+                # Build structured filename
+                structured_name = f"{output_prefix}_{idx:04d}_{model}_{sampler}_{scheduler}_cfg{cfg}_steps{steps}"
+                
+                # Find unique filename
+                img_counter = 0
+                while True:
+                    if img_counter == 0:
+                        img_path = os.path.join(individuals_dir, f"{structured_name}.png")
+                    else:
+                        img_path = os.path.join(individuals_dir, f"{structured_name}_{img_counter}.png")
+                    if not os.path.exists(img_path):
+                        break
+                    img_counter += 1
+                
+                # Save image
+                img.save(img_path, pnginfo=metadata, compress_level=4)
+                
+                # Collect metadata
+                images_metadata.append({
+                    "index": idx,
+                    "filename": os.path.basename(img_path),
+                    "path": img_path,
+                    "label": label,
+                    "model": combo.get("model", ""),
+                    "sampler": sampler,
+                    "scheduler": scheduler,
+                    "cfg": cfg,
+                    "steps": steps,
+                    "width": img.width,
+                    "height": img.height,
+                    "variation_label": combo.get("_variation_label", ""),
+                    "lora_names": combo.get("lora_names", []),
+                    "lora_strengths": combo.get("lora_strengths", []),
+                })
+            
+            print(f"[GridCompare] Saved {len(individual_images)} individual images to {individuals_dir}")
+            
+            # Save metadata JSON
+            json_path = os.path.join(individuals_dir, f"{output_prefix}_metadata.json")
+            try:
+                with open(json_path, 'w', encoding='utf-8') as f:
+                    json.dump({
+                        "prefix": output_prefix,
+                        "total_images": len(individual_images),
+                        "images": images_metadata,
+                    }, f, indent=2, ensure_ascii=False)
+                print(f"[GridCompare] Saved metadata: {json_path}")
+            except Exception as e:
+                print(f"[GridCompare] Failed to save metadata JSON: {e}")
+        
+        return saved_paths[0] if saved_paths else save_dir
 
     @staticmethod
     def _save_images(
