@@ -341,17 +341,18 @@ class SamplerCompareAdvanced:
         
         return {"samples": latent}
     
-    def _get_combination_hash(self, combo: Dict, sampling_cfg: Dict, global_config: Dict, latent_shape: tuple, model_entry: Dict = None) -> str:
+    def _get_combination_hash(self, combo: Dict, sampling_cfg: Dict, global_config: Dict, latent_shape: tuple, model_entry: Dict = None, variation_label: str = "") -> str:
         """
         Generate a unique hash for a combination including all parameters that affect output.
         This is used for per-combination caching.
         
         Args:
             combo: The combination dict (model_index, vae_name, prompts, etc.)
-            sampling_cfg: The resolved sampling configuration
+            sampling_cfg: The resolved sampling configuration (with _sampling_override applied!)
             global_config: Global config overrides
             latent_shape: Shape tuple (width, height, frames)
             model_entry: The model variation entry (contains display_name, model_path, etc.)
+            variation_label: The variation label from multi-value expansion (e.g., "S:euler | Sch:normal")
         """
         # Get model display name from model_entry if provided
         model_display_name = ""
@@ -366,9 +367,10 @@ class SamplerCompareAdvanced:
             str(combo.get("prompt_negative", "")),
             str(combo.get("clip_variation", {})),
             str(combo.get("lora_config", {})),
-            str(sampling_cfg),
+            str(sampling_cfg),  # Now includes _sampling_override values merged in
             str(global_config),
             str(latent_shape),
+            str(variation_label),  # Include variation label for uniqueness
         ]
         hash_input = "|".join(hash_parts)
         return hashlib.md5(hash_input.encode()).hexdigest()
@@ -1229,18 +1231,30 @@ class SamplerCompareAdvanced:
             early_model_entry = config.get("model_variations", [])[model_idx] if model_idx < len(config.get("model_variations", [])) else {}
             
             # Compute sampling config for cache hash (without loading model)
-            # Pass combination idx (0-indexed) so config chain is matched by variation_index
-            # Config chain stores at variation_index-1, so variation_index=1 -> key=0, variation_index=2 -> key=1, etc.
-            early_sampling_cfg, _ = self._get_sampling_config_for_type(config, early_model_type, node_defaults, global_config, idx)
+            # Use the original model_index from combo, not the loop idx (which may be different after expansion)
+            base_combo_idx = combo.get("model_index", 0)
+            early_sampling_cfg, _ = self._get_sampling_config_for_type(config, early_model_type, node_defaults, global_config, base_combo_idx)
             
-            # Determine dimensions for cache hash
+            # CRITICAL: Apply _sampling_override to early_sampling_cfg for cache hash
+            # This ensures expanded variations (different samplers, schedulers, etc.) have different cache keys
+            sampling_override = combo.get("_sampling_override", {})
+            if sampling_override:
+                early_sampling_cfg = dict(early_sampling_cfg)  # Copy to avoid modifying original
+                for key, value in sampling_override.items():
+                    if value is not None and not key.startswith("_"):
+                        early_sampling_cfg[key] = value
+            
+            # Determine dimensions for cache hash (override takes precedence)
             cache_width = use_global_width if use_global_width else early_sampling_cfg.get("width", 1024)
             cache_height = use_global_height if use_global_height else early_sampling_cfg.get("height", 1024)
             cache_frames = use_global_num_frames if use_global_num_frames else early_sampling_cfg.get("num_frames", 1)
             
+            # Also include variation label in cache hash for uniqueness
+            variation_label = combo.get("_variation_label", "")
+            
             # Generate cache hash for this combination (using dimensions instead of latent shape)
             # Pass model_entry so cache invalidates when model label/name changes
-            combo_hash = self._get_combination_hash(combo, early_sampling_cfg, global_config, (cache_width, cache_height, cache_frames), early_model_entry)
+            combo_hash = self._get_combination_hash(combo, early_sampling_cfg, global_config, (cache_width, cache_height, cache_frames), early_model_entry, variation_label)
             
             # Check cache for existing result
             cached = self._get_cached_result(combo_hash)
