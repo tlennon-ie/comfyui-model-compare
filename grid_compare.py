@@ -174,6 +174,24 @@ class GridCompare:
                     "default": "none",
                     "tooltip": "Third dimension for nested grids (creates separate grids per value)"
                 }),
+                # HTML Grid output options
+                "html_grid_output": ("BOOLEAN", {
+                    "default": False,
+                    "label_on": "yes",
+                    "label_off": "no",
+                    "tooltip": "Generate an interactive HTML grid with filters, lightbox, and metadata"
+                }),
+                "html_image_format": (["JPEG", "PNG"], {
+                    "default": "JPEG",
+                    "tooltip": "Image format for HTML grid (JPEG = smaller file, PNG = lossless)"
+                }),
+                "html_image_quality": ("INT", {
+                    "default": 85,
+                    "min": 50,
+                    "max": 100,
+                    "step": 5,
+                    "tooltip": "JPEG quality for HTML grid images (higher = larger file)"
+                }),
             },
             "hidden": {
                 "prompt": "PROMPT",
@@ -182,9 +200,9 @@ class GridCompare:
         }
 
     CATEGORY = "Model Compare/Grid"
-    RETURN_TYPES = ("IMAGE", "STRING", "STRING")
-    RETURN_NAMES = ("images", "save_path", "video_path")
-    OUTPUT_IS_LIST = (False, False, False)
+    RETURN_TYPES = ("IMAGE", "STRING", "STRING", "STRING")
+    RETURN_NAMES = ("images", "save_path", "video_path", "html_path")
+    OUTPUT_IS_LIST = (False, False, False, False)
     FUNCTION = "create_grid"
     OUTPUT_NODE = True
     
@@ -1371,10 +1389,13 @@ class GridCompare:
         row_axis: str = "auto",
         col_axis: str = "auto",
         nest_axis: str = "none",
+        html_grid_output: bool = False,
+        html_image_format: str = "JPEG",
+        html_image_quality: int = 85,
         prompt=None,
         extra_pnginfo=None,
         **kwargs  # Ignore any optional x_label, y_label, z_label
-    ) -> Tuple[torch.Tensor, str, str]:
+    ) -> Tuple[torch.Tensor, str, str, str]:
         """
         Create a comparison grid from images and labels.
         Organizes images by LoRA rows and strength columns with proper axis labels.
@@ -1701,6 +1722,50 @@ class GridCompare:
                 show_positive_prompt=show_positive_prompt,
             )
 
+        # Handle HTML grid output if enabled
+        html_path = ""
+        if html_grid_output:
+            try:
+                from .html_grid_generator import generate_html_grid, save_html_grid
+                
+                print(f"[GridCompare] Generating interactive HTML grid...")
+                
+                # Generate HTML content
+                html_content = generate_html_grid(
+                    images=pil_images,
+                    labels=label_list,
+                    combinations=combinations,
+                    config=config,
+                    title=grid_title,
+                    use_base64=True,
+                    image_format=html_image_format,
+                    image_quality=html_image_quality,
+                )
+                
+                # Determine save path
+                output_dir = folder_paths.get_output_directory()
+                if save_location:
+                    html_save_dir = os.path.join(output_dir, save_location)
+                else:
+                    html_save_dir = output_dir
+                os.makedirs(html_save_dir, exist_ok=True)
+                
+                # Generate filename with timestamp
+                from datetime import datetime
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                safe_title = sanitize_filename(grid_title)
+                html_filename = f"{safe_title}_{timestamp}.html"
+                html_path = os.path.join(html_save_dir, html_filename)
+                
+                # Save HTML
+                save_html_grid(html_content, html_path)
+                print(f"[GridCompare] HTML grid saved to: {html_path}")
+                
+            except Exception as e:
+                print(f"[GridCompare] Error generating HTML grid: {e}")
+                import traceback
+                traceback.print_exc()
+
         # Convert PIL back to tensor for output (all grids stacked)
         if len(all_grid_images) > 1:
             output_tensors = [self._pil_to_tensor(g) for g in all_grid_images]
@@ -1708,7 +1773,7 @@ class GridCompare:
         else:
             output_tensor = self._pil_to_tensor(all_grid_images[0])
 
-        return (output_tensor, save_path, video_path)
+        return (output_tensor, save_path, video_path, html_path)
 
     @staticmethod
     def _tensor_to_pil_list(images: torch.Tensor) -> List[Image.Image]:
