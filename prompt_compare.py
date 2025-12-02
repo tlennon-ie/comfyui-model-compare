@@ -99,15 +99,9 @@ class PromptCompare:
             })
         
         config = {
-            "prompt_variations": prompts,
-            "num_variations": len(prompts),
+            \"prompt_variations\": prompts,
+            \"num_variations\": len(prompts),
         }
-        
-        print(f"[PromptCompare] Generated {len(prompts)} prompt variation(s)")
-        for p in prompts:
-            pos_preview = p['positive'][:50] if p['positive'] else "(empty)"
-            neg_preview = p['negative'][:50] if p['negative'] else "(empty)"
-            print(f"  Variation {p['index']}: pos='{pos_preview}' neg='{neg_preview}'")
         
         return (config,)
 

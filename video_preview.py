@@ -81,10 +81,7 @@ class VideoPreview:
             }]
             # Mark as animated content (video)
             result_ui["animated"] = (True,)
-            
-            print(f"[VideoPreview] Previewing video: {video_path}")
         else:
-            print(f"[VideoPreview] No video file at: {video_path}")
             result_ui["text"] = ["No video file found"]
         
         # Pass through images if provided
@@ -165,7 +162,6 @@ class VideoGridPreview:
                 "type": "output",
             }]
             result_ui["animated"] = (True,)
-            print(f"[VideoGridPreview] Video preview: {video_path}")
             
         elif images is not None and images.numel() > 0:
             # Fall back to image preview
@@ -189,10 +185,6 @@ class VideoGridPreview:
                 })
             
             result_ui["images"] = previews
-        
-        # Log info
-        if image_path:
-            print(f"[VideoGridPreview] Image grid: {image_path}")
         
         return {"ui": result_ui, "result": (images, image_path, video_path)}
 

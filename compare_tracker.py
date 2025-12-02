@@ -33,6 +33,17 @@ _tracker_state = {
     "current_label": "",
     "html_grid_path": None,  # Path to generated HTML grid file
     "html_grid_url": None,   # URL to open HTML grid in browser
+    # Timing/speed tracking
+    "iteration_start_time": None,  # When current combination started
+    "iteration_times": [],  # List of (combo_idx, duration_seconds) tuples
+    "current_step": 0,  # Current step within combination
+    "total_steps": 0,  # Total steps for current combination
+    "step_start_time": None,  # When current step started
+    "step_times": [],  # Recent step times for speed calculation (last N)
+    "speed": None,  # Current speed: positive = it/s, negative = s/it (for display)
+    "avg_speed": None,  # Average speed across all combinations
+    "elapsed_seconds": 0,  # Total elapsed time
+    "eta_seconds": None,  # Estimated time remaining
 }
 
 
@@ -54,6 +65,17 @@ def reset_tracker_state():
         "current_label": "",
         "html_grid_path": None,
         "html_grid_url": None,
+        # Timing/speed tracking
+        "iteration_start_time": None,
+        "iteration_times": [],
+        "current_step": 0,
+        "total_steps": 0,
+        "step_start_time": None,
+        "step_times": [],
+        "speed": None,
+        "avg_speed": None,
+        "elapsed_seconds": 0,
+        "eta_seconds": None,
     }
 
 
@@ -111,6 +133,114 @@ def clear_tracker_warnings():
     """Clear all warnings."""
     global _tracker_state
     _tracker_state["warnings"] = []
+
+
+def start_iteration(combo_idx: int, total_steps: int):
+    """Mark the start of processing a combination.
+    
+    Args:
+        combo_idx: The 0-indexed combination number
+        total_steps: Number of sampling steps for this combination
+    """
+    global _tracker_state
+    now = time.time()
+    _tracker_state["iteration_start_time"] = now
+    _tracker_state["current_step"] = 0
+    _tracker_state["total_steps"] = total_steps
+    _tracker_state["step_start_time"] = now
+    _tracker_state["step_times"] = []  # Reset step times for new combo
+    
+    # Calculate elapsed time
+    if _tracker_state["start_time"]:
+        _tracker_state["elapsed_seconds"] = now - _tracker_state["start_time"]
+    
+    # Broadcast update
+    _broadcast_state()
+
+
+def record_step_complete(step: int):
+    """Record completion of a sampling step for speed calculation.
+    
+    Args:
+        step: The step number that just completed (1-indexed)
+    """
+    global _tracker_state
+    now = time.time()
+    
+    if _tracker_state["step_start_time"]:
+        step_duration = now - _tracker_state["step_start_time"]
+        # Keep last 10 step times for rolling average
+        _tracker_state["step_times"].append(step_duration)
+        if len(_tracker_state["step_times"]) > 10:
+            _tracker_state["step_times"].pop(0)
+        
+        # Calculate speed (it/s or s/it like tqdm)
+        if _tracker_state["step_times"]:
+            avg_step_time = sum(_tracker_state["step_times"]) / len(_tracker_state["step_times"])
+            if avg_step_time > 0:
+                its = 1.0 / avg_step_time
+                if its >= 1.0:
+                    _tracker_state["speed"] = its  # it/s (positive)
+                else:
+                    _tracker_state["speed"] = -avg_step_time  # s/it (negative for display)
+    
+    _tracker_state["current_step"] = step
+    _tracker_state["step_start_time"] = now
+    
+    # Update elapsed time
+    if _tracker_state["start_time"]:
+        _tracker_state["elapsed_seconds"] = now - _tracker_state["start_time"]
+    
+    # Broadcast update (but not too frequently - only every 2nd step or last step)
+    if step % 2 == 0 or step == _tracker_state["total_steps"]:
+        _broadcast_state()
+
+
+def complete_iteration(combo_idx: int):
+    """Mark completion of a combination and calculate timing stats.
+    
+    Args:
+        combo_idx: The 0-indexed combination number that completed
+    """
+    global _tracker_state
+    now = time.time()
+    
+    if _tracker_state["iteration_start_time"]:
+        duration = now - _tracker_state["iteration_start_time"]
+        _tracker_state["iteration_times"].append((combo_idx, duration))
+        
+        # Calculate average speed across all completed combinations
+        total_duration = sum(t[1] for t in _tracker_state["iteration_times"])
+        total_combos = len(_tracker_state["iteration_times"])
+        if total_combos > 0:
+            avg_combo_time = total_duration / total_combos
+            _tracker_state["avg_speed"] = avg_combo_time
+            
+            # Calculate ETA based on remaining combinations
+            remaining = _tracker_state["total_combinations"] - _tracker_state["completed_combinations"] - 1
+            if remaining > 0:
+                _tracker_state["eta_seconds"] = remaining * avg_combo_time
+            else:
+                _tracker_state["eta_seconds"] = 0
+    
+    # Update elapsed time
+    if _tracker_state["start_time"]:
+        _tracker_state["elapsed_seconds"] = now - _tracker_state["start_time"]
+    
+    _tracker_state["iteration_start_time"] = None
+    _tracker_state["step_start_time"] = None
+    
+    _broadcast_state()
+
+
+def _broadcast_state():
+    """Broadcast current tracker state via websocket."""
+    try:
+        from server import PromptServer
+        if PromptServer.instance is not None:
+            PromptServer.instance.send_sync("model_compare_progress", _tracker_state)
+    except Exception:
+        pass  # Server not available
 
 
 class CompareTracker:

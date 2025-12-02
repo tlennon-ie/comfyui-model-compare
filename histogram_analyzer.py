@@ -97,9 +97,6 @@ class HistogramAnalyzer:
         """
         Generate all histogram visualizations from input image.
         """
-        print(f"[HistogramAnalyzer] Analyzing image histogram - generating all types")
-        print(f"  Image shape: {image.shape}")
-        
         # Convert ComfyUI tensor to numpy
         if isinstance(image, torch.Tensor):
             img_numpy = image.cpu().numpy()
@@ -121,8 +118,6 @@ class HistogramAnalyzer:
         # Compute histogram and statistics
         histogram = self.histogram_gen.compute_histogram(img_numpy, bins=bins)
         statistics = self.histogram_gen.compute_statistics(img_numpy)
-        
-        print(f"[HistogramAnalyzer] Histogram computed, generating visualizations...")
         
         # Generate all histogram types
         rgb_image = self.histogram_gen.draw_histogram_rgb(
@@ -170,8 +165,6 @@ class HistogramAnalyzer:
         # Format statistics as JSON string
         stats_json = json.dumps(statistics, indent=2)
         
-        print(f"[HistogramAnalyzer] Analysis complete")
-        
         return (*tensors, stats_json)
     
     def _save_images(self, images: list, names: list, save_location: str, save_metadata: bool, prompt, extra_pnginfo):
@@ -209,7 +202,6 @@ class HistogramAnalyzer:
             filename = f"histogram_{counter:05d}_{name}.png"
             filepath = os.path.join(save_dir, filename)
             img_pil.save(filepath, pnginfo=metadata, compress_level=4)
-            print(f"[HistogramAnalyzer] Saved: {filename}")
     
     def _tensor_to_pil(self, tensor: torch.Tensor) -> Image.Image:
         """Convert ComfyUI tensor to PIL Image."""
@@ -304,8 +296,6 @@ class HistogramComparator:
         """
         Compare histograms of two images side-by-side.
         """
-        print(f"[HistogramComparator] Comparing two image histograms - generating all types")
-        
         # Convert tensors to numpy - handle 4D and 5D tensors
         if image_1.ndim == 5:
             # 5D: [batch, frames, height, width, channels] - take first batch, first frame
@@ -521,7 +511,6 @@ class HistogramComparator:
             filename = f"comparison_{counter:05d}_{name}.png"
             filepath = os.path.join(save_dir, filename)
             img.save(filepath, pnginfo=metadata, compress_level=4)
-            print(f"[HistogramComparator] Saved: {filename}")
 
 
 # Node registration

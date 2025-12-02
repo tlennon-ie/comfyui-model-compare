@@ -213,7 +213,6 @@ class GridCompare:
         Returns dict of dimension_name -> list of unique values (sorted)
         """
         if not combinations:
-            print(f"[GridCompare] _detect_varying_dimensions: No combinations!")
             return {}
         
         # Dimensions to check (from sampling override and combo fields)
@@ -227,13 +226,6 @@ class GridCompare:
         
         # Collect all values per field
         field_values = {f: set() for f in check_fields}
-        
-        # Debug: check first combo structure
-        if combinations:
-            first_combo = combinations[0]
-            print(f"[GridCompare] First combo keys: {list(first_combo.keys())}")
-            override = first_combo.get('_sampling_override', {})
-            print(f"[GridCompare] First combo _sampling_override: {override}")
         
         for combo in combinations:
             # Check _sampling_override first (for expanded variations)
@@ -258,14 +250,6 @@ class GridCompare:
                 except TypeError:
                     sorted_values = list(values)
                 varying[field] = sorted_values
-                print(f"[GridCompare] Varying field '{field}': {sorted_values}")
-        
-        if not varying:
-            print(f"[GridCompare] No varying dimensions found in {len(combinations)} combinations")
-            # Debug: print all unique values found
-            for field, values in field_values.items():
-                if values:
-                    print(f"[GridCompare]   {field}: {values}")
         
         return varying
     
@@ -351,8 +335,6 @@ class GridCompare:
             col_values = row_values
             actual_row_axis = None
             row_values = [None]
-        
-        print(f"[GridCompare] XY Grid: rows={actual_row_axis}({len(row_values)}), cols={actual_col_axis}({len(col_values)})")
         
         # Create mapping from (row_val, col_val) -> image index
         grid_map = {}
@@ -592,8 +574,6 @@ class GridCompare:
         if not images:
             return Image.new('RGB', (100, 100), color='white')
         
-        print(f"[GridCompare] Creating nested grids with {len(varying_dims)} varying dimensions")
-        
         # Determine the nest axis (third dimension)
         priority = ['scheduler', 'sampler_name', 'height', 'lumina_shift', 'qwen_shift', 
                     'wan_shift', 'hunyuan_shift', 'flux_guidance', 'width', 'cfg', 'steps', 
@@ -640,11 +620,8 @@ class GridCompare:
                     actual_nest_axis = dim
                     break
         
-        print(f"[GridCompare] Nested grid axes: row={actual_row_axis}, col={actual_col_axis}, nest={actual_nest_axis}")
-        
         # If we still don't have a valid nest axis, fall back to regular XY grid
         if actual_nest_axis in ("auto", "none") or actual_nest_axis not in varying_dims:
-            print(f"[GridCompare] No valid nest axis, falling back to XY grid")
             return self._create_xy_grid(
                 images=images, labels=labels, combinations=combinations, config=config,
                 row_axis=actual_row_axis, col_axis=actual_col_axis,
@@ -657,7 +634,6 @@ class GridCompare:
         # Get nest axis values
         nest_values = varying_dims.get(actual_nest_axis, [])
         if not nest_values:
-            print(f"[GridCompare] No values for nest axis '{actual_nest_axis}', falling back")
             return self._create_xy_grid(
                 images=images, labels=labels, combinations=combinations, config=config,
                 row_axis=actual_row_axis, col_axis=actual_col_axis,
@@ -666,8 +642,6 @@ class GridCompare:
                 title=title, show_positive_prompt=show_positive_prompt,
                 show_negative_prompt=show_negative_prompt
             )
-        
-        print(f"[GridCompare] Creating {len(nest_values)} nested grids for {actual_nest_axis}: {nest_values}")
         
         # Group images by nest axis value
         nested_groups = {}  # nest_value -> [(idx, image, label, combo)]
@@ -714,7 +688,6 @@ class GridCompare:
             sub_grids.append((nest_val, sub_grid))
         
         if not sub_grids:
-            print(f"[GridCompare] No sub-grids created!")
             return Image.new('RGB', (100, 100), color='white')
         
         # Combine sub-grids vertically with separator and nest axis label
@@ -754,7 +727,6 @@ class GridCompare:
                     draw.text((max_width // 2, current_y - gap_size // 2), display_text,
                               fill=(80, 80, 80), font=prompt_font, anchor="mt")
         
-        print(f"[GridCompare] Created combined nested grid: {combined.size}")
         return combined
 
     def _create_complete_grid(
@@ -783,8 +755,6 @@ class GridCompare:
         """
         if not images:
             return Image.new('RGB', (100, 100), color='white')
-        
-        print(f"[GridCompare] Creating complete grid for {len(images)} images with {len(varying_dims)} varying dimensions")
         
         # Get image dimensions
         img_width, img_height = images[0].size
@@ -881,7 +851,6 @@ class GridCompare:
             draw.text((grid_width // 2, final_y + 15), display_text,
                       fill=(80, 80, 80), font=prompt_font, anchor="mt")
         
-        print(f"[GridCompare] Created complete grid: {grid_img.size} ({num_cols}x{num_rows})")
         return grid_img
 
     def _split_grids_by_dimension(
@@ -925,14 +894,11 @@ class GridCompare:
             # (to create meaningful sub-grids)
             sorted_dims = sorted(varying_dims.items(), key=lambda x: len(x[1]), reverse=True)
             split_by = sorted_dims[0][0] if sorted_dims else None
-            print(f"[GridCompare] Auto-split selected: {split_by}")
         
         if not split_by or split_by not in varying_dims:
-            print(f"[GridCompare] Cannot split by '{split_by}' - dimension not found in variations")
             return []
         
         split_values = varying_dims[split_by]
-        print(f"[GridCompare] Splitting by {split_by}: {split_values}")
         
         # Group images by split dimension value
         split_groups = {}
@@ -966,8 +932,6 @@ class GridCompare:
             split_groups[split_val_key]["images"].append(images[idx])
             split_groups[split_val_key]["labels"].append(labels[idx] if idx < len(labels) else "")
             split_groups[split_val_key]["combinations"].append(combo)
-        
-        print(f"[GridCompare] Split into {len(split_groups)} groups")
         
         # Create a sub-grid for each group
         result_grids = []
@@ -1124,8 +1088,6 @@ class GridCompare:
         lora_groups = {}  # lora_name -> list of (strength, image, label, image_index)
         strength_values = set()
         
-        print(f"[GridCompare] Parsing {len(labels)} labels for grid organization")
-        
         for idx, label in enumerate(labels):
             if idx >= len(pil_images):
                 break
@@ -1151,15 +1113,12 @@ class GridCompare:
                     })
                     
                     strength_values.add(strength)
-                    print(f"  [Label {idx}] LoRA: '{lora_name}' | Strength: {strength:.2f}")
                 except (ValueError, IndexError) as e:
-                    print(f"  [Label {idx}] Failed to parse '{label}': {e}")
                     continue
             else:
-                print(f"  [Label {idx}] Skipping invalid format: '{label}'")
+                continue
         
         if not lora_groups or not strength_values:
-            print(f"[GridCompare] No valid labels parsed!")
             return {
                 "rows": [],
                 "column_headers": [],
@@ -1169,7 +1128,6 @@ class GridCompare:
         
         # Sort strength values for column headers
         sorted_strengths = sorted(list(strength_values))
-        print(f"[GridCompare] Found {len(lora_groups)} unique LoRAs with strengths: {sorted_strengths}")
         
         # Organize into rows, maintaining order of first appearance
         rows = []
@@ -1198,8 +1156,6 @@ class GridCompare:
                     "lora_name": lora_name,
                     "images": lora_data,
                 })
-        
-        print(f"[GridCompare] Organized grid: {len(rows)} rows × {len(sorted_strengths)} columns")
         
         return {
             "rows": rows,
@@ -1402,21 +1358,14 @@ class GridCompare:
         
         For video output, handles multi-frame results and creates video grids.
         """
-        print(f"[GridCompare] Creating comparison grid...")
-        print(f"  Images shape: {images.shape}")
-        print(f"  Labels input: {repr(labels)}")
-        print(f"  Video output mode: {video_output_mode}")
-        
         # Parse labels - try newline-separated first, then semicolon for backwards compatibility
         if "\n" in labels:
             label_list = [l.strip() for l in labels.split("\n") if l.strip()]
         else:
             label_list = [l.strip() for l in labels.split(";") if l.strip()]
-        print(f"  Parsed {len(label_list)} labels")
         
         # Convert ALL images to PIL (needed for video grid)
         all_pil_images = self._tensor_to_pil_list(images)
-        print(f"  Converted {len(all_pil_images)} images to PIL")
         
         # Check if images were padded (different original sizes stored in config)
         # If so, crop each image back to its original size
@@ -1427,7 +1376,6 @@ class GridCompare:
         )
         
         if has_different_sizes and len(combinations) == len(all_pil_images):
-            print(f"[GridCompare] Extracting original image sizes from padded tensor...")
             cropped_images = []
             for i, (pil_img, combo) in enumerate(zip(all_pil_images, combinations)):
                 orig_w = combo.get("output_width")
@@ -1439,7 +1387,6 @@ class GridCompare:
                     x_offset = (pad_w - orig_w) // 2
                     y_offset = (pad_h - orig_h) // 2
                     cropped = pil_img.crop((x_offset, y_offset, x_offset + orig_w, y_offset + orig_h))
-                    print(f"    Image {i+1}: cropped from {pad_w}x{pad_h} to {orig_w}x{orig_h}")
                     cropped_images.append(cropped)
                 else:
                     cropped_images.append(pil_img)
@@ -1457,7 +1404,6 @@ class GridCompare:
                 if img_idx < len(all_pil_images):
                     pil_images.append(all_pil_images[img_idx])  # First frame only
                 img_idx += frame_count  # Skip remaining frames
-            print(f"  Extracted {len(pil_images)} first-frames for image grid (from {len(all_pil_images)} total)")
         else:
             pil_images = all_pil_images
 
@@ -1465,7 +1411,6 @@ class GridCompare:
         prompt_variations = config.get("prompt_variations", [])
         
         if save_prompt_grids_separately and len(prompt_variations) > 1 and len(combinations) == len(pil_images):
-            print(f"[GridCompare] Creating separate grids for {len(prompt_variations)} prompt variations")
             return self._create_separate_prompt_grids(
                 pil_images=pil_images,
                 label_list=label_list,
@@ -1488,7 +1433,6 @@ class GridCompare:
 
         # Check if sampling failed (e.g., "No successful samples" returned)
         if len(pil_images) > 0 and len(label_list) == 1 and label_list[0].lower().startswith("no "):
-            print(f"[GridCompare] Sampling failed: {label_list[0]}")
             # Create a simple fallback grid showing error message
             grid_image = self._create_error_grid(
                 images=pil_images,
@@ -1500,14 +1444,12 @@ class GridCompare:
             )
         else:
             if len(pil_images) != len(label_list):
-                print(f"[GridCompare] Warning: Image count ({len(pil_images)}) != label count ({len(label_list)})")
                 # Pad labels if needed
                 while len(label_list) < len(pil_images):
                     label_list.append(f"Image {len(label_list)}")
 
             # Detect what dimensions are varying in this comparison
             varying_dims = self._detect_varying_dimensions(combinations)
-            print(f"[GridCompare] Detected varying dimensions: {varying_dims}")
             
             # Check if we have sampling variations (multi-value fields from config chain)
             has_sampling_variations = any(
@@ -1520,12 +1462,9 @@ class GridCompare:
             if has_sampling_variations:
                 # Check if we have 3+ varying dimensions and need nested grids
                 num_varying = len(varying_dims)
-                print(f"[GridCompare] Number of varying dimensions: {num_varying}")
-                print(f"[GridCompare] grid_split_by={grid_split_by}, nest_axis={nest_axis}, row_axis={row_axis}, col_axis={col_axis}")
                 
                 # If split_by is "none" and we have 3+ dimensions, create a complete grid showing ALL images
                 if grid_split_by == "none" and num_varying > 2:
-                    print(f"[GridCompare] Creating Complete Grid (all {len(pil_images)} images in one grid)")
                     grid_image = self._create_complete_grid(
                         images=pil_images,
                         labels=label_list,
@@ -1544,7 +1483,6 @@ class GridCompare:
                     )
                 elif num_varying > 2 or (nest_axis != "none" and nest_axis != "auto"):
                     # Create nested grids - one XY grid per value of nest_axis
-                    print(f"[GridCompare] Creating Nested XY Grids (row_axis={row_axis}, col_axis={col_axis}, nest_axis={nest_axis})")
                     grid_image = self._create_nested_xy_grids(
                         images=pil_images,
                         labels=label_list,
@@ -1566,7 +1504,6 @@ class GridCompare:
                     )
                 else:
                     # Use smart XY grid with user-specified or auto-detected axes
-                    print(f"[GridCompare] Using Smart XY Grid (row_axis={row_axis}, col_axis={col_axis})")
                     grid_image = self._create_xy_grid(
                         images=pil_images,
                         labels=label_list,
@@ -1600,7 +1537,6 @@ class GridCompare:
                 if is_grouped:
                     # Grouped mode: simple side-by-side comparison
                     # Each model group (Model + VAE + CLIP) is one column
-                    print(f"[GridCompare] Using Grouped Grid System (side-by-side comparison)")
                     grid_image = self._create_grouped_grid(
                         images=pil_images,
                         labels=label_list,
@@ -1616,7 +1552,6 @@ class GridCompare:
                         show_negative_prompt=show_negative_prompt,
                     )
                 elif is_nested:
-                    print(f"[GridCompare] Detected complex config, using Nested Grid System")
                     grid_image = self._create_nested_grid(
                         images=pil_images,
                         config=config,
@@ -1630,7 +1565,6 @@ class GridCompare:
                     )
                 elif organized_data["num_rows"] == 0 or organized_data["num_cols"] == 0:
                     # Fallback to simple grid if label parsing failed
-                    print(f"[GridCompare] Label parsing failed, using XY grid fallback")
                     grid_image = self._create_xy_grid(
                         images=pil_images,
                         labels=label_list,
@@ -1683,7 +1617,6 @@ class GridCompare:
             if split_grids:
                 all_grid_images = [g["image"] for g in split_grids]
                 grid_labels = [g["label"] for g in split_grids]
-                print(f"[GridCompare] Split into {len(all_grid_images)} grids by {grid_split_by}")
 
         # Save images with enhanced individual naming
         save_path = self._save_images_enhanced(
@@ -1727,8 +1660,6 @@ class GridCompare:
         if html_grid_output:
             try:
                 from .html_grid_generator import generate_html_grid, save_html_grid
-                
-                print(f"[GridCompare] Generating interactive HTML grid...")
                 
                 # Generate HTML content
                 html_content = generate_html_grid(
@@ -1995,8 +1926,6 @@ class GridCompare:
             # Build title with prompt info
             prompt_title = f"{grid_title} - Prompt {prompt_idx}" if grid_title else f"Prompt {prompt_idx}"
             
-            print(f"[GridCompare] Creating grid for prompt {prompt_idx} with {len(prompt_images)} images")
-            
             # Create the grid for this prompt using grouped layout
             is_grouped = config.get("is_grouped", False)
             
@@ -2058,7 +1987,6 @@ class GridCompare:
         
         # Return all grid tensors stacked and all paths
         combined_paths = ", ".join(all_paths)
-        print(f"[GridCompare] All {len(all_paths)} prompt grids saved")
         
         # Stack all grid tensors into a batch
         if all_grid_tensors:
@@ -2066,7 +1994,7 @@ class GridCompare:
         else:
             stacked_grids = torch.zeros((1, 64, 64, 3))
         
-        return (stacked_grids, combined_paths, "")  # No video path for separate prompt grids yet
+        return (stacked_grids, combined_paths, "", "")  # No video/html path for separate prompt grids yet
 
     def _add_prompt_text_to_grid(
         self,
@@ -2194,8 +2122,6 @@ class GridCompare:
         
         # Images are organized: [prompt1_model1, prompt1_model2, ..., prompt2_model1, prompt2_model2, ...]
         # Each prompt variation gets num_cols images
-        
-        print(f"[GridCompare] Grouped grid: {num_prompts} prompt sections × {num_cols} model columns = {num_prompts * num_cols} cells for {len(images)} images")
         
         # Get fonts
         title_font = self._get_font(font_name, font_size)
@@ -2923,10 +2849,7 @@ class GridCompare:
         
         # If only one group, don't split
         if len(groups) <= 1:
-            print(f"[GridCompare] Only one group found for split_by={split_by}, no split needed")
             return []
-        
-        print(f"[GridCompare] Splitting into {len(groups)} grids by {split_by}: {list(groups.keys())}")
         
         # Create a grid for each group
         result = []
@@ -3080,8 +3003,6 @@ class GridCompare:
                     "lora_strengths": combo.get("lora_strengths", []),
                 })
             
-            print(f"[GridCompare] Saved {len(individual_images)} individual images to {individuals_dir}")
-            
             # Save metadata JSON
             json_path = os.path.join(individuals_dir, f"{output_prefix}_metadata.json")
             try:
@@ -3151,12 +3072,8 @@ class GridCompare:
                         break
                     img_counter += 1
                 
-                # Log actual image size being saved (for debugging resolution issues)
-                print(f"[GridCompare] Saving image {idx}: {img.size[0]}x{img.size[1]} -> {img_path}")
                 img.save(img_path, pnginfo=metadata, compress_level=4)
             
-            print(f"[GridCompare] Saved {len(individual_images)} individual images to {save_dir}")
-        
         return save_dir
 
     def _create_video_grid(
@@ -3204,12 +3121,7 @@ class GridCompare:
         model_variations = config.get("model_variations", [])
         
         if not combinations:
-            print("[GridCompare] No combinations in config, skipping video grid")
             return ""
-        
-        print(f"[GridCompare] Creating video grid...")
-        print(f"  Total PIL images: {len(all_pil_images)}")
-        print(f"  Number of combinations: {len(combinations)}")
         
         # Collect video frames per combination using output_frame_count
         video_frames_list = []
@@ -3242,22 +3154,14 @@ class GridCompare:
                 else:
                     fps = 24
                 fps_list.append(fps)
-                
-                print(f"    Combo {combo_idx + 1}: {frame_count} frames at {fps} FPS")
         
         if not video_frames_list:
-            print("[GridCompare] No video frames collected, skipping video grid")
             return ""
         
         # Check if we actually have video (multiple frames)
         has_video = any(len(frames) > 1 for frames in video_frames_list)
         if not has_video:
-            print("[GridCompare] No multi-frame outputs, skipping video grid (all single frames)")
             return ""
-        
-        print(f"  Collected {len(video_frames_list)} video sequences")
-        for i, frames in enumerate(video_frames_list):
-            print(f"    Sequence {i + 1}: {len(frames)} frames at {fps_list[i]} FPS")
         
         # Determine grid layout
         num_videos = len(video_frames_list)

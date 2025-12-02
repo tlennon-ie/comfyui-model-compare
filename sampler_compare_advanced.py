@@ -38,13 +38,19 @@ except ImportError:
 
 # Import tracker for progress updates
 try:
-    from .compare_tracker import update_tracker_state, add_tracker_warning, reset_tracker_state
+    from .compare_tracker import (
+        update_tracker_state, add_tracker_warning, reset_tracker_state,
+        start_iteration, record_step_complete, complete_iteration
+    )
     TRACKER_SUPPORT = True
 except ImportError:
     TRACKER_SUPPORT = False
     def update_tracker_state(**kwargs): pass
     def add_tracker_warning(warning): pass
     def reset_tracker_state(): pass
+    def start_iteration(combo_idx, total_steps): pass
+    def record_step_complete(step): pass
+    def complete_iteration(combo_idx): pass
 
 class SamplerCompareAdvanced:
     """
@@ -328,7 +334,6 @@ class SamplerCompareAdvanced:
                 [batch_size, channels, latent_h // 2, latent_w // 2],
                 device=device
             )
-            print(f"[SamplerCompareAdvanced] Created {model_type} latent (128ch): {latent.shape}")
         elif model_type in ['flux', 'qwen', 'qwen_edit', 'lumina2', 'z_image']:
             # FLUX, QWEN, Lumina2, Z_IMAGE use 16 channels
             channels = 16
@@ -336,7 +341,6 @@ class SamplerCompareAdvanced:
                 [batch_size, channels, latent_h, latent_w],
                 device=device
             )
-            print(f"[SamplerCompareAdvanced] Created {model_type} latent (16ch): {latent.shape}")
         elif model_type == 'wan22':
             # WAN 2.2 uses 48 channels (new VAE format)
             channels = 48
@@ -344,7 +348,6 @@ class SamplerCompareAdvanced:
                 [batch_size, channels, num_frames, latent_h, latent_w],
                 device=device
             )
-            print(f"[SamplerCompareAdvanced] Created WAN 2.2 video latent (48ch): {latent.shape} ({num_frames} frames)")
         elif model_type in ['wan21', 'hunyuan', 'hunyuan15']:
             # WAN 2.1, Hunyuan: 5D tensor [B, C, F, H, W] with 16 channels
             channels = 16
@@ -352,7 +355,6 @@ class SamplerCompareAdvanced:
                 [batch_size, channels, num_frames, latent_h, latent_w],
                 device=device
             )
-            print(f"[SamplerCompareAdvanced] Created {model_type} video latent (16ch): {latent.shape} ({num_frames} frames)")
         else:
             # SD/SDXL: 4 channels
             channels = 4
@@ -360,7 +362,6 @@ class SamplerCompareAdvanced:
                 [batch_size, channels, latent_h, latent_w],
                 device=device
             )
-            print(f"[SamplerCompareAdvanced] Created {model_type} latent (4ch): {latent.shape}")
         
         return {"samples": latent}
     
@@ -416,7 +417,6 @@ class SamplerCompareAdvanced:
     def clear_cache(cls):
         """Clear all cached results."""
         cls._combination_cache.clear()
-        print("[SamplerCompareAdvanced] Cache cleared")
     
     def _load_model(self, model_entry: Dict) -> Tuple[Any, Any]:
         """
@@ -434,12 +434,10 @@ class SamplerCompareAdvanced:
             print(f"[SamplerCompareAdvanced] ERROR: No model path in entry")
             return None, None
         
-        print(f"[SamplerCompareAdvanced] Loading model: {model_path}", flush=True)
         sys.stdout.flush()
         
         try:
             if model_type == "checkpoint":
-                print(f"[SamplerCompareAdvanced] Loading as checkpoint...", flush=True)
                 out = comfy.sd.load_checkpoint_guess_config(
                     model_path, 
                     output_vae=True, 
@@ -452,17 +450,12 @@ class SamplerCompareAdvanced:
                     model_entry["_baked_clip"] = out[1]
                     model_entry["_baked_vae"] = out[2]
             elif model_type == "diffusion":
-                print(f"[SamplerCompareAdvanced] Loading as diffusion model...", flush=True)
                 model_obj = comfy.sd.load_diffusion_model(model_path, model_options={})
-            
-            print(f"[SamplerCompareAdvanced] Model loaded successfully", flush=True)
             
             # Load low noise model if WAN 2.2
             model_low_path = model_entry.get("model_low_path")
             if model_low_path:
-                print(f"[SamplerCompareAdvanced] Loading WAN 2.2 low noise model: {model_low_path}", flush=True)
                 model_low_obj = comfy.sd.load_diffusion_model(model_low_path, model_options={})
-                print(f"[SamplerCompareAdvanced] Low noise model loaded", flush=True)
         except Exception as e:
             print(f"[SamplerCompareAdvanced] ERROR loading model: {e}", flush=True)
             import traceback
@@ -481,10 +474,8 @@ class SamplerCompareAdvanced:
             # Use baked VAE from checkpoint
             baked_vae = model_entry.get("_baked_vae")
             if baked_vae:
-                print(f"[SamplerCompareAdvanced] Using baked VAE from checkpoint")
                 return baked_vae
             else:
-                print(f"[SamplerCompareAdvanced] WARNING: No baked VAE available")
                 return None
         
         if vae_name == "NONE" or not vae_name:
@@ -494,10 +485,8 @@ class SamplerCompareAdvanced:
         vae_path = vae_paths.get(vae_name)
         
         if not vae_path:
-            print(f"[SamplerCompareAdvanced] WARNING: No path for VAE '{vae_name}'")
             return None
         
-        print(f"[SamplerCompareAdvanced] Loading VAE: {vae_path}")
         vae = comfy.sd.VAE(sd=comfy.utils.load_torch_file(vae_path))
         return vae
     
@@ -518,16 +507,13 @@ class SamplerCompareAdvanced:
         if device == "cpu":
             model_options["load_device"] = torch.device("cpu")
             model_options["offload_device"] = torch.device("cpu")
-            print(f"[SamplerCompareAdvanced] Loading CLIP on CPU")
         
         if clip_type == "baked":
             # Use baked CLIP from checkpoint
             baked_clip = model_entry.get("_baked_clip")
             if baked_clip:
-                print(f"[SamplerCompareAdvanced] Using baked CLIP from checkpoint")
                 return baked_clip
             else:
-                print(f"[SamplerCompareAdvanced] WARNING: No baked CLIP available")
                 return None
         
         elif clip_type == "pair":
@@ -535,7 +521,6 @@ class SamplerCompareAdvanced:
             path_a = clip_var.get("a_path")
             path_b = clip_var.get("b_path")
             if path_a and path_b:
-                print(f"[SamplerCompareAdvanced] Loading dual CLIP: {clip_var.get('a')} + {clip_var.get('b')}")
                 clip_obj = comfy.sd.load_clip(
                     ckpt_paths=[path_a, path_b],
                     embedding_directory=folder_paths.get_folder_paths("embeddings"),
@@ -547,7 +532,6 @@ class SamplerCompareAdvanced:
         elif clip_type == "single":
             path = clip_var.get("model_path")
             if path:
-                print(f"[SamplerCompareAdvanced] Loading single CLIP: {clip_var.get('model')}")
                 clip_obj = comfy.sd.load_clip(
                     ckpt_paths=[path],
                     embedding_directory=folder_paths.get_folder_paths("embeddings"),
@@ -620,8 +604,6 @@ class SamplerCompareAdvanced:
         neg_tokens = clip.tokenize("", images=[])
         negative = clip.encode_from_tokens_scheduled(neg_tokens)
         
-        print(f"[SamplerCompareAdvanced] QWEN Edit conditioning: {len(images_vl)} images, {len(ref_latents)} ref latents")
-        
         return positive, negative
     
     def _encode_flux_reference_conditioning(self, clip, vae, prompt: str, reference_images: List[torch.Tensor], flux_guidance: float) -> Tuple[Any, Any]:
@@ -663,8 +645,6 @@ class SamplerCompareAdvanced:
         # Encode negative conditioning
         neg_tokens = clip.tokenize("")
         negative = clip.encode_from_tokens_scheduled(neg_tokens, add_dict={"guidance": flux_guidance})
-        
-        print(f"[SamplerCompareAdvanced] FLUX reference conditioning: {len(ref_latents)} ref latents")
         
         return positive, negative
     
@@ -756,10 +736,6 @@ class SamplerCompareAdvanced:
             positive = node_helpers.conditioning_set_values(positive, {"clip_vision_output": clip_vision_output})
             negative = node_helpers.conditioning_set_values(negative, {"clip_vision_output": clip_vision_output})
         
-        has_start = start_frame is not None
-        has_end = end_frame is not None
-        print(f"[SamplerCompareAdvanced] WAN I2V: {num_frames} frames, start={has_start}, end={has_end}")
-        
         return positive, negative, {"samples": latent}
     
     def _prepare_hunyuan_i2v(self, vae, positive, width: int, height: int, num_frames: int,
@@ -822,7 +798,6 @@ class SamplerCompareAdvanced:
             positive = node_helpers.conditioning_set_values(positive, cond)
         
         out_latent["samples"] = latent
-        print(f"[SamplerCompareAdvanced] Hunyuan I2V: {num_frames} frames, guidance_type={guidance_type}")
         
         return positive, out_latent
     
@@ -840,40 +815,37 @@ class SamplerCompareAdvanced:
         try:
             # First unload from VRAM
             comfy.model_management.unload_all_models()
-        except Exception as e:
-            print(f"[SamplerCompareAdvanced] unload_all_models warning: {e}")
+        except Exception:
+            pass
         
         # Now aggressively remove ALL models from the loaded list (including RAM)
         try:
             loaded_models = comfy.model_management.current_loaded_models
-            num_to_unload = len(loaded_models)
-            if num_to_unload > 0:
-                print(f"[SamplerCompareAdvanced] Force-unloading {num_to_unload} models from RAM...")
-                # Pop all models and properly detach them
-                while len(loaded_models) > 0:
-                    loaded_model = loaded_models.pop()
-                    try:
-                        # Detach the model patcher (releases references)
-                        if hasattr(loaded_model, 'model') and loaded_model.model is not None:
-                            loaded_model.model.detach(unpatch_all=True)
-                        # Detach the finalizer
-                        if hasattr(loaded_model, 'model_finalizer') and loaded_model.model_finalizer is not None:
-                            loaded_model.model_finalizer.detach()
-                    except Exception as e:
-                        print(f"[SamplerCompareAdvanced] Model detach warning: {e}")
-                    del loaded_model
-        except Exception as e:
-            print(f"[SamplerCompareAdvanced] Force-unload warning: {e}")
+            # Pop all models and properly detach them
+            while len(loaded_models) > 0:
+                loaded_model = loaded_models.pop()
+                try:
+                    # Detach the model patcher (releases references)
+                    if hasattr(loaded_model, 'model') and loaded_model.model is not None:
+                        loaded_model.model.detach(unpatch_all=True)
+                    # Detach the finalizer
+                    if hasattr(loaded_model, 'model_finalizer') and loaded_model.model_finalizer is not None:
+                        loaded_model.model_finalizer.detach()
+                except Exception:
+                    pass
+                del loaded_model
+        except Exception:
+            pass
         
         try:
             comfy.model_management.cleanup_models()
-        except Exception as e:
-            print(f"[SamplerCompareAdvanced] cleanup_models warning: {e}")
+        except Exception:
+            pass
         
         try:
             comfy.model_management.soft_empty_cache()
-        except Exception as e:
-            print(f"[SamplerCompareAdvanced] soft_empty_cache warning: {e}")
+        except Exception:
+            pass
         
         # Run GC multiple times to ensure all cycles are collected
         for _ in range(3):
@@ -888,19 +860,6 @@ class SamplerCompareAdvanced:
                 torch.cuda.ipc_collect()
             except Exception:
                 pass
-            
-            free_mem = torch.cuda.mem_get_info()[0] / (1024**3)
-            total_mem = torch.cuda.mem_get_info()[1] / (1024**3)
-            print(f"[SamplerCompareAdvanced] GPU Memory: {free_mem:.2f}GB free / {total_mem:.2f}GB total")
-        
-        # Also log system RAM usage
-        try:
-            import psutil
-            process = psutil.Process()
-            ram_gb = process.memory_info().rss / (1024**3)
-            print(f"[SamplerCompareAdvanced] Process RAM: {ram_gb:.2f}GB")
-        except ImportError:
-            pass  # psutil not available
     
     def _get_combo_key(self, combo: Dict, config: Dict) -> str:
         """
@@ -968,7 +927,6 @@ class SamplerCompareAdvanced:
                 model, clip = comfy.sd.load_lora_for_models(
                     model, clip, lora_data, strength, strength
                 )
-                print(f"[SamplerCompareAdvanced] Applied LoRA: {label} (strength={strength})")
                 
                 # Handle HIGH_LOW_PAIR mode for WAN 2.2
                 if lora.get("mode") == "HIGH_LOW_PAIR" and lora.get("low_path"):
@@ -978,10 +936,6 @@ class SamplerCompareAdvanced:
                     
                     # Load low LoRA for the low noise model
                     low_lora_data = comfy.utils.load_torch_file(low_path, safe_load=True)
-                    
-                    # If we have a separate low model, apply to it
-                    # Otherwise, we'll need to track this for later
-                    print(f"[SamplerCompareAdvanced] Loaded LOW LoRA: {low_label} (strength={low_strength})")
                     
                     # Store low LoRA info for WAN 2.2 two-phase sampling
                     if not hasattr(model, '_low_loras'):
@@ -993,7 +947,7 @@ class SamplerCompareAdvanced:
                     })
                     
             except Exception as e:
-                print(f"[SamplerCompareAdvanced] Error loading LoRA {label}: {e}")
+                print(f"[SamplerCompareAdvanced] ERROR loading LoRA {label}: {e}")
                 continue
         
         return model, model_low, clip
@@ -1041,21 +995,14 @@ class SamplerCompareAdvanced:
         
         # Look for matching config by combo_idx (maps to variation_index-1)
         # Config chain with variation_index=1 is stored at key 0, variation_index=2 at key 1, etc.
-        found_chain = False
         if isinstance(sampling_configs, dict) and combo_idx in sampling_configs:
             cfg = sampling_configs[combo_idx]
             chain_config_type = cfg.get("config_type", "STANDARD")
-            chain_width = cfg.get("width", "not set")
-            chain_height = cfg.get("height", "not set")
-            print(f"[SamplerCompareAdvanced] Found config chain for combo {combo_idx} (variation_index={combo_idx+1}): config_type={chain_config_type}, size={chain_width}x{chain_height}")
-            found_chain = True
             
             # Override model_type from config chain's config_type
             # This is critical for QWEN_EDIT, Z_IMAGE, FLUX_KONTEXT detection
             if chain_config_type in config_type_to_model_type:
                 resolved_model_type = config_type_to_model_type[chain_config_type]
-                if resolved_model_type != model_type:
-                    print(f"[SamplerCompareAdvanced] Overriding model_type: {model_type} -> {resolved_model_type} (from config chain)")
             
             # Chain config overrides defaults
             for key, value in cfg.items():
@@ -1067,10 +1014,6 @@ class SamplerCompareAdvanced:
             for key, value in global_config.items():
                 if value is not None:
                     result[key] = value
-                    print(f"[SamplerCompareAdvanced] Global override: {key} = {value}")
-        
-        if not found_chain and not global_config:
-            print(f"[SamplerCompareAdvanced] No config chain for combo {combo_idx} (expected variation_index={combo_idx+1}), using node defaults")
         
         return result, resolved_model_type
 
@@ -1166,7 +1109,6 @@ class SamplerCompareAdvanced:
             expanded_configs.append(new_config)
             variation_labels.append(" | ".join(label_parts))
         
-        print(f"[SamplerCompareAdvanced] Expanded global config to {len(expanded_configs)} variations")
         return expanded_configs, variation_labels
 
     def _expand_combinations_with_sampling_variations(self, combinations: List[Dict], config: Dict, node_defaults: Dict, global_config: Dict) -> Tuple[List[Dict], int]:
@@ -1202,9 +1144,6 @@ class SamplerCompareAdvanced:
         global_fields = set()
         for gc in global_expansions:
             global_fields.update(k for k, v in gc.items() if v is not None and k != "seed_control")
-        
-        if global_fields:
-            print(f"[SamplerCompareAdvanced] Global fields will override chain: {global_fields}")
         
         expanded_combos = []
         
@@ -1258,15 +1197,7 @@ class SamplerCompareAdvanced:
                     
                     expanded_combos.append(new_combo)
         
-        # Check for warning
-        warning = check_variation_warning(len(expanded_combos))
-        if warning:
-            print(f"[SamplerCompareAdvanced] {warning}")
-        
-        total = len(expanded_combos)
-        print(f"[SamplerCompareAdvanced] Total expanded combinations: {total}")
-        
-        return expanded_combos, total
+        return expanded_combos, len(expanded_combos)
 
     def sample_all_combinations(
         self,
@@ -1298,11 +1229,6 @@ class SamplerCompareAdvanced:
         # Build global config from dynamic fields
         global_config = self._build_global_config(num_global_fields, kwargs)
         
-        # Log global settings if any
-        configured = sum(1 for v in global_config.values() if v is not None)
-        if configured > 0:
-            print(f"[SamplerCompareAdvanced] {configured} global parameter(s) configured")
-        
         # Hardcoded defaults (used only if no config chain provided)
         node_defaults = {
             "seed": 0,
@@ -1328,9 +1254,6 @@ class SamplerCompareAdvanced:
             combinations, config, node_defaults, global_config
         )
         
-        if expanded_count > original_count:
-            print(f"[SamplerCompareAdvanced] Expanded {original_count} base combinations to {expanded_count} with sampling variations")
-        
         # CRITICAL: Sort combinations by model_index to minimize model switching
         # This ensures all variations for model 0 are processed before moving to model 1, etc.
         # Use stable sort to preserve relative order of variations within each model group
@@ -1341,17 +1264,6 @@ class SamplerCompareAdvanced:
             original_indices.get(id(c), 0)  # Tertiary: preserve original order within group
         ))
         
-        # Log model ordering
-        model_order = []
-        prev_model = None
-        for c in combinations:
-            m_idx = c.get("model_index", 0)
-            if m_idx != prev_model:
-                model_order.append(m_idx)
-                prev_model = m_idx
-        if len(model_order) > 1:
-            print(f"[SamplerCompareAdvanced] Optimized order: processing models in sequence {model_order}")
-        
         all_images = []
         all_labels = []
         
@@ -1360,11 +1272,8 @@ class SamplerCompareAdvanced:
         use_global_height = global_height if global_height > 0 else None
         use_global_num_frames = global_num_frames if global_num_frames > 0 else None
         
-        print(f"\n[SamplerCompareAdvanced] Processing {len(combinations)} combinations (LAZY LOADING)")
-        if use_global_width or use_global_height:
-            print(f"[SamplerCompareAdvanced] Global dimension override: {use_global_width or 'chain'}x{use_global_height or 'chain'}")
-        if use_global_num_frames:
-            print(f"[SamplerCompareAdvanced] Global frame count override: {use_global_num_frames}")
+        # Log milestone: processing start
+        print(f"[SamplerCompareAdvanced] Processing {len(combinations)} combinations")
         
         # Track currently loaded resources for smart unloading
         current_model = None
@@ -1410,11 +1319,7 @@ class SamplerCompareAdvanced:
         initial_seed = global_config.get("seed")
         running_seed = initial_seed  # Will be updated after each combination based on control mode
         
-        if initial_seed is not None:
-            print(f"[SamplerCompareAdvanced] Initial seed control: {seed_control_mode}, starting seed: {initial_seed}")
-        
         for idx, combo in enumerate(combinations):
-            print(f"\n[SamplerCompareAdvanced] === Combination {idx + 1}/{len(combinations)} ===")
             
             # Get model entry early for progress tracking and cache hash
             model_idx = combo.get("model_index", 0)
@@ -1425,6 +1330,13 @@ class SamplerCompareAdvanced:
             base_combo_idx = combo.get("model_index", 0)
             chain_cfg = sampling_configs.get(base_combo_idx, {})
             current_chain_idx = chain_cfg.get("variation_index", 1)
+            
+            # Get expected steps for timing (from override > chain > default)
+            sampling_override = combo.get("_sampling_override", {})
+            expected_steps = sampling_override.get("steps") or chain_cfg.get("steps") or node_defaults.get("steps", 20)
+            
+            # Start timing for this iteration
+            start_iteration(idx, expected_steps)
             
             # Update progress tracker
             update_tracker_state(
@@ -1482,7 +1394,6 @@ class SamplerCompareAdvanced:
             cached = self._get_cached_result(combo_hash)
             if cached is not None:
                 image, label, frame_count = cached
-                print(f"[SamplerCompareAdvanced] Using cached result for combination {idx + 1}")
                 all_images.append(image)
                 combo["output_frame_count"] = frame_count
                 all_labels.append(label)
@@ -1498,10 +1409,11 @@ class SamplerCompareAdvanced:
                         import random
                         running_seed = random.randint(0, 0xffffffffffffffff)
                 
+                # Complete timing for cache hit
+                complete_iteration(idx)
                 continue
             
             cache_misses += 1
-            print(f"[SamplerCompareAdvanced] No cache hit, sampling...")
             
             # Check if we need to reload models (smart unloading)
             new_key = self._get_combo_key(combo, config)
@@ -1509,7 +1421,6 @@ class SamplerCompareAdvanced:
             
             if needs_reload:
                 if current_key is not None:
-                    print(f"[SamplerCompareAdvanced] Config changed - unloading current models")
                     # Clear ALL references before unloading to help GC
                     # This includes working_model which holds patched model clones
                     current_model = None
@@ -1527,24 +1438,19 @@ class SamplerCompareAdvanced:
                 
                 # Get model entry
                 model_idx = combo.get("model_index", 0)
-                print(f"[SamplerCompareAdvanced] Getting model entry for index {model_idx}", flush=True)
                 current_model_entry = config["model_variations"][model_idx]
-                print(f"[SamplerCompareAdvanced] Model entry: {current_model_entry.get('name', 'unknown')}", flush=True)
                 
                 # LAZY LOAD: Model
-                print(f"[SamplerCompareAdvanced] About to load model...", flush=True)
                 current_model, current_model_low = self._load_model(current_model_entry)
-                print(f"[SamplerCompareAdvanced] Model load returned", flush=True)
                 if current_model is None:
                     print(f"[SamplerCompareAdvanced] ERROR: Failed to load model")
                     continue
                 
                 # LAZY LOAD: VAE
                 vae_name = combo.get("vae_name", "NONE")
-                print(f"[SamplerCompareAdvanced] VAE name for combo: {vae_name}")
                 current_vae = self._load_vae(vae_name, config, current_model_entry)
                 if current_vae is None:
-                    print(f"[SamplerCompareAdvanced] WARNING: Failed to load VAE '{vae_name}'")
+                    print(f"[SamplerCompareAdvanced] WARNING: No VAE loaded for '{vae_name}'")
                 
                 # LAZY LOAD: CLIP
                 clip_var = combo.get("clip_variation")
@@ -1562,7 +1468,6 @@ class SamplerCompareAdvanced:
                 
                 current_key = new_key
             else:
-                print(f"[SamplerCompareAdvanced] Same config - reusing loaded models")
                 model_idx = combo.get("model_index", 0)
             
             # Get model type from clip_variation's clip_type
@@ -1580,10 +1485,8 @@ class SamplerCompareAdvanced:
             
             if clip_type_str and clip_type_str in clip_type_to_model_type:
                 model_type = clip_type_to_model_type[clip_type_str]
-                print(f"[SamplerCompareAdvanced] Model type from clip_type: {model_type}")
             else:
                 model_type = self.detect_model_type(current_model)
-                print(f"[SamplerCompareAdvanced] Auto-detected model type: {model_type}")
             
             # Prepare latent based on model type
             is_video_model = model_type in ['hunyuan', 'hunyuan15', 'wan21', 'wan22']
@@ -1601,7 +1504,6 @@ class SamplerCompareAdvanced:
                 for key, value in sampling_override.items():
                     if value is not None and not key.startswith("_"):
                         sampling_cfg[key] = value
-                print(f"[SamplerCompareAdvanced] Applied sampling override: {combo.get('_variation_label', 'N/A')}")
             
             # Use resolved model_type from config chain (handles QWEN_EDIT, Z_IMAGE, FLUX_KONTEXT properly)
             if resolved_model_type != model_type:
@@ -1625,7 +1527,6 @@ class SamplerCompareAdvanced:
                 scale_by = math.sqrt(total / (ref_w * ref_h))
                 latent_width = round(ref_w * scale_by / 8.0) * 8
                 latent_height = round(ref_h * scale_by / 8.0) * 8
-                print(f"[SamplerCompareAdvanced] {model_type} latent dims from reference: {latent_width}x{latent_height}")
             
             # For non-video models, ensure num_frames is 1
             if not is_video_model:
@@ -1645,7 +1546,6 @@ class SamplerCompareAdvanced:
             variation_seed_control = sampling_cfg.get("seed_control")
             if variation_seed_control and variation_seed_control != global_seed_control_mode:
                 seed_control_mode = variation_seed_control
-                print(f"[SamplerCompareAdvanced] Using per-variation seed_control: {seed_control_mode}")
             else:
                 seed_control_mode = global_seed_control_mode  # Reset to global default
             
@@ -1669,11 +1569,6 @@ class SamplerCompareAdvanced:
             use_wan22_low_end = sampling_cfg.get("wan22_low_end", 20)
             use_hunyuan_shift = sampling_cfg.get("hunyuan_shift", 7.0)
             use_lumina_shift = sampling_cfg.get("lumina_shift", 3.0)  # Added: Z_IMAGE/Lumina2 shift
-            
-            print(f"[SamplerCompareAdvanced] Using: steps={use_steps}, cfg={use_cfg}, sampler={use_sampler}, scheduler={use_scheduler}")
-            print(f"[SamplerCompareAdvanced] Dimensions: {latent_width}x{latent_height}" + (f", {num_frames} frames" if is_video_model else ""))
-            if model_type == 'z_image':
-                print(f"[SamplerCompareAdvanced] Z_IMAGE lumina_shift={use_lumina_shift} (from config chain)")
             
             # Clone and patch model
             working_model = current_model
@@ -1713,11 +1608,9 @@ class SamplerCompareAdvanced:
                             current_positive, current_negative = self._encode_qwen_edit_conditioning(
                                 current_clip, current_vae, pos_text, reference_images
                             )
-                            print(f"[SamplerCompareAdvanced] QWEN_EDIT with {len(reference_images)} reference image(s)")
                         else:
                             # Without reference images: standard QWEN encoding (empty latent mode)
                             # This matches ComfyUI's TextEncodeQwenImageEdit with image=None
-                            print(f"[SamplerCompareAdvanced] QWEN_EDIT without reference images (empty latent mode)")
                             tokens = current_clip.tokenize(pos_text, images=[])
                             current_positive = current_clip.encode_from_tokens_scheduled(tokens)
                             tokens = current_clip.tokenize("", images=[])
@@ -1781,8 +1674,6 @@ class SamplerCompareAdvanced:
                         current_positive = current_clip.encode_from_tokens_scheduled(tokens)
                         tokens = current_clip.tokenize(neg_text)
                         current_negative = current_clip.encode_from_tokens_scheduled(tokens)
-                    
-                    print(f"[SamplerCompareAdvanced] Encoded conditioning for {model_type}")
                 except Exception as e:
                     print(f"[SamplerCompareAdvanced] Conditioning error: {e}")
                     import traceback
@@ -1825,7 +1716,6 @@ class SamplerCompareAdvanced:
                     )
                 else:
                     # Standard sampling for all other models
-                    print(f"[SamplerCompareAdvanced] Standard sampling for {model_type}")
                     (latent_out,) = common_ksampler(
                         model=working_model,
                         seed=use_seed,
@@ -1841,16 +1731,10 @@ class SamplerCompareAdvanced:
                     sampled_latent = latent_out
                 
                 # Decode
-                print(f"[SamplerCompareAdvanced] Decoding...")
                 if current_vae is None:
                     print(f"[SamplerCompareAdvanced] ERROR: No VAE loaded for decoding")
                     continue
                 image = self._decode_latent(sampled_latent, current_vae, is_video=is_video_model, num_frames=num_frames)
-                
-                # Log decoded image dimensions (for debugging resolution issues)
-                if image.dim() >= 3:
-                    h, w = image.shape[-3], image.shape[-2]
-                    print(f"[SamplerCompareAdvanced] Decoded image: {w}x{h} (requested: {latent_width}x{latent_height})")
                 
                 all_images.append(image)
                 
@@ -1859,14 +1743,9 @@ class SamplerCompareAdvanced:
                 combo["output_frame_count"] = actual_frame_count
                 combo["output_width"] = image.shape[2]  # W dimension
                 combo["output_height"] = image.shape[1]  # H dimension
-                
-                # Log video output info
-                if is_video_model and image.shape[0] > 1:
-                    print(f"[SamplerCompareAdvanced] Video output: {image.shape[0]} frames")
             
             except comfy.model_management.InterruptProcessingException:
                 # Re-raise interrupt so job can be properly cancelled
-                print(f"[SamplerCompareAdvanced] Processing interrupted by user")
                 current_model = None
                 current_model_low = None
                 current_vae = None
@@ -1876,7 +1755,7 @@ class SamplerCompareAdvanced:
                 raise
                 
             except Exception as e:
-                print(f"[SamplerCompareAdvanced] Sampling error: {e}")
+                print(f"[SamplerCompareAdvanced] ERROR: Sampling failed: {e}")
                 import traceback
                 traceback.print_exc()
                 continue
@@ -1890,13 +1769,15 @@ class SamplerCompareAdvanced:
                 label = f"{label} | {variation_label}"
             
             all_labels.append(label)
-            print(f"[SamplerCompareAdvanced] Label: {label}")
             
             # Cache the result for future runs
             # Use all_images[-1] since we just appended
             if all_images:
                 actual_frame_count = combo.get("output_frame_count", 1)
                 self._cache_result(combo_hash, all_images[-1], label, actual_frame_count)
+            
+            # Mark iteration complete for timing stats
+            complete_iteration(idx)
             
             # Update running seed based on control mode (for next iteration)
             if running_seed is not None:
@@ -1923,9 +1804,6 @@ class SamplerCompareAdvanced:
             gc.collect()
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
-        
-        # Log cache stats
-        print(f"\n[SamplerCompareAdvanced] Cache stats: {cache_hits} hits, {cache_misses} misses")
         
         # Update tracker to complete status
         update_tracker_state(
@@ -1957,10 +1835,6 @@ class SamplerCompareAdvanced:
             # This preserves the original resolution of each image
             max_h = max(img.shape[1] for img in all_images)
             max_w = max(img.shape[2] for img in all_images)
-            
-            print(f"[SamplerCompareAdvanced] Images have different sizes, padding to {max_w}x{max_h}")
-            for i, (h, w) in enumerate(shapes):
-                print(f"  Image {i+1}: {w}x{h}")
             
             padded_images = []
             for img in all_images:
@@ -2001,7 +1875,6 @@ class SamplerCompareAdvanced:
             if kwargs.get('cfg_norm', True):
                 mult = kwargs.get('cfg_norm_multiplier', 0.7)
                 model = RescaleCFG().patch(model, mult)[0]
-            print(f"[SamplerCompareAdvanced] Applied QWEN patches (shift={shift})")
         
         elif model_type == 'qwen_edit':
             # QWEN Edit uses same AuraFlow sampling as QWEN
@@ -2012,14 +1885,12 @@ class SamplerCompareAdvanced:
             if kwargs.get('cfg_norm', True):
                 mult = kwargs.get('cfg_norm_multiplier', 0.7)
                 model = RescaleCFG().patch(model, mult)[0]
-            print(f"[SamplerCompareAdvanced] Applied QWEN Edit patches (shift={shift})")
         
         elif model_type == 'lumina2':
             # Lumina2 uses AuraFlow sampling with shift parameter
             # Default shift=6.0 for Lumina2
             shift = kwargs.get('lumina_shift', 6.0)
             model = ModelSamplingAuraFlow().patch_aura(model, shift)[0]
-            print(f"[SamplerCompareAdvanced] Applied Lumina2 patches (shift={shift})")
         
         elif model_type == 'z_image':
             # Z_IMAGE uses AuraFlow sampling with shift parameter
@@ -2028,24 +1899,20 @@ class SamplerCompareAdvanced:
             # CRITICAL: Use patch_aura() which sets multiplier=1.0 (not patch() which defaults to 1000)
             shift = kwargs.get('lumina_shift', 3.0)
             model = ModelSamplingAuraFlow().patch_aura(model, shift)[0]
-            print(f"[SamplerCompareAdvanced] Applied Z_IMAGE patches (shift={shift}, multiplier=1.0)")
         
         elif model_type == 'wan21':
             shift = kwargs.get('wan_shift', 8.0)
             model = ModelSamplingSD3().patch(model, shift)[0]
-            print(f"[SamplerCompareAdvanced] Applied WAN 2.1 shift={shift}")
         
         elif model_type == 'wan22':
             # WAN 2.2 uses shift=8.0 (same as WAN 2.1)
             # This is applied to BOTH high and low noise models
             shift = kwargs.get('wan22_shift', 8.0)
             model = ModelSamplingSD3().patch(model, shift)[0]
-            print(f"[SamplerCompareAdvanced] Applied WAN 2.2 shift={shift}")
         
         elif model_type in ['hunyuan', 'hunyuan15']:
             shift = kwargs.get('hunyuan_shift', 7.0)
             model = ModelSamplingSD3().patch(model, shift)[0]
-            print(f"[SamplerCompareAdvanced] Applied Hunyuan shift={shift}")
         
         elif model_type in ['flux', 'flux2', 'flux_kontext']:
             # FLUX, FLUX2, FLUX_KONTEXT models get shift patching
@@ -2054,7 +1921,6 @@ class SamplerCompareAdvanced:
             latent_height = kwargs.get('latent_height', 1024)
             model = ModelSamplingFlux().patch(model, max_shift=1.15, base_shift=0.5, 
                                               width=latent_width, height=latent_height)[0]
-            print(f"[SamplerCompareAdvanced] Applied {model_type} patches")
         
         return model
     
@@ -2088,8 +1954,6 @@ class SamplerCompareAdvanced:
         if low_end_step <= 0:
             low_end_step = steps
         
-        print(f"[SamplerCompareAdvanced] WAN 2.2 Phase 1: steps 0-{high_end_step} (high noise model)")
-        
         # Phase 1: High noise model (already has HIGH LoRA applied)
         # add_noise=enable -> disable_noise=False
         # return_with_leftover_noise=enable -> force_full_denoise=False
@@ -2105,7 +1969,6 @@ class SamplerCompareAdvanced:
         )[0]
         
         if model_low is None:
-            print(f"[SamplerCompareAdvanced] No low noise model, returning after phase 1")
             return samples_1
         
         # Clone low model before patching
@@ -2119,17 +1982,12 @@ class SamplerCompareAdvanced:
             for low_lora in model_high._low_loras:
                 lora_data = low_lora["data"]
                 strength = low_lora["strength"]
-                label = low_lora["label"]
                 model_low_working, _ = comfy.sd.load_lora_for_models(
                     model_low_working, None, lora_data, strength, strength
                 )
-                print(f"[SamplerCompareAdvanced] Applied LOW LoRA to low model: {label} (strength={strength})")
         
-        # Apply shift=5.0 to low noise model (same as high noise model)
+        # Apply shift to low noise model (same as high noise model)
         model_low_patched = ModelSamplingSD3().patch(model_low_working, wan_shift)[0]
-        print(f"[SamplerCompareAdvanced] Applied WAN 2.2 shift={wan_shift} to low noise model")
-        
-        print(f"[SamplerCompareAdvanced] WAN 2.2 Phase 2: steps {high_end_step}-{low_end_step} (low noise model)")
         
         # Phase 2: Low noise model
         # add_noise=disable -> disable_noise=True
@@ -2188,7 +2046,6 @@ class SamplerCompareAdvanced:
                 if is_video:
                     # Video model - squeeze batch and return [F, H, W, C]
                     image = image.squeeze(0)
-                    print(f"[SamplerCompareAdvanced] Video decoded: {image.shape[0]} frames")
                 else:
                     # Image model - take first frame
                     image = image[:, 0, :, :, :]  # [B, H, W, C]
@@ -2201,7 +2058,6 @@ class SamplerCompareAdvanced:
                     image = image[:, 0, :, :, :]  # [B, H, W, C]
             else:
                 # Unknown format - try best effort
-                print(f"[SamplerCompareAdvanced] Note: Video shape {image.shape}, using squeeze")
                 image = image.squeeze(0)
         
         return image

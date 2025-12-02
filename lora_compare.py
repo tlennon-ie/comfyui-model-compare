@@ -193,14 +193,9 @@ class LoraCompare:
                 lora_entry["combinator"] = "+"  # Default for last LoRA
             
             loras.append(lora_entry)
-            print(f"[LoraCompare] Added LoRA: {label} ({len(strengths)} strength variations)")
-            if lora_mode == "HIGH_LOW_PAIR" and "low_name" in lora_entry:
-                print(f"  Low: {lora_entry['low_label']} ({len(lora_entry['low_strengths'])} strengths)")
         
         config["loras"] = loras
         config["mode"] = lora_mode
-        
-        print(f"[LoraCompare] Configured {len(loras)} LoRAs in {lora_mode} mode")
         
         return (config,)
     

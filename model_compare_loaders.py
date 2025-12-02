@@ -323,7 +323,6 @@ class ModelCompareLoaders:
                     type_low, path_low = self._parse_model_selector(name_low)
                     if type_low == "diffusion":
                         entry["model_low_path"] = folder_paths.get_full_path("diffusion_models", path_low)
-                        print(f"[ModelCompareLoaders] Stored WAN 2.2 low noise model path: {path_low}")
             
             return entry
 
@@ -378,7 +377,6 @@ class ModelCompareLoaders:
         # VAE variations should match model variations (NOT num_vae_variations!)
         # Each model variation has its own VAE setting via vae_variation_{i}
         vae_variations = [{"name": vae if vae != "NONE" else "__baked__" if base_entry.get("use_baked_vae_clip") else "NONE"}]
-        print(f"[ModelCompareLoaders] VAE[0]: {vae_variations[0]['name']}")
         for i in range(1, num_diffusion_models):
             # Get VAE for this model variation (use baked if specified, or explicit VAE)
             var_baked = kwargs.get(f"baked_vae_clip_variation_{i}", False)
@@ -386,15 +384,12 @@ class ModelCompareLoaders:
             
             if var_baked:
                 vae_variations.append({"name": "__baked__"})
-                print(f"[ModelCompareLoaders] VAE[{i}]: __baked__ (from baked_vae_clip_variation_{i})")
             elif v_name != "NONE":
                 get_vae_path(v_name)  # Store path in map
                 vae_variations.append({"name": v_name})
-                print(f"[ModelCompareLoaders] VAE[{i}]: {v_name}")
             else:
                 # Fallback to base VAE if no variation specified
                 vae_variations.append({"name": vae_variations[0]["name"]})
-                print(f"[ModelCompareLoaders] VAE[{i}]: {vae_variations[0]['name']} (fallback to base)")
 
         # 4. Store CLIP configurations (LAZY LOADING - no CLIPs loaded here)
         # Determine if BASE preset needs dual CLIP based on its OWN clip_type
@@ -546,14 +541,11 @@ class ModelCompareLoaders:
         
         # Count how many LoRA configs are provided
         num_lora_configs = sum(1 for c in lora_configs if c is not None)
-        if num_lora_configs > 0:
-            print(f"[ModelCompareLoaders] {num_lora_configs} LoRA configuration(s) connected")
 
         # 6. Integrate Prompt Config if provided
         prompt_variations = []
         if prompt_config and isinstance(prompt_config, dict):
             prompt_variations = prompt_config.get("prompt_variations", [])
-            print(f"[ModelCompareLoaders] Integrated {len(prompt_variations)} prompt variation(s)")
 
         # 7. Compute Combinations
         combinations = self._compute_combinations(
@@ -583,7 +575,6 @@ class ModelCompareLoaders:
 
         # LAZY LOADING: All model/VAE/CLIP loading deferred to sampler
         # Config only contains paths and configurations
-        print(f"[ModelCompareLoaders] Config prepared with {len(combinations)} combinations (LAZY LOADING)")
         return (config,)
 
     def _get_clip_type_enum(self, clip_type_str):

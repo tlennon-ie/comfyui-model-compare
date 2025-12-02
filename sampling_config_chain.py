@@ -482,63 +482,6 @@ class SamplingConfigChain:
             # Store the config_type on the model entry too for reference
             model_variations[idx]["sampling_config_type"] = config_type
         
-        print(f"[SamplingConfigChain] Applied config for variation {variation_index} ({config_type})")
-        print(f"  Steps: {steps}, CFG: {cfg}, Sampler: {sampler_name}, Scheduler: {scheduler}")
-        print(f"  Size: {width}x{height}")
-        
-        # Show variation count
-        if variation_count > 1:
-            print(f"  ⚡ Variations: {variation_count} combinations will be generated from this chain")
-            # Show what's being varied
-            varied_fields = []
-            if len(samplers_list) > 1:
-                varied_fields.append(f"samplers({len(samplers_list)})")
-            if len(schedulers_list) > 1:
-                varied_fields.append(f"schedulers({len(schedulers_list)})")
-            if len(steps_list) > 1:
-                varied_fields.append(f"steps({len(steps_list)})")
-            if len(cfg_list) > 1:
-                varied_fields.append(f"cfg({len(cfg_list)})")
-            if len(width_list) > 1:
-                varied_fields.append(f"width({len(width_list)})")
-            if len(height_list) > 1:
-                varied_fields.append(f"height({len(height_list)})")
-            if varied_fields:
-                print(f"  Varied: {', '.join(varied_fields)}")
-        
-        # Show warning if threshold exceeded
-        if warning_msg:
-            print(f"  {warning_msg}")
-        
-        if config_type in ["QWEN", "QWEN_EDIT"]:
-            has_refs = "reference_images" in sampling_config
-            shift_info = f"shift={qwen_shift_list}" if len(qwen_shift_list) > 1 else f"shift={qwen_shift_list[0]}"
-            print(f"  QWEN: {shift_info}, cfg_norm={qwen_cfg_norm}, has_refs={has_refs}")
-        elif config_type == "WAN2.1":
-            has_start = "start_frame" in sampling_config
-            shift_info = f"shift={wan_shift_list}" if len(wan_shift_list) > 1 else f"shift={wan_shift_list[0]}"
-            print(f"  WAN 2.1: {shift_info}, frames={num_frames}, has_start_frame={has_start}")
-        elif config_type == "WAN2.2":
-            has_start = "start_frame" in sampling_config
-            has_end = "end_frame" in sampling_config
-            shift_info = f"shift={wan22_shift_list}" if len(wan22_shift_list) > 1 else f"shift={wan22_shift_list[0]}"
-            print(f"  WAN 2.2: {shift_info}, high={wan22_high_start}-{wan22_high_end}, low={wan22_low_start}-{wan22_low_end}, frames={num_frames}, has_start={has_start}, has_end={has_end}")
-        elif config_type == "HUNYUAN_VIDEO":
-            shift_info = f"shift={hunyuan_shift_list}" if len(hunyuan_shift_list) > 1 else f"shift={hunyuan_shift_list[0]}"
-            print(f"  Hunyuan: {shift_info}, frames={num_frames}")
-        elif config_type == "HUNYUAN_VIDEO_15":
-            has_start = "start_frame" in sampling_config
-            has_clip_vision = "clip_vision" in sampling_config
-            shift_info = f"shift={hunyuan_shift_list}" if len(hunyuan_shift_list) > 1 else f"shift={hunyuan_shift_list[0]}"
-            print(f"  Hunyuan 1.5: {shift_info}, frames={num_frames}, has_start_frame={has_start}, has_clip_vision={has_clip_vision}")
-        elif config_type in ["FLUX", "FLUX2", "FLUX_KONTEXT"]:
-            has_refs = "reference_images" in sampling_config
-            guidance_info = f"guidance={flux_guidance_list}" if len(flux_guidance_list) > 1 else f"guidance={flux_guidance_list[0]}"
-            print(f"  {config_type}: {guidance_info}, has_refs={has_refs}")
-        elif config_type == "Z_IMAGE":
-            shift_info = f"shift={lumina_shift_list}" if len(lumina_shift_list) > 1 else f"shift={lumina_shift_list[0]}"
-            print(f"  Z_IMAGE: {shift_info} (Lumina2, no CFG norm)")
-        
         # Return only config
         return (new_config,)
     

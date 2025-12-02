@@ -165,7 +165,6 @@ def create_video_from_frames(
             print(f"[VideoUtils] FFmpeg error: {stderr.decode(*ENCODE_ARGS)}")
             return False
         
-        print(f"[VideoUtils] Created video: {output_path}")
         return True
         
     except Exception as e:
@@ -273,8 +272,6 @@ def create_video_grid(
     total_output_frames = int(max_duration * max_fps)
     if total_output_frames == 0:
         total_output_frames = 1
-    
-    print(f"[VideoUtils] Creating video grid: {grid_cols}x{grid_rows}, {total_output_frames} frames at {max_fps} FPS")
     
     # Load fonts
     def load_font(name: str, size: int):

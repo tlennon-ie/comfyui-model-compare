@@ -533,6 +533,85 @@ function registerExtension(app) {
                             updateVisibility();
                         }, 50);
 
+                        // Add canvas dividers between variation groups
+                        const originalOnDrawForeground = self.onDrawForeground;
+                        self.onDrawForeground = function(ctx) {
+                            if (originalOnDrawForeground) {
+                                originalOnDrawForeground.call(this, ctx);
+                            }
+                            
+                            // Get current variation count
+                            const numWidget = this.widgets.find(w => w.name === "num_diffusion_models");
+                            const numVariations = numWidget ? parseInt(numWidget.value, 10) : 1;
+                            
+                            if (numVariations <= 1) return; // No dividers needed for single model
+                            
+                            // Find the Y positions where each variation group starts
+                            // Look for diffusion_model_variation_i widgets
+                            const dividerPositions = [];
+                            
+                            for (let i = 1; i < numVariations; i++) {
+                                const varWidget = this.widgets.find(w => w.name === `diffusion_model_variation_${i}`);
+                                if (varWidget) {
+                                    // Find the widget index to calculate Y position
+                                    const widgetIndex = this.widgets.indexOf(varWidget);
+                                    if (widgetIndex >= 0) {
+                                        // Calculate Y position based on visible widgets before this one
+                                        let yPos = LiteGraph.NODE_TITLE_HEIGHT;
+                                        for (let j = 0; j < widgetIndex; j++) {
+                                            const w = this.widgets[j];
+                                            if (w.computeSize) {
+                                                const size = w.computeSize(this.size[0]);
+                                                if (size[1] > 0) {
+                                                    yPos += size[1] + 4; // Widget height + spacing
+                                                }
+                                            } else {
+                                                yPos += 20; // Default widget height
+                                            }
+                                        }
+                                        // Only add divider if widget is visible (has height)
+                                        if (varWidget.computeSize) {
+                                            const varSize = varWidget.computeSize(this.size[0]);
+                                            if (varSize[1] > 0) {
+                                                dividerPositions.push({y: yPos, variation: i});
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            
+                            // Draw dividers
+                            if (dividerPositions.length > 0) {
+                                const nodeWidth = this.size[0];
+                                
+                                dividerPositions.forEach(pos => {
+                                    const y = pos.y - 6; // Position slightly above the widget
+                                    
+                                    // Draw gradient divider line
+                                    const gradient = ctx.createLinearGradient(10, 0, nodeWidth - 10, 0);
+                                    gradient.addColorStop(0, "rgba(100, 150, 255, 0)");
+                                    gradient.addColorStop(0.1, "rgba(100, 150, 255, 0.6)");
+                                    gradient.addColorStop(0.5, "rgba(100, 150, 255, 0.8)");
+                                    gradient.addColorStop(0.9, "rgba(100, 150, 255, 0.6)");
+                                    gradient.addColorStop(1, "rgba(100, 150, 255, 0)");
+                                    
+                                    ctx.beginPath();
+                                    ctx.strokeStyle = gradient;
+                                    ctx.lineWidth = 2;
+                                    ctx.moveTo(15, y);
+                                    ctx.lineTo(nodeWidth - 15, y);
+                                    ctx.stroke();
+                                    
+                                    // Draw variation label
+                                    ctx.fillStyle = "rgba(100, 150, 255, 0.9)";
+                                    ctx.font = "bold 10px sans-serif";
+                                    ctx.textAlign = "center";
+                                    ctx.fillText(`── Model ${pos.variation + 1} ──`, nodeWidth / 2, y - 3);
+                                    ctx.textAlign = "left";
+                                });
+                            }
+                        };
+
                     } catch (e) {
                         console.error("[ModelCompare] Error in onNodeCreated:", e);
                     }
@@ -1261,8 +1340,8 @@ function registerExtension(app) {
                 chainCallback(nodeType.prototype, "configure", function (info) {
                     setTimeout(() => {
                         if (this.size) {
-                            this.size[0] = 280;
-                            this.size[1] = 240;
+                            this.size[0] = 300;
+                            this.size[1] = 280;
                         }
                     }, 10);
                 });
@@ -1286,10 +1365,45 @@ function registerExtension(app) {
                             startTime: null,
                             htmlGridPath: null,
                             htmlGridUrl: null,
+                            // Timing stats
+                            speed: null,
+                            avgSpeed: null,
+                            elapsedSeconds: 0,
+                            etaSeconds: null,
+                            currentStep: 0,
+                            totalSteps: 0,
                         };
 
                         // Set default size
-                        self.size = [280, 240];
+                        self.size = [300, 280];
+
+                        // Helper to format speed display like tqdm
+                        const formatSpeed = (speed) => {
+                            if (speed === null || speed === undefined) return "";
+                            if (speed >= 1.0) {
+                                return `${speed.toFixed(2)}it/s`;
+                            } else if (speed > 0) {
+                                return `${(1.0 / speed).toFixed(2)}s/it`;
+                            } else if (speed < 0) {
+                                // Negative means s/it was stored
+                                return `${(-speed).toFixed(2)}s/it`;
+                            }
+                            return "";
+                        };
+
+                        // Helper to format time in human readable format
+                        const formatTime = (seconds) => {
+                            if (seconds === null || seconds === undefined || seconds < 0) return "";
+                            if (seconds < 60) return `${seconds.toFixed(0)}s`;
+                            if (seconds < 3600) {
+                                const mins = Math.floor(seconds / 60);
+                                const secs = Math.floor(seconds % 60);
+                                return `${mins}m ${secs}s`;
+                            }
+                            const hours = Math.floor(seconds / 3600);
+                            const mins = Math.floor((seconds % 3600) / 60);
+                            return `${hours}h ${mins}m`;
+                        };
 
                         // Custom draw function for the tracker display
                         const originalOnDrawForeground = self.onDrawForeground;
@@ -1333,11 +1447,17 @@ function registerExtension(app) {
                                 ctx.fillText(`✓ Complete! ${data.total} generated`, x, y);
                                 y += lineHeight;
                                 
-                                // Show elapsed time if available
-                                if (data.elapsed) {
+                                // Show total elapsed time
+                                if (data.elapsedSeconds > 0) {
                                     ctx.fillStyle = "#aaaaaa";
-                                    ctx.fillText(`  Time: ${data.elapsed}`, x, y);
+                                    ctx.fillText(`  Total time: ${formatTime(data.elapsedSeconds)}`, x, y);
                                     y += lineHeight;
+                                    
+                                    // Show average time per combination
+                                    if (data.avgSpeed > 0) {
+                                        ctx.fillText(`  Avg: ${formatTime(data.avgSpeed)}/combo`, x, y);
+                                        y += lineHeight;
+                                    }
                                 }
                                 
                                 // Show HTML Grid Available button
@@ -1378,9 +1498,10 @@ function registerExtension(app) {
                                 // Active/sampling state
                                 const pct = data.total > 0 ? (data.completed / data.total) * 100 : 0;
                                 
-                                // Progress text
+                                // Progress text with speed
                                 ctx.fillStyle = "#ffffff";
-                                ctx.fillText(`Progress: ${data.completed}/${data.total} (${pct.toFixed(0)}%)`, x, y);
+                                let progressText = `Progress: ${data.completed}/${data.total} (${pct.toFixed(0)}%)`;
+                                ctx.fillText(progressText, x, y);
                                 y += lineHeight;
                                 
                                 // Progress bar
@@ -1406,6 +1527,30 @@ function registerExtension(app) {
                                 
                                 y += lineHeight + 5;
                                 
+                                // Speed and ETA line (like tqdm output)
+                                const speedStr = formatSpeed(data.speed);
+                                const etaStr = data.etaSeconds > 0 ? formatTime(data.etaSeconds) : "";
+                                const elapsedStr = formatTime(data.elapsedSeconds);
+                                
+                                if (speedStr || etaStr) {
+                                    ctx.fillStyle = "#88ff88";
+                                    let timingLine = "";
+                                    if (speedStr) timingLine += `⚡ ${speedStr}`;
+                                    if (etaStr) timingLine += `  ETA: ${etaStr}`;
+                                    if (elapsedStr) timingLine += `  [${elapsedStr}]`;
+                                    ctx.fillText(timingLine, x, y);
+                                    y += lineHeight;
+                                }
+                                
+                                // Step progress within current combination
+                                if (data.totalSteps > 0 && data.currentStep > 0) {
+                                    ctx.fillStyle = "#aaaaaa";
+                                    ctx.font = "11px monospace";
+                                    ctx.fillText(`  Step: ${data.currentStep}/${data.totalSteps}`, x, y);
+                                    y += lineHeight - 2;
+                                    ctx.font = "12px monospace";
+                                }
+                                
                                 // Current model
                                 if (data.currentModel) {
                                     ctx.fillStyle = "#cccccc";
@@ -1428,9 +1573,9 @@ function registerExtension(app) {
                                 }
                             }
                             
-                            // Warnings section
+                            // Warnings section (only show if active/preparing, hide when complete)
                             const warnings = data.warnings || [];
-                            if (warnings.length > 0) {
+                            if (warnings.length > 0 && data.status !== "complete") {
                                 y += 5;
                                 ctx.fillStyle = "#ffaa44";
                                 ctx.fillText("⚠ Warnings:", x, y);
@@ -1528,6 +1673,13 @@ function updateTrackerDisplay(node, data) {
         startTime: data.start_time,
         htmlGridPath: data.html_grid_path || null,
         htmlGridUrl: data.html_grid_url || null,
+        // Timing stats
+        speed: data.speed || null,
+        avgSpeed: data.avg_speed || null,
+        elapsedSeconds: data.elapsed_seconds || 0,
+        etaSeconds: data.eta_seconds || null,
+        currentStep: data.current_step || 0,
+        totalSteps: data.total_steps || 0,
     };
     
     // Request redraw
@@ -1573,10 +1725,6 @@ function setupProgressListener() {
             }
             
             if (!api) {
-                // Debug: log what we can find
-                if (window.comfyAPI) {
-                    console.log("[ModelCompare] comfyAPI keys:", Object.keys(window.comfyAPI));
-                }
                 return false;
             }
             
@@ -1598,7 +1746,6 @@ function setupProgressListener() {
                     const val = api[key];
                     if (val && val instanceof WebSocket) {
                         socket = val;
-                        console.log("[ModelCompare] Found socket at api." + key);
                         break;
                     }
                 }
@@ -1608,10 +1755,8 @@ function setupProgressListener() {
             if (!socket && api.addEventListener) {
                 // ComfyUI api might be an EventTarget
                 api.addEventListener("model_compare_progress", function(event) {
-                    console.log("[ModelCompare] Got event via api EventTarget");
                     window._modelCompareProgressHandler(event.detail);
                 });
-                console.log("[ModelCompare] Attached to api as EventTarget");
                 hooked = true;
                 return true;
             }
@@ -1621,18 +1766,16 @@ function setupProgressListener() {
                     try {
                         const msg = JSON.parse(event.data);
                         if (msg.type === "model_compare_progress") {
-                            console.log("[ModelCompare] Progress:", msg.data.completed_combinations, "/", msg.data.total_combinations);
                             window._modelCompareProgressHandler(msg.data);
                         }
                     } catch (e) {}
                 });
                 socket._modelCompareHooked = true;
-                console.log("[ModelCompare] WebSocket listener attached successfully");
                 hooked = true;
                 return true;
             }
         } catch (e) {
-            console.log("[ModelCompare] Hook error:", e);
+            console.error("[ModelCompare] Hook error:", e);
         }
         return false;
     }
@@ -1656,13 +1799,11 @@ function setupProgressListener() {
                         try {
                             const msg = JSON.parse(event.data);
                             if (msg.type === "model_compare_progress") {
-                                console.log("[ModelCompare] Progress via", loc);
                                 window._modelCompareProgressHandler(msg.data);
                             }
                         } catch (e) {}
                     });
                     socket._modelCompareHooked = true;
-                    console.log("[ModelCompare] Hooked socket at:", loc);
                     return true;
                 }
             } catch (e) {
@@ -1680,45 +1821,35 @@ function setupProgressListener() {
         if (tryHookApi() || findAllWebSockets() || attempts >= maxAttempts) {
             clearInterval(retryInterval);
             if (attempts >= maxAttempts && !hooked) {
-                console.log("[ModelCompare] WebSocket hook failed. Trying fallback polling...");
                 // Fallback: poll for websocket messages by checking a global
                 startPollingFallback();
             }
         }
     }, 500);
-    
-    console.log("[ModelCompare] Progress listener initializing...");
 }
 
 // Fallback: Create our own websocket connection to receive messages
 function startPollingFallback() {
-    console.log("[ModelCompare] Starting polling fallback");
-    
     // Create a separate websocket to the same endpoint
     try {
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         const wsUrl = `${protocol}//${window.location.host}/ws`;
         const ws = new WebSocket(wsUrl);
         
-        ws.onopen = function() {
-            console.log("[ModelCompare] Fallback WebSocket connected");
-        };
-        
         ws.onmessage = function(event) {
             try {
                 const msg = JSON.parse(event.data);
                 if (msg.type === "model_compare_progress") {
-                    console.log("[ModelCompare] Progress via fallback WS");
                     window._modelCompareProgressHandler(msg.data);
                 }
             } catch (e) {}
         };
         
         ws.onerror = function(e) {
-            console.log("[ModelCompare] Fallback WS error:", e);
+            console.error("[ModelCompare] Fallback WS error:", e);
         };
     } catch (e) {
-        console.log("[ModelCompare] Could not create fallback WS:", e);
+        console.error("[ModelCompare] Could not create fallback WS:", e);
     }
 }
 
