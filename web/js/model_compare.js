@@ -114,9 +114,9 @@ function showMultiSelectPopup(widget, options, fieldName, event) {
         }
     };
     
-    // Buttons row
-    const btnRow = document.createElement('div');
-    btnRow.style.cssText = `
+    // Buttons row - Select All / Clear All / Invert
+    const selectRow = document.createElement('div');
+    selectRow.style.cssText = `
         display: flex;
         gap: 8px;
         margin-top: 8px;
@@ -124,19 +124,22 @@ function showMultiSelectPopup(widget, options, fieldName, event) {
         border-top: 1px solid #444;
     `;
     
-    const closeBtn = document.createElement('button');
-    closeBtn.textContent = 'Close';
-    closeBtn.style.cssText = `
+    const selectAllBtn = document.createElement('button');
+    selectAllBtn.textContent = 'Select All';
+    selectAllBtn.style.cssText = `
         flex: 1;
         padding: 6px;
-        background: #444;
-        border: 1px solid #666;
+        background: #335533;
+        border: 1px solid #668866;
         border-radius: 4px;
         color: #fff;
         cursor: pointer;
         font-size: 12px;
     `;
-    closeBtn.onclick = () => popup.remove();
+    selectAllBtn.onclick = () => {
+        popup.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = true);
+        updateWidgetValue();
+    };
     
     const clearBtn = document.createElement('button');
     clearBtn.textContent = 'Clear All';
@@ -155,9 +158,52 @@ function showMultiSelectPopup(widget, options, fieldName, event) {
         updateWidgetValue();
     };
     
-    btnRow.appendChild(clearBtn);
-    btnRow.appendChild(closeBtn);
-    popup.appendChild(btnRow);
+    const invertBtn = document.createElement('button');
+    invertBtn.textContent = 'Invert';
+    invertBtn.style.cssText = `
+        flex: 1;
+        padding: 6px;
+        background: #444455;
+        border: 1px solid #666688;
+        border-radius: 4px;
+        color: #fff;
+        cursor: pointer;
+        font-size: 12px;
+    `;
+    invertBtn.onclick = () => {
+        popup.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = !cb.checked);
+        updateWidgetValue();
+    };
+    
+    selectRow.appendChild(selectAllBtn);
+    selectRow.appendChild(clearBtn);
+    selectRow.appendChild(invertBtn);
+    popup.appendChild(selectRow);
+    
+    // Close button row
+    const closeRow = document.createElement('div');
+    closeRow.style.cssText = `
+        display: flex;
+        gap: 8px;
+        margin-top: 8px;
+    `;
+    
+    const closeBtn = document.createElement('button');
+    closeBtn.textContent = 'Close';
+    closeBtn.style.cssText = `
+        flex: 1;
+        padding: 6px;
+        background: #444;
+        border: 1px solid #666;
+        border-radius: 4px;
+        color: #fff;
+        cursor: pointer;
+        font-size: 12px;
+    `;
+    closeBtn.onclick = () => popup.remove();
+    
+    closeRow.appendChild(closeBtn);
+    popup.appendChild(closeRow);
     
     document.body.appendChild(popup);
     

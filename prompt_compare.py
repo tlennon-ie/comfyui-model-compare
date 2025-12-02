@@ -99,8 +99,8 @@ class PromptCompare:
             })
         
         config = {
-            \"prompt_variations\": prompts,
-            \"num_variations\": len(prompts),
+            "prompt_variations": prompts,
+            "num_variations": len(prompts),
         }
         
         return (config,)

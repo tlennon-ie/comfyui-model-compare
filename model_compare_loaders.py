@@ -92,7 +92,7 @@ class ModelCompareLoaders:
                 "num_diffusion_models": ("INT", {
                     "default": 1,
                     "min": 1,
-                    "max": 5,
+                    "max": 10,
                     "step": 1,
                     "display": "slider",
                     "tooltip": "Number of diffusion model variations to compare",
@@ -100,7 +100,7 @@ class ModelCompareLoaders:
                 "num_vae_variations": ("INT", {
                     "default": 1,
                     "min": 1,
-                    "max": 5,
+                    "max": 10,
                     "step": 1,
                     "display": "slider",
                     "tooltip": "Number of VAE variations to compare",
@@ -108,7 +108,7 @@ class ModelCompareLoaders:
                 "num_clip_variations": ("INT", {
                     "default": 1,
                     "min": 1,
-                    "max": 5,
+                    "max": 10,
                     "step": 1,
                     "display": "slider",
                     "tooltip": "Number of CLIP variations",
@@ -122,7 +122,7 @@ class ModelCompareLoaders:
         }
 
         # Add variations grouped by number (variation 1 all fields, then variation 2, etc.)
-        for i in range(1, 5):
+        for i in range(1, 10):
             # Diffusion model variation i
             inputs["optional"][f"diffusion_model_variation_{i}"] = (
                 ["NONE"] + combined_models,
@@ -182,7 +182,7 @@ class ModelCompareLoaders:
         })
         
         # Variation LoRAs
-        for i in range(1, 5):
+        for i in range(1, 10):
             inputs["optional"][f"lora_config_variation_{i}"] = ("LORA_COMPARE_CONFIG", {
                 "tooltip": f"LoRA configuration for variation {i} (connect from LoRA Compare node)"
             })
