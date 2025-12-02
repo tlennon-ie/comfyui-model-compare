@@ -97,6 +97,15 @@ def _force_reset_tracker_state():
 def update_tracker_state(**kwargs):
     """Update tracker state with new values."""
     global _tracker_state
+    
+    # Don't allow downgrading from "complete" to "preparing" or "idle"
+    # This can happen when ComfyUI re-executes the tracker node after workflow completion
+    current_status = _tracker_state.get("status")
+    new_status = kwargs.get("status")
+    if current_status == "complete" and new_status in ("preparing", "idle"):
+        # Don't broadcast this update - preserve completed state
+        return
+    
     for key, value in kwargs.items():
         if key in _tracker_state:
             _tracker_state[key] = value

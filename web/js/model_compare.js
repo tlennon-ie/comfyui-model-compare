@@ -1831,8 +1831,11 @@ function updateTrackerDisplay(node, data) {
 
 // Listen for websocket progress messages from the sampler
 function setupProgressListener() {
+    console.log("[ModelCompare] Setting up progress listener");
+    
     // Store reference to our handler
     window._modelCompareProgressHandler = function(data) {
+        console.log("[ModelCompare] Progress handler called:", data?.status, data?.completed_combinations, "/", data?.total_combinations);
         if (!data) return;
         
         // Find all CompareTracker nodes and update them
@@ -1840,11 +1843,14 @@ function setupProgressListener() {
             const app = window.comfyAPI.app.app;
             if (app.graph) {
                 const nodes = app.graph._nodes || [];
+                let trackerCount = 0;
                 nodes.forEach(node => {
                     if (node.type === "CompareTracker") {
+                        trackerCount++;
                         updateTrackerDisplay(node, data);
                     }
                 });
+                console.log("[ModelCompare] Updated", trackerCount, "CompareTracker nodes");
             }
         }
     };
@@ -1855,32 +1861,39 @@ function setupProgressListener() {
         try {
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
             const wsUrl = `${protocol}//${window.location.host}/ws`;
+            console.log("[ModelCompare] Creating WebSocket connection to:", wsUrl);
             const ws = new WebSocket(wsUrl);
             
             ws.onopen = function() {
-                // Connection established
+                console.log("[ModelCompare] WebSocket connected");
             };
             
             ws.onmessage = function(event) {
                 try {
                     const msg = JSON.parse(event.data);
                     if (msg.type === "model_compare_progress") {
+                        console.log("[ModelCompare] Received progress message:", msg.data?.status);
                         window._modelCompareProgressHandler(msg.data);
                     }
-                } catch (e) {}
+                } catch (e) {
+                    // Ignore parse errors for binary messages
+                }
             };
             
             ws.onclose = function() {
+                console.log("[ModelCompare] WebSocket closed, reconnecting in 2s");
                 // Reconnect after a delay
                 setTimeout(createProgressSocket, 2000);
             };
             
             ws.onerror = function(e) {
+                console.warn("[ModelCompare] WebSocket error:", e);
                 // Will trigger onclose for reconnect
             };
             
             window._modelCompareSocket = ws;
         } catch (e) {
+            console.error("[ModelCompare] WebSocket setup error:", e);
             // Retry after delay
             setTimeout(createProgressSocket, 2000);
         }
