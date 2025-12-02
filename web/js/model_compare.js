@@ -1724,8 +1724,8 @@ function registerExtension(app) {
                                 if (local_pos[0] >= btn.x && local_pos[0] <= btn.x + btn.width &&
                                     local_pos[1] >= btn.y && local_pos[1] <= btn.y + btn.height) {
                                     // Open the HTML grid in a new tab
-                                    const url = window.location.origin + this._trackerData.htmlGridUrl;
-                                    window.open(url, '_blank');
+                                    // URL is already a complete file:// URL, don't prepend origin
+                                    window.open(this._trackerData.htmlGridUrl, '_blank');
                                     return true;
                                 }
                             }
@@ -1849,77 +1849,45 @@ function setupProgressListener() {
         }
     };
     
-    // Track if we've successfully hooked
-    let hooked = false;
-    
-    // AGGRESSIVE APPROACH: Monkey-patch WebSocket to catch ALL websockets
-    if (!window._wsPatched) {
-        window._wsPatched = true;
-        const OrigWebSocket = window.WebSocket;
-        window.WebSocket = function(url, protocols) {
-            const ws = protocols ? new OrigWebSocket(url, protocols) : new OrigWebSocket(url);
+    // Create our own WebSocket connection for progress updates
+    // This is more reliable than trying to hook into ComfyUI's socket
+    function createProgressSocket() {
+        try {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${protocol}//${window.location.host}/ws`;
+            const ws = new WebSocket(wsUrl);
             
-            // Add our listener to every new websocket
-            ws.addEventListener('message', function(event) {
+            ws.onopen = function() {
+                // Connection established
+            };
+            
+            ws.onmessage = function(event) {
                 try {
                     const msg = JSON.parse(event.data);
                     if (msg.type === "model_compare_progress") {
                         window._modelCompareProgressHandler(msg.data);
                     }
                 } catch (e) {}
-            });
+            };
             
-            return ws;
-        };
-        window.WebSocket.prototype = OrigWebSocket.prototype;
-        window.WebSocket.CONNECTING = OrigWebSocket.CONNECTING;
-        window.WebSocket.OPEN = OrigWebSocket.OPEN;
-        window.WebSocket.CLOSING = OrigWebSocket.CLOSING;
-        window.WebSocket.CLOSED = OrigWebSocket.CLOSED;
+            ws.onclose = function() {
+                // Reconnect after a delay
+                setTimeout(createProgressSocket, 2000);
+            };
+            
+            ws.onerror = function(e) {
+                // Will trigger onclose for reconnect
+            };
+            
+            window._modelCompareSocket = ws;
+        } catch (e) {
+            // Retry after delay
+            setTimeout(createProgressSocket, 2000);
+        }
     }
     
-    // Also try to hook existing websockets
-    function tryHookExistingWebSockets() {
-        // Check if there are any websockets in the global scope
-        const checkLocations = [
-            'window.comfyAPI.api.socket',
-            'window.comfyAPI.api._socket', 
-            'window.app.api.socket',
-            'window.app.api._socket',
-            'window.comfyAPI.app.app.api.socket',
-        ];
-        
-        for (const loc of checkLocations) {
-            try {
-                const socket = eval(loc);
-                if (socket && socket instanceof WebSocket && !socket._modelCompareHooked) {
-                    socket.addEventListener('message', function(event) {
-                        try {
-                            const msg = JSON.parse(event.data);
-                            if (msg.type === "model_compare_progress") {
-                                window._modelCompareProgressHandler(msg.data);
-                            }
-                        } catch (e) {}
-                    });
-                    socket._modelCompareHooked = true;
-                    hooked = true;
-                }
-            } catch (e) {
-                // Location doesn't exist
-            }
-        }
-        return hooked;
-    }
-    
-    // Try hooking periodically until successful
-    let attempts = 0;
-    const maxAttempts = 60;
-    const retryInterval = setInterval(() => {
-        attempts++;
-        if (tryHookExistingWebSockets() || attempts >= maxAttempts) {
-            clearInterval(retryInterval);
-        }
-    }, 500);
+    // Start the dedicated progress socket
+    createProgressSocket();
 }
 
 // Setup listener after a short delay
