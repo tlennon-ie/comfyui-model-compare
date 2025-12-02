@@ -667,15 +667,23 @@ function registerExtension(app) {
             // --- PromptCompare Logic ---
             if (nodeData.name === "PromptCompare") {
                 chainCallback(nodeType.prototype, "configure", function (info) {
+                    const self = this;
+                    // Multiple delays to ensure widgets are fully loaded
                     setTimeout(() => {
-                        if (this.size) {
-                            this.size[0] = 450;
+                        if (self.size) {
+                            self.size[0] = 450;
                         }
                         // Trigger visibility update after configure
-                        if (this._updatePromptVisibility) {
-                            this._updatePromptVisibility();
+                        if (self._updatePromptVisibility) {
+                            self._updatePromptVisibility();
                         }
                     }, 50);
+                    // Additional delayed update for slow widget loading
+                    setTimeout(() => {
+                        if (self._updatePromptVisibility) {
+                            self._updatePromptVisibility();
+                        }
+                    }, 300);
                 });
 
                 chainCallback(nodeType.prototype, "onNodeCreated", function () {
@@ -713,6 +721,12 @@ function registerExtension(app) {
                             const isManualMode = promptSource === "manual";
                             const isFileMode = promptSource === "file";
                             const isRangeMode = fileLoadMode === "range";
+                            
+                            // Debug logging
+                            console.log("[PromptCompare] Updating visibility:", {
+                                promptSource, isManualMode, isFileMode, numPos, numNeg,
+                                widgetCount: self.widgets.length
+                            });
 
                             // Widgets that are always visible
                             const alwaysVisible = ["prompt_source", "prompt_mode"];
@@ -775,6 +789,7 @@ function registerExtension(app) {
                                     }
                                 }
 
+                                // Apply visibility
                                 if (shouldShow) {
                                     widget.computeSize = widget.origComputeSize;
                                 } else {
@@ -821,10 +836,11 @@ function registerExtension(app) {
                             updateBtn.origComputeSize = updateBtn.computeSize || (() => [200, 30]);
                         }
 
-                        // Initial visibility update with delay to ensure widgets are ready
-                        setTimeout(() => {
-                            updatePromptVisibility();
-                        }, 100);
+                        // Initial visibility update with multiple delays to ensure widgets are ready
+                        // ComfyUI can be slow to create widgets
+                        setTimeout(() => updatePromptVisibility(), 50);
+                        setTimeout(() => updatePromptVisibility(), 150);
+                        setTimeout(() => updatePromptVisibility(), 500);
 
                     } catch (e) {
                         console.error("[PromptCompare] Error in onNodeCreated:", e);
