@@ -1695,23 +1695,33 @@ class GridCompare:
                 # Notify tracker that HTML grid is available
                 try:
                     from .compare_tracker import set_html_grid_available
-                    import folder_paths
                     import urllib.parse
                     
                     # Get the output directory to calculate relative path
-                    output_dir = folder_paths.get_output_directory()
+                    comfy_output_dir = folder_paths.get_output_directory()
                     
-                    # Calculate subfolder relative to output directory
-                    rel_path = os.path.relpath(html_path, output_dir)
-                    subfolder = os.path.dirname(rel_path).replace("\\", "/")
-                    filename = os.path.basename(html_path)
+                    # Check if html_path is under the output directory
+                    # Normalize paths for comparison
+                    html_abs = os.path.abspath(html_path)
+                    output_abs = os.path.abspath(comfy_output_dir)
                     
-                    # Build /view URL with proper encoding
-                    encoded_filename = urllib.parse.quote(filename)
-                    encoded_subfolder = urllib.parse.quote(subfolder)
-                    view_url = f"/view?filename={encoded_filename}&type=output&subfolder={encoded_subfolder}"
-                    
-                    set_html_grid_available(html_path, view_url)
+                    if html_abs.startswith(output_abs):
+                        # Path is under output directory - can use /view endpoint
+                        rel_path = os.path.relpath(html_path, comfy_output_dir)
+                        subfolder = os.path.dirname(rel_path).replace("\\", "/")
+                        filename = os.path.basename(html_path)
+                        
+                        # Build /view URL with proper encoding
+                        encoded_filename = urllib.parse.quote(filename)
+                        encoded_subfolder = urllib.parse.quote(subfolder)
+                        view_url = f"/view?filename={encoded_filename}&type=output&subfolder={encoded_subfolder}"
+                        
+                        set_html_grid_available(html_path, view_url)
+                    else:
+                        # Path is outside output directory - can't use /view endpoint
+                        # Just set the path, button won't work but path is logged
+                        print(f"[GridCompare] HTML saved outside output dir, view button disabled")
+                        set_html_grid_available(html_path, None)
                 except Exception as e:
                     print(f"[GridCompare] Could not notify tracker: {e}")
                 
