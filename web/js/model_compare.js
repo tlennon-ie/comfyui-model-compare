@@ -1751,17 +1751,41 @@ function registerExtension(app) {
                 chainCallback(nodeType.prototype, "onExecuted", function (output) {
                     try {
                         if (output) {
+                            // Check current state - don't overwrite complete/sampling with preparing
+                            const currentStatus = this._trackerData?.status;
+                            const outputStatus = output.status?.[0] || output.status || "preparing";
+                            
+                            // If we're complete, only update if output also says complete
+                            // This prevents the tracker from resetting when ComfyUI re-executes the node
+                            if (currentStatus === "complete" && outputStatus !== "complete") {
+                                // Keep current complete state - don't reset
+                                return;
+                            }
+                            
+                            // If we're actively sampling, don't reset to preparing
+                            if (currentStatus === "sampling" && outputStatus === "preparing") {
+                                return;
+                            }
+                            
+                            // For fresh state or valid transitions, update the data
+                            // But preserve WebSocket-updated fields like completed count
+                            const currentCompleted = this._trackerData?.completed || 0;
+                            const currentTotal = this._trackerData?.total || 0;
+                            
                             this._trackerData = {
-                                status: output.status || "preparing",
-                                total: output.total || 0,
-                                completed: 0,
-                                currentModel: "",
-                                modelIndex: 0,
-                                totalModels: output.models || 0,
-                                chain: 0,
-                                totalChains: output.chains || 0,
-                                warnings: output.warnings || [],
-                                startTime: Date.now(),
+                                status: outputStatus,
+                                total: output.total?.[0] || output.total || currentTotal || 0,
+                                completed: currentStatus === "complete" ? currentTotal : currentCompleted,
+                                currentModel: this._trackerData?.currentModel || "",
+                                modelIndex: this._trackerData?.modelIndex || 0,
+                                totalModels: output.models?.[0] || output.models || 0,
+                                chain: this._trackerData?.chain || 0,
+                                totalChains: output.chains?.[0] || output.chains || 0,
+                                warnings: output.warnings?.[0] || output.warnings || [],
+                                startTime: this._trackerData?.startTime || Date.now(),
+                                // Preserve WebSocket-provided data
+                                htmlGridPath: this._trackerData?.htmlGridPath,
+                                htmlGridUrl: this._trackerData?.htmlGridUrl,
                             };
                             
                             // Request redraw
