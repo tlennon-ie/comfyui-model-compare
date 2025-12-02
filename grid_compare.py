@@ -2907,12 +2907,14 @@ class GridCompare:
         font_size: int,
         font_name: str,
         title: str,
+        show_positive_prompt: bool = False,
+        show_negative_prompt: bool = False,
     ) -> List[Dict[str, Any]]:
         """
         Split images into multiple grids based on a grouping dimension.
         
         Args:
-            split_by: One of "model", "sampler", "scheduler", "chain", "auto"
+            split_by: One of "model", "sampler", "scheduler", "chain", "prompt_positive", "prompt_negative", "auto"
         
         Returns:
             List of {"image": PIL.Image, "label": str} for each split grid
@@ -2938,6 +2940,18 @@ class GridCompare:
                 return override.get("scheduler", combo.get("scheduler", "default"))
             elif split_by == "chain":
                 return str(combo.get("chain_index", 0))
+            elif split_by == "prompt_positive":
+                # Group by positive prompt - use prompt_index or truncated prompt
+                prompt = combo.get("prompt_positive", "")
+                prompt_idx = combo.get("prompt_index", 0)
+                # Use prompt index if available, else truncate prompt for key
+                if prompt_idx:
+                    return f"Prompt {prompt_idx}"
+                return prompt[:50] if prompt else "default"
+            elif split_by == "prompt_negative":
+                # Group by negative prompt
+                prompt = combo.get("prompt_negative", "")
+                return prompt[:50] if prompt else "(no negative)"
             elif split_by == "auto":
                 # Auto-detect: use first dimension with > 1 unique values
                 # Priority: model > sampler > scheduler > chain
@@ -2989,8 +3003,8 @@ class GridCompare:
                 font_size=font_size,
                 font_name=font_name,
                 title=sub_title,
-                show_positive_prompt=False,
-                show_negative_prompt=False,
+                show_positive_prompt=show_positive_prompt,
+                show_negative_prompt=show_negative_prompt,
             )
             
             result.append({
