@@ -381,8 +381,46 @@ class PromptCompare:
 
     @classmethod
     def IS_CHANGED(cls, **kwargs):
-        """Always re-execute to pick up file changes."""
-        return float("nan")
+        """Compute hash to detect changes and enable proper caching."""
+        import hashlib
+        import os
+        
+        prompt_source = kwargs.get("prompt_source", "manual")
+        prompt_mode = kwargs.get("prompt_mode", "cross_product")
+        
+        # Start with basic parameters
+        hash_parts = [prompt_source, prompt_mode]
+        
+        if prompt_source == "file":
+            file_path = kwargs.get("prompt_file_path", "")
+            if file_path and os.path.exists(file_path):
+                # Include file modification time and size for change detection
+                try:
+                    stat = os.stat(file_path)
+                    hash_parts.append(f"file:{file_path}:{stat.st_mtime}:{stat.st_size}")
+                except:
+                    # If we can't stat the file, force re-execution
+                    return float("nan")
+            
+            # Include file range parameters
+            hash_parts.append(f"mode:{kwargs.get('file_load_mode', 'all')}")
+            hash_parts.append(f"start:{kwargs.get('file_start_index', 0)}")
+            hash_parts.append(f"end:{kwargs.get('file_end_index', -1)}")
+            hash_parts.append(f"max:{kwargs.get('file_max_prompts', 20)}")
+        else:
+            # Manual mode - include all prompt values
+            num_pos = kwargs.get("num_positive_prompts", 1)
+            num_neg = kwargs.get("num_negative_prompts", 1)
+            hash_parts.append(f"counts:{num_pos}:{num_neg}")
+            
+            for i in range(1, num_pos + 1):
+                hash_parts.append(f"pos{i}:{kwargs.get(f'positive_prompt_{i}', '')}")
+            for i in range(1, num_neg + 1):
+                hash_parts.append(f"neg{i}:{kwargs.get(f'negative_prompt_{i}', '')}")
+        
+        # Combine and hash
+        hash_input = "|".join(hash_parts)
+        return hashlib.md5(hash_input.encode()).hexdigest()
 
 
 # Node class mappings

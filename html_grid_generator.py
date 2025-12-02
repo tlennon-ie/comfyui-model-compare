@@ -33,38 +33,115 @@ def image_to_base64(image: Image.Image, format: str = "PNG", quality: int = 85) 
     return base64.b64encode(buffer.getvalue()).decode('utf-8')
 
 
-def get_varying_dimensions(combinations: List[Dict]) -> Dict[str, List[Any]]:
+def get_varying_dimensions(combinations: List[Dict], config: Dict = None) -> Dict[str, List[Any]]:
     """
     Analyze combinations to find dimensions with multiple unique values.
+    Properly extracts nested data from lora_config, model_variations, etc.
     Returns dict of dimension_name -> sorted list of unique values.
     """
     if not combinations:
         return {}
     
-    # Fields to check for variations
-    check_fields = [
-        'sampler_name', 'scheduler', 'steps', 'cfg', 'denoise',
-        'width', 'height', 'seed', 'model', 'vae', 'clip',
-        'lora_name', 'lora_strength', 'lora_names', 'lora_strengths',
-        'lumina_shift', 'qwen_shift', 'wan_shift', 'wan22_shift',
-        'hunyuan_shift', 'flux_guidance', 'prompt_positive', 'prompt_negative'
-    ]
+    # Initialize field value sets
+    field_values = {
+        'model': set(),
+        'vae': set(),
+        'clip': set(),
+        'lora_name': set(),
+        'lora_strength': set(),
+        'lora_display': set(),
+        'sampler_name': set(),
+        'scheduler': set(),
+        'steps': set(),
+        'cfg': set(),
+        'denoise': set(),
+        'seed': set(),
+        'width': set(),
+        'height': set(),
+        'lumina_shift': set(),
+        'qwen_shift': set(),
+        'wan_shift': set(),
+        'wan22_shift': set(),
+        'hunyuan_shift': set(),
+        'flux_guidance': set(),
+        'prompt_positive': set(),
+        'prompt_negative': set(),
+    }
     
-    field_values = {f: set() for f in check_fields}
+    # Get model variations for name lookup
+    model_variations = config.get('model_variations', []) if config else []
     
     for combo in combinations:
-        # Check _sampling_override first, then combo itself
+        # Check _sampling_override first (for expanded variations)
         override = combo.get('_sampling_override', {})
         
-        for field in check_fields:
+        # Extract model name from model_index
+        model_idx = combo.get('model_index', 0)
+        if model_idx < len(model_variations):
+            model_entry = model_variations[model_idx]
+            model_name = model_entry.get('display_name', model_entry.get('name', f'Model {model_idx}'))
+            # Clean up model name
+            if model_name and model_name.endswith('.safetensors'):
+                model_name = model_name[:-12]
+            field_values['model'].add(model_name)
+        
+        # Extract VAE name
+        vae_name = combo.get('vae_name', '')
+        if vae_name:
+            if vae_name.endswith('.safetensors'):
+                vae_name = vae_name[:-12]
+            field_values['vae'].add(vae_name)
+        
+        # Extract CLIP info from clip_variation structure
+        clip_var = combo.get('clip_variation')
+        if clip_var:
+            if clip_var.get('type') == 'pair':
+                clip_name = f"{clip_var.get('a', '')}+{clip_var.get('b', '')}"
+            else:
+                clip_name = clip_var.get('model', clip_var.get('clip_type', ''))
+            if clip_name:
+                field_values['clip'].add(clip_name)
+        
+        # Extract LoRA info from lora_config structure
+        lora_config = combo.get('lora_config', {})
+        loras = lora_config.get('loras', [])
+        if loras:
+            for lora in loras:
+                name = lora.get('label', lora.get('name', ''))
+                if name:
+                    if name.endswith('.safetensors'):
+                        name = name[:-12]
+                    field_values['lora_name'].add(name)
+                strength = lora.get('strength')
+                if strength is not None:
+                    field_values['lora_strength'].add(strength)
+        
+        # Get display string for lora config
+        lora_display = lora_config.get('display', '')
+        if lora_display and lora_display != 'No LoRA':
+            field_values['lora_display'].add(lora_display)
+        
+        # Standard sampling parameters (check override first)
+        for field in ['sampler_name', 'scheduler', 'steps', 'cfg', 'denoise', 'seed', 'width', 'height']:
             value = override.get(field, combo.get(field))
             if value is not None:
-                # Normalize to hashable
-                if isinstance(value, (list, tuple)):
-                    value = str(value)
                 field_values[field].add(value)
+        
+        # Shift parameters
+        for shift_field in ['lumina_shift', 'qwen_shift', 'wan_shift', 'wan22_shift', 'hunyuan_shift', 'flux_guidance']:
+            value = override.get(shift_field, combo.get(shift_field))
+            if value is not None:
+                field_values[shift_field].add(value)
+        
+        # Prompt variations
+        for prompt_field in ['prompt_positive', 'prompt_negative']:
+            value = combo.get(prompt_field, '')
+            if value:
+                # Truncate long prompts for comparison
+                truncated = value[:50] if len(value) > 50 else value
+                field_values[prompt_field].add(truncated)
     
-    # Return only fields with >1 unique value
+    # Return only fields with >1 unique value (varying dimensions)
     varying = {}
     for field, values in field_values.items():
         if len(values) > 1:
@@ -93,6 +170,7 @@ def format_field_name(field: str) -> str:
         'clip': 'CLIP',
         'lora_name': 'LoRA',
         'lora_strength': 'LoRA Strength',
+        'lora_display': 'LoRA Config',
         'lora_names': 'LoRAs',
         'lora_strengths': 'LoRA Strengths',
         'lumina_shift': 'Lumina Shift',
@@ -135,7 +213,6 @@ def get_combo_params(combo: Dict) -> Dict[str, Any]:
         'sampler_name', 'scheduler', 'steps', 'cfg', 'denoise',
         'width', 'height', 'seed', 'model', 'vae', 'clip',
         'model_index', 'vae_name', 'prompt_positive', 'prompt_negative',
-        'lora_name', 'lora_strength', 'lora_names', 'lora_strengths',
         'lumina_shift', 'qwen_shift', 'wan_shift', 'wan22_shift',
         'hunyuan_shift', 'flux_guidance', 'num_frames', 'config_type'
     ]
@@ -152,6 +229,37 @@ def get_combo_params(combo: Dict) -> Dict[str, Any]:
     # Extract model name from model_variations if available
     if 'model_index' in combo:
         params['model_index'] = combo['model_index']
+    
+    # Extract LoRA info from nested lora_config structure
+    lora_config = combo.get('lora_config', {})
+    loras = lora_config.get('loras', [])
+    if loras:
+        # Extract names and strengths
+        lora_names = []
+        lora_strengths = []
+        for lora in loras:
+            name = lora.get('label', lora.get('name', ''))
+            if name:
+                if name.endswith('.safetensors'):
+                    name = name[:-12]
+                lora_names.append(name)
+            strength = lora.get('strength')
+            if strength is not None:
+                lora_strengths.append(strength)
+        
+        if len(lora_names) == 1:
+            params['lora_name'] = lora_names[0]
+            if lora_strengths:
+                params['lora_strength'] = lora_strengths[0]
+        elif len(lora_names) > 1:
+            params['lora_names'] = ', '.join(lora_names)
+            if lora_strengths:
+                params['lora_strengths'] = ', '.join(str(s) for s in lora_strengths)
+    
+    # Also add lora_display for filtering
+    lora_display = lora_config.get('display', '')
+    if lora_display and lora_display != 'No LoRA':
+        params['lora_display'] = lora_display
     
     return params
 
@@ -696,6 +804,220 @@ body {
         right: 20px;
     }
 }
+
+/* Image Comparison Selection Mode */
+.grid-item.selectable {
+    cursor: crosshair;
+}
+
+.grid-item.selected-for-compare {
+    outline: 3px solid var(--accent);
+    outline-offset: 2px;
+}
+
+.grid-item.selected-for-compare::after {
+    content: attr(data-select-order);
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    background: var(--accent);
+    color: white;
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: bold;
+    font-size: 0.9rem;
+}
+
+.compare-toolbar {
+    position: fixed;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--bg-secondary);
+    padding: 12px 24px;
+    border-radius: 12px;
+    box-shadow: 0 4px 20px var(--shadow);
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    z-index: 100;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.3s, visibility 0.3s;
+}
+
+.compare-toolbar.visible {
+    opacity: 1;
+    visibility: visible;
+}
+
+.compare-toolbar .btn {
+    padding: 10px 20px;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 0.9rem;
+    font-weight: 500;
+    transition: background 0.2s;
+}
+
+.compare-toolbar .btn-compare {
+    background: var(--accent);
+    color: white;
+}
+
+.compare-toolbar .btn-compare:hover {
+    background: var(--accent-hover);
+}
+
+.compare-toolbar .btn-cancel {
+    background: var(--bg-card);
+    color: var(--text-primary);
+}
+
+/* Comparison Slider Modal */
+.compare-modal {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.95);
+    z-index: 2000;
+    flex-direction: column;
+}
+
+.compare-modal.visible {
+    display: flex;
+}
+
+.compare-modal-header {
+    padding: 15px 20px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: var(--bg-secondary);
+}
+
+.compare-modal-header h2 {
+    font-size: 1.1rem;
+    color: var(--text-primary);
+}
+
+.compare-modal-close {
+    background: none;
+    border: none;
+    color: var(--text-primary);
+    font-size: 1.5rem;
+    cursor: pointer;
+    padding: 5px 10px;
+}
+
+.compare-container {
+    flex: 1;
+    position: relative;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    overflow: hidden;
+    padding: 20px;
+}
+
+.compare-wrapper {
+    position: relative;
+    max-width: 100%;
+    max-height: 100%;
+}
+
+.compare-image-container {
+    position: relative;
+    overflow: hidden;
+}
+
+.compare-image {
+    display: block;
+    max-width: 100%;
+    max-height: calc(100vh - 150px);
+    object-fit: contain;
+}
+
+.compare-image-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    height: 100%;
+    overflow: hidden;
+}
+
+.compare-image-overlay img {
+    height: 100%;
+    object-fit: cover;
+    object-position: left;
+}
+
+.compare-slider {
+    position: absolute;
+    top: 0;
+    width: 4px;
+    height: 100%;
+    background: var(--accent);
+    cursor: ew-resize;
+    z-index: 10;
+}
+
+.compare-slider::before {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 40px;
+    height: 40px;
+    background: var(--accent);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.compare-slider::after {
+    content: '⟷';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    color: white;
+    font-size: 1.2rem;
+    font-weight: bold;
+}
+
+.compare-labels {
+    position: absolute;
+    bottom: 10px;
+    left: 0;
+    right: 0;
+    display: flex;
+    justify-content: space-between;
+    padding: 0 20px;
+    pointer-events: none;
+}
+
+.compare-label {
+    background: var(--bg-secondary);
+    padding: 8px 16px;
+    border-radius: 6px;
+    font-size: 0.85rem;
+    color: var(--text-primary);
+    max-width: 45%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
 """
 
 # JavaScript Template for interactivity
@@ -1186,6 +1508,219 @@ JS_TEMPLATE = """
         div.textContent = text;
         return div.innerHTML;
     }
+    
+    // ============ Image Comparison Mode ============
+    let compareMode = false;
+    let selectedForCompare = [];
+    
+    // Add compare button to header controls
+    document.addEventListener('DOMContentLoaded', function() {
+        const headerControls = document.querySelector('.header-controls');
+        const compareBtn = document.createElement('button');
+        compareBtn.id = 'compareToggle';
+        compareBtn.className = 'theme-toggle';
+        compareBtn.textContent = '🔀 Compare';
+        compareBtn.addEventListener('click', toggleCompareMode);
+        headerControls.insertBefore(compareBtn, headerControls.firstChild);
+        
+        // Add compare toolbar (hidden initially)
+        const toolbar = document.createElement('div');
+        toolbar.id = 'compareToolbar';
+        toolbar.className = 'compare-toolbar';
+        toolbar.innerHTML = `
+            <span>Select 2 images to compare</span>
+            <button class="btn btn-compare" id="startCompare" disabled>Compare</button>
+            <button class="btn btn-cancel" onclick="toggleCompareMode()">Cancel</button>
+        `;
+        document.body.appendChild(toolbar);
+        
+        document.getElementById('startCompare').addEventListener('click', openCompareModal);
+        
+        // Add compare modal
+        const modal = document.createElement('div');
+        modal.id = 'compareModal';
+        modal.className = 'compare-modal';
+        modal.innerHTML = `
+            <div class="compare-modal-header">
+                <h2>Image Comparison</h2>
+                <button class="compare-modal-close" onclick="closeCompareModal()">&times;</button>
+            </div>
+            <div class="compare-container">
+                <div class="compare-wrapper">
+                    <div class="compare-image-container" id="compareContainer">
+                        <img class="compare-image" id="compareImageBase" src="" alt="Image 1">
+                        <div class="compare-image-overlay" id="compareOverlay">
+                            <img id="compareImageOverlay" src="" alt="Image 2">
+                        </div>
+                        <div class="compare-slider" id="compareSlider"></div>
+                    </div>
+                    <div class="compare-labels">
+                        <span class="compare-label" id="compareLabel1"></span>
+                        <span class="compare-label" id="compareLabel2"></span>
+                    </div>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(modal);
+        
+        initCompareSlider();
+    });
+    
+    function toggleCompareMode() {
+        compareMode = !compareMode;
+        const toggleBtn = document.getElementById('compareToggle');
+        const toolbar = document.getElementById('compareToolbar');
+        
+        if (compareMode) {
+            toggleBtn.textContent = '✓ Selecting...';
+            toggleBtn.style.background = 'var(--accent)';
+            toolbar.classList.add('visible');
+            document.querySelectorAll('.grid-item').forEach(item => {
+                item.classList.add('selectable');
+                item.removeEventListener('click', openLightboxHandler);
+                item.addEventListener('click', selectForCompare);
+            });
+        } else {
+            toggleBtn.textContent = '🔀 Compare';
+            toggleBtn.style.background = '';
+            toolbar.classList.remove('visible');
+            selectedForCompare = [];
+            document.querySelectorAll('.grid-item').forEach(item => {
+                item.classList.remove('selectable', 'selected-for-compare');
+                item.removeAttribute('data-select-order');
+                item.removeEventListener('click', selectForCompare);
+                item.addEventListener('click', function() { openLightbox(parseInt(this.dataset.index)); });
+            });
+            updateCompareButton();
+        }
+    }
+    
+    function openLightboxHandler(e) {
+        const index = parseInt(e.currentTarget.dataset.index);
+        openLightbox(index);
+    }
+    
+    function selectForCompare(e) {
+        e.stopPropagation();
+        const item = e.currentTarget;
+        const index = parseInt(item.dataset.index);
+        
+        if (item.classList.contains('selected-for-compare')) {
+            // Deselect
+            item.classList.remove('selected-for-compare');
+            item.removeAttribute('data-select-order');
+            selectedForCompare = selectedForCompare.filter(i => i !== index);
+            // Renumber remaining
+            selectedForCompare.forEach((idx, i) => {
+                const el = document.querySelector(`.grid-item[data-index="${idx}"]`);
+                if (el) el.setAttribute('data-select-order', i + 1);
+            });
+        } else if (selectedForCompare.length < 2) {
+            // Select
+            selectedForCompare.push(index);
+            item.classList.add('selected-for-compare');
+            item.setAttribute('data-select-order', selectedForCompare.length);
+        }
+        
+        updateCompareButton();
+    }
+    
+    function updateCompareButton() {
+        const btn = document.getElementById('startCompare');
+        btn.disabled = selectedForCompare.length !== 2;
+    }
+    
+    function openCompareModal() {
+        if (selectedForCompare.length !== 2) return;
+        
+        const [idx1, idx2] = selectedForCompare;
+        const data1 = gridData[idx1];
+        const data2 = gridData[idx2];
+        
+        document.getElementById('compareImageBase').src = data1.image;
+        document.getElementById('compareImageOverlay').src = data2.image;
+        document.getElementById('compareLabel1').textContent = data1.label || 'Image 1';
+        document.getElementById('compareLabel2').textContent = data2.label || 'Image 2';
+        
+        // Reset slider position
+        const container = document.getElementById('compareContainer');
+        const overlay = document.getElementById('compareOverlay');
+        const slider = document.getElementById('compareSlider');
+        
+        // Wait for images to load
+        const img1 = document.getElementById('compareImageBase');
+        img1.onload = function() {
+            const width = this.offsetWidth;
+            overlay.style.width = (width / 2) + 'px';
+            slider.style.left = (width / 2) + 'px';
+        };
+        
+        document.getElementById('compareModal').classList.add('visible');
+        document.body.style.overflow = 'hidden';
+    }
+    
+    function closeCompareModal() {
+        document.getElementById('compareModal').classList.remove('visible');
+        document.body.style.overflow = '';
+    }
+    
+    function initCompareSlider() {
+        const slider = document.getElementById('compareSlider');
+        const container = document.getElementById('compareContainer');
+        const overlay = document.getElementById('compareOverlay');
+        
+        let isDragging = false;
+        
+        slider.addEventListener('mousedown', startDrag);
+        slider.addEventListener('touchstart', startDrag, { passive: true });
+        
+        document.addEventListener('mousemove', drag);
+        document.addEventListener('touchmove', drag, { passive: true });
+        
+        document.addEventListener('mouseup', stopDrag);
+        document.addEventListener('touchend', stopDrag);
+        
+        function startDrag(e) {
+            isDragging = true;
+            e.preventDefault();
+        }
+        
+        function drag(e) {
+            if (!isDragging) return;
+            
+            const rect = container.getBoundingClientRect();
+            let x = (e.touches ? e.touches[0].clientX : e.clientX) - rect.left;
+            x = Math.max(0, Math.min(x, rect.width));
+            
+            slider.style.left = x + 'px';
+            overlay.style.width = x + 'px';
+        }
+        
+        function stopDrag() {
+            isDragging = false;
+        }
+        
+        // Also handle click on container to move slider
+        container.addEventListener('click', function(e) {
+            if (e.target === slider) return;
+            const rect = container.getBoundingClientRect();
+            let x = e.clientX - rect.left;
+            x = Math.max(0, Math.min(x, rect.width));
+            slider.style.left = x + 'px';
+            overlay.style.width = x + 'px';
+        });
+    }
+    
+    // Close compare modal on Escape
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape' && document.getElementById('compareModal').classList.contains('visible')) {
+            closeCompareModal();
+        }
+    });
+    
+    // Make closeCompareModal available globally
+    window.closeCompareModal = closeCompareModal;
+    window.toggleCompareMode = toggleCompareMode;
 })();
 """
 
@@ -1222,7 +1757,7 @@ def generate_html_grid(
         return "<html><body><h1>No images to display</h1></body></html>"
     
     # Detect varying dimensions
-    varying_dims = get_varying_dimensions(combinations)
+    varying_dims = get_varying_dimensions(combinations, config)
     
     # Build grid data
     grid_data = []
@@ -1278,16 +1813,36 @@ def generate_html_grid(
         if grid_image is not None:
             # Use the actual composed grid as thumbnail - shows full comparison
             thumb_img = grid_image.copy()
+            # Convert to RGB if needed (RGBA can cause JPEG issues)
+            if thumb_img.mode == "RGBA":
+                thumb_img = thumb_img.convert("RGB")
             # Scale to max 400px while maintaining aspect ratio
             thumb_img.thumbnail((400, 400), Image.Resampling.LANCZOS)
             thumbnail_data = f"data:image/jpeg;base64,{image_to_base64(thumb_img, 'JPEG', 75)}"
+            print(f"[HTMLGrid] Generated thumbnail from grid image: {len(thumbnail_data)} chars")
         elif images:
             # Fallback: use first image if no grid provided
             thumb_img = images[0].copy()
+            if thumb_img.mode == "RGBA":
+                thumb_img = thumb_img.convert("RGB")
             thumb_img.thumbnail((300, 300), Image.Resampling.LANCZOS)
             thumbnail_data = f"data:image/jpeg;base64,{image_to_base64(thumb_img, 'JPEG', 60)}"
+            print(f"[HTMLGrid] Generated thumbnail from first image: {len(thumbnail_data)} chars")
     except Exception as e:
-        pass  # Thumbnail generation failed, not critical
+        print(f"[HTMLGrid] Error generating thumbnail: {e}")
+        import traceback
+        traceback.print_exc()
+        # Try one more time with a simple approach
+        try:
+            if images:
+                thumb_img = images[0].copy()
+                if thumb_img.mode != "RGB":
+                    thumb_img = thumb_img.convert("RGB")
+                thumb_img.thumbnail((200, 200), Image.Resampling.LANCZOS)
+                thumbnail_data = f"data:image/jpeg;base64,{image_to_base64(thumb_img, 'JPEG', 50)}"
+                print(f"[HTMLGrid] Generated fallback thumbnail: {len(thumbnail_data)} chars")
+        except Exception as e2:
+            print(f"[HTMLGrid] Fallback thumbnail also failed: {e2}")
     
     # Metadata for gallery discovery
     grid_metadata = {

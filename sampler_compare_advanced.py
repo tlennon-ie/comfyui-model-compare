@@ -63,8 +63,8 @@ class SamplerCompareAdvanced:
     only those will be re-sampled while unchanged combinations use cached results.
     """
     
-    RETURN_TYPES = ("IMAGE", "MODEL_COMPARE_CONFIG", "STRING")
-    RETURN_NAMES = ("images", "config", "labels")
+    RETURN_TYPES = ("IMAGE", "MODEL_COMPARE_CONFIG")
+    RETURN_NAMES = ("images", "config")
     FUNCTION = "sample_all_combinations"
     CATEGORY = "Model Compare/Sampling"
     OUTPUT_NODE = True
@@ -1265,7 +1265,6 @@ class SamplerCompareAdvanced:
         ))
         
         all_images = []
-        all_labels = []
         
         # Global dimension overrides (0 means use config chain values)
         use_global_width = global_width if global_width > 0 else None
@@ -1393,10 +1392,9 @@ class SamplerCompareAdvanced:
             # Check cache for existing result
             cached = self._get_cached_result(combo_hash)
             if cached is not None:
-                image, label, frame_count = cached
+                image, _cached_label, frame_count = cached
                 all_images.append(image)
                 combo["output_frame_count"] = frame_count
-                all_labels.append(label)
                 cache_hits += 1
                 
                 # Update running seed even on cache hit (to stay consistent with control mode)
@@ -1760,21 +1758,16 @@ class SamplerCompareAdvanced:
                 traceback.print_exc()
                 continue
             
-            # Generate label (use user's custom label without model_type suffix)
-            label = current_model_entry.get("display_name", current_model_entry.get("name", f"Model {model_idx}"))
-            
-            # Append variation label if this is an expanded combo
-            variation_label = combo.get("_variation_label", "")
-            if variation_label:
-                label = f"{label} | {variation_label}"
-            
-            all_labels.append(label)
-            
             # Cache the result for future runs
             # Use all_images[-1] since we just appended
             if all_images:
                 actual_frame_count = combo.get("output_frame_count", 1)
-                self._cache_result(combo_hash, all_images[-1], label, actual_frame_count)
+                # Generate label for cache (still needed for cache key identification)
+                cache_label = current_model_entry.get("display_name", current_model_entry.get("name", f"Model {model_idx}"))
+                variation_label = combo.get("_variation_label", "")
+                if variation_label:
+                    cache_label = f"{cache_label} | {variation_label}"
+                self._cache_result(combo_hash, all_images[-1], cache_label, actual_frame_count)
             
             # Mark iteration complete for timing stats
             complete_iteration(idx)
@@ -1821,7 +1814,7 @@ class SamplerCompareAdvanced:
         
         # Combine images
         if not all_images:
-            return (torch.zeros(1, 1, 1, 3), config, "No images")
+            return (torch.zeros(1, 1, 1, 3), config)
         
         # Check if all images have the same dimensions
         shapes = [(img.shape[1], img.shape[2]) for img in all_images]
@@ -1853,14 +1846,12 @@ class SamplerCompareAdvanced:
             
             images_tensor = torch.cat(padded_images, dim=0)
         
-        labels_str = "\n".join(all_labels)
-        
         # CRITICAL: Update config with expanded combinations so GridCompare can access _sampling_override
         # This allows the grid to properly detect varying dimensions
         config = dict(config) if config else {}
         config["combinations"] = combinations  # Now includes _sampling_override for each combo
         
-        return (images_tensor, config, labels_str)
+        return (images_tensor, config)
     
     def _apply_model_patches(self, model, model_type: str, **kwargs):
         """Apply model-specific patches based on detected type."""
@@ -2067,27 +2058,62 @@ class SamplerCompareAdvanced:
         """
         Compute a hash to determine if re-execution is needed.
         This prevents unnecessary re-runs when workflow is queued without changes.
+        
+        IMPORTANT: Must include ALL inputs that affect output to enable proper caching.
         """
-        # Hash the config combinations (model paths, not objects)
+        import hashlib
+        import json
+        
+        # Hash the config combinations comprehensively
         combos = config.get("combinations", []) if config else []
-        combo_str = str([(c.get("model_index"), c.get("vae_name"), c.get("prompt_positive", "")) for c in combos])
+        
+        # Include more fields from each combination for proper cache detection
+        combo_data = []
+        for c in combos:
+            combo_entry = {
+                "model_index": c.get("model_index"),
+                "vae_name": c.get("vae_name"),
+                "prompt_positive": c.get("prompt_positive", ""),
+                "prompt_negative": c.get("prompt_negative", ""),
+                "seed": c.get("seed"),
+                "lora_config": c.get("lora_config", {}),
+                "_sampling_override": c.get("_sampling_override", {}),
+            }
+            combo_data.append(combo_entry)
+        
+        # Use json.dumps for consistent serialization
+        try:
+            combo_str = json.dumps(combo_data, sort_keys=True, default=str)
+        except:
+            combo_str = str(combo_data)
         
         # Hash sampling configs from chain (may be dict or list)
         sampling_configs = config.get("sampling_configs", {}) if config else {}
-        if isinstance(sampling_configs, dict):
-            sampling_str = str([(sc.get("config_type"), sc.get("steps"), sc.get("cfg"), sc.get("sampler_name"), sc.get("width"), sc.get("height"), sc.get("num_frames")) for sc in sampling_configs.values()])
-        else:
-            sampling_str = str([(sc.get("config_type"), sc.get("steps"), sc.get("cfg"), sc.get("sampler_name"), sc.get("width"), sc.get("height"), sc.get("num_frames")) for sc in sampling_configs])
+        try:
+            if isinstance(sampling_configs, dict):
+                sampling_str = json.dumps(list(sampling_configs.values()), sort_keys=True, default=str)
+            else:
+                sampling_str = json.dumps(sampling_configs, sort_keys=True, default=str)
+        except:
+            sampling_str = str(sampling_configs)
         
         # Hash global dimension overrides
         dims_str = f"{global_width}x{global_height}x{global_num_frames}"
         
         # Combine and hash
         hash_input = f"{combo_str}|{sampling_str}|{num_global_fields}|{dims_str}"
+        
+        # Include all kwargs that might affect output
         for key in sorted(kwargs.keys()):
             val = kwargs[key]
             if isinstance(val, (str, int, float, bool)):
                 hash_input += f"|{key}:{val}"
+            elif val is not None:
+                # Try to serialize complex values
+                try:
+                    hash_input += f"|{key}:{json.dumps(val, sort_keys=True, default=str)}"
+                except:
+                    hash_input += f"|{key}:{str(val)}"
         
         return hashlib.md5(hash_input.encode()).hexdigest()
 

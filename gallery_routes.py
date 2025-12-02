@@ -103,16 +103,17 @@ def extract_grid_metadata(html_path: str) -> Optional[Dict]:
     """
     try:
         with open(html_path, 'r', encoding='utf-8') as f:
-            content = f.read(50000)  # Read first 50KB for metadata
+            content = f.read(200000)  # Read first 200KB for metadata (thumbnails can be large)
         
         # Check for our signature
         if GRID_SIGNATURE not in content:
             return None
         
         # Extract metadata from JSON block
+        # The script tag can have attributes in any order, so match on id alone
         metadata = {}
         meta_match = re.search(
-            rf'<script[^>]*id="{GRID_META_ID}"[^>]*type="application/json"[^>]*>(.*?)</script>',
+            rf'<script[^>]*id="{GRID_META_ID}"[^>]*>(.*?)</script>',
             content, re.DOTALL
         )
         if meta_match:
@@ -140,9 +141,14 @@ def extract_grid_metadata(html_path: str) -> Optional[Dict]:
             # On Windows, relpath fails if paths are on different drives
             rel_path = html_path
         
+        # Generate base64 encoded path for API operations
+        import base64
+        encoded_path = base64.urlsafe_b64encode(html_path.encode('utf-8')).decode('ascii')
+        
         return {
             "path": html_path,
             "rel_path": rel_path.replace("\\", "/"),
+            "encoded_path": encoded_path,
             "title": title or os.path.basename(html_path),
             "created": created,
             "thumbnail": metadata.get("thumbnail", ""),
@@ -745,6 +751,128 @@ body {
         grid-template-columns: 1fr;
     }
 }
+
+/* Bulk Toolbar */
+.bulk-toolbar {
+    position: fixed;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--bg-secondary);
+    padding: 12px 24px;
+    border-radius: 12px;
+    box-shadow: 0 4px 20px var(--shadow);
+    display: flex;
+    gap: 16px;
+    align-items: center;
+    z-index: 200;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.3s, visibility 0.3s;
+    border: 1px solid var(--border);
+}
+
+.bulk-toolbar.visible {
+    opacity: 1;
+    visibility: visible;
+}
+
+.bulk-toolbar .btn-danger {
+    background: #dc3545;
+    color: white;
+}
+
+.bulk-toolbar .btn-danger:hover:not(:disabled) {
+    background: #c82333;
+}
+
+.bulk-toolbar .btn-danger:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* Selection Mode */
+.grid-card.selectable {
+    cursor: pointer;
+}
+
+.grid-card.selectable:hover {
+    outline: 2px dashed var(--accent);
+}
+
+.grid-card.selected {
+    outline: 3px solid var(--accent);
+    outline-offset: 2px;
+}
+
+.grid-card.selected::after {
+    content: '✓';
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    background: var(--accent);
+    color: white;
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: bold;
+    font-size: 14px;
+}
+
+.btn-icon.active {
+    background: var(--accent);
+    color: white;
+}
+
+/* Context Menu */
+.context-menu {
+    position: fixed;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    box-shadow: 0 4px 20px var(--shadow);
+    padding: 4px;
+    min-width: 150px;
+    z-index: 300;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.15s, visibility 0.15s;
+}
+
+.context-menu.visible {
+    opacity: 1;
+    visibility: visible;
+}
+
+.context-menu-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 10px 12px;
+    background: none;
+    border: none;
+    color: var(--text-primary);
+    cursor: pointer;
+    font-size: 14px;
+    border-radius: 4px;
+    text-align: left;
+}
+
+.context-menu-item:hover {
+    background: var(--bg-card-hover);
+}
+
+.context-menu-item.danger {
+    color: #dc3545;
+}
+
+.context-menu-item.danger:hover {
+    background: rgba(220, 53, 69, 0.1);
+}
 '''
 
 
@@ -993,6 +1121,242 @@ GALLERY_JS = '''
             return isoDate;
         }
     }
+    
+    // ============ Grid Management Functions ============
+    let selectionMode = false;
+    let selectedGrids = new Set();
+    
+    // Add management buttons to header
+    document.addEventListener('DOMContentLoaded', function() {
+        const headerRight = document.querySelector('.header-right');
+        
+        // Selection mode toggle button
+        const selectBtn = document.createElement('button');
+        selectBtn.id = 'selectModeBtn';
+        selectBtn.className = 'btn btn-icon';
+        selectBtn.title = 'Select grids for bulk operations';
+        selectBtn.innerHTML = `<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+            <path d="M19,3H5A2,2 0 0,0 3,5V19A2,2 0 0,0 5,21H19A2,2 0 0,0 21,19V5A2,2 0 0,0 19,3M19,5V19H5V5H19M10,17L6,13L7.41,11.58L10,14.17L16.59,7.58L18,9"/>
+        </svg>`;
+        selectBtn.addEventListener('click', toggleSelectionMode);
+        headerRight.insertBefore(selectBtn, headerRight.firstChild);
+        
+        // Bulk action toolbar (hidden by default)
+        const toolbar = document.createElement('div');
+        toolbar.id = 'bulkToolbar';
+        toolbar.className = 'bulk-toolbar';
+        toolbar.innerHTML = `
+            <span id="selectedCount">0 selected</span>
+            <button class="btn btn-danger" id="bulkDeleteBtn" disabled>
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+                    <path d="M19,4H15.5L14.5,3H9.5L8.5,4H5V6H19M6,19A2,2 0 0,0 8,21H16A2,2 0 0,0 18,19V7H6V19Z"/>
+                </svg>
+                Delete Selected
+            </button>
+            <button class="btn btn-secondary" id="cancelSelectBtn">Cancel</button>
+        `;
+        document.body.appendChild(toolbar);
+        
+        document.getElementById('bulkDeleteBtn').addEventListener('click', confirmBulkDelete);
+        document.getElementById('cancelSelectBtn').addEventListener('click', toggleSelectionMode);
+    });
+    
+    function toggleSelectionMode() {
+        selectionMode = !selectionMode;
+        selectedGrids.clear();
+        
+        const toolbar = document.getElementById('bulkToolbar');
+        const selectBtn = document.getElementById('selectModeBtn');
+        
+        if (selectionMode) {
+            selectBtn.classList.add('active');
+            toolbar.classList.add('visible');
+            document.querySelectorAll('.grid-card').forEach(card => {
+                card.classList.add('selectable');
+            });
+        } else {
+            selectBtn.classList.remove('active');
+            toolbar.classList.remove('visible');
+            document.querySelectorAll('.grid-card').forEach(card => {
+                card.classList.remove('selectable', 'selected');
+            });
+        }
+        updateSelectedCount();
+    }
+    
+    function updateSelectedCount() {
+        const countEl = document.getElementById('selectedCount');
+        const deleteBtn = document.getElementById('bulkDeleteBtn');
+        const count = selectedGrids.size;
+        countEl.textContent = count === 1 ? '1 selected' : `${count} selected`;
+        deleteBtn.disabled = count === 0;
+    }
+    
+    // Override card click in selection mode
+    document.addEventListener('click', function(e) {
+        if (!selectionMode) return;
+        
+        const card = e.target.closest('.grid-card');
+        if (!card) return;
+        
+        e.preventDefault();
+        e.stopPropagation();
+        
+        const path = card.dataset.path;
+        if (selectedGrids.has(path)) {
+            selectedGrids.delete(path);
+            card.classList.remove('selected');
+        } else {
+            selectedGrids.add(path);
+            card.classList.add('selected');
+        }
+        updateSelectedCount();
+    }, true);
+    
+    async function confirmBulkDelete() {
+        if (selectedGrids.size === 0) return;
+        
+        const count = selectedGrids.size;
+        if (!confirm(`Delete ${count} grid${count > 1 ? 's' : ''}? This cannot be undone.`)) {
+            return;
+        }
+        
+        // Convert relative paths to encoded absolute paths
+        const paths = Array.from(selectedGrids).map(relPath => {
+            const grid = grids.find(g => g.rel_path === relPath);
+            return grid?.encoded_path || relPath;
+        });
+        
+        try {
+            const response = await fetch('/model-compare/gallery/api/bulk-delete', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ paths })
+            });
+            
+            const result = await response.json();
+            
+            if (result.deletedCount > 0) {
+                alert(`Deleted ${result.deletedCount} grid${result.deletedCount > 1 ? 's' : ''}.${result.errorCount > 0 ? ` (${result.errorCount} failed)` : ''}`);
+                toggleSelectionMode();
+                await loadGrids();
+            } else if (result.errors?.length > 0) {
+                alert('Failed to delete grids: ' + result.errors[0].error);
+            }
+        } catch (e) {
+            console.error('Bulk delete error:', e);
+            alert('Error deleting grids');
+        }
+    }
+    
+    // Context menu for individual grid actions
+    let contextMenuGrid = null;
+    
+    document.addEventListener('DOMContentLoaded', function() {
+        // Create context menu
+        const menu = document.createElement('div');
+        menu.id = 'gridContextMenu';
+        menu.className = 'context-menu';
+        menu.innerHTML = `
+            <button class="context-menu-item" id="ctxRename">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+                    <path d="M14.06,9L15,9.94L5.92,19H5V18.08L14.06,9M17.66,3C17.41,3 17.15,3.1 16.96,3.29L15.13,5.12L18.88,8.87L20.71,7.04C21.1,6.65 21.1,6 20.71,5.63L18.37,3.29C18.17,3.09 17.92,3 17.66,3M14.06,6.19L3,17.25V21H6.75L17.81,9.94L14.06,6.19Z"/>
+                </svg>
+                Rename
+            </button>
+            <button class="context-menu-item danger" id="ctxDelete">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+                    <path d="M19,4H15.5L14.5,3H9.5L8.5,4H5V6H19M6,19A2,2 0 0,0 8,21H16A2,2 0 0,0 18,19V7H6V19Z"/>
+                </svg>
+                Delete
+            </button>
+        `;
+        document.body.appendChild(menu);
+        
+        document.getElementById('ctxRename').addEventListener('click', renameGrid);
+        document.getElementById('ctxDelete').addEventListener('click', deleteGrid);
+        
+        // Show context menu on right-click
+        document.addEventListener('contextmenu', function(e) {
+            const card = e.target.closest('.grid-card');
+            if (!card || selectionMode) return;
+            
+            e.preventDefault();
+            contextMenuGrid = card.dataset.path;
+            
+            const menu = document.getElementById('gridContextMenu');
+            menu.style.left = e.pageX + 'px';
+            menu.style.top = e.pageY + 'px';
+            menu.classList.add('visible');
+        });
+        
+        // Hide context menu on click elsewhere
+        document.addEventListener('click', function() {
+            document.getElementById('gridContextMenu').classList.remove('visible');
+        });
+    });
+    
+    async function renameGrid() {
+        if (!contextMenuGrid) return;
+        
+        const grid = grids.find(g => g.rel_path === contextMenuGrid);
+        if (!grid) return;
+        
+        const currentName = grid.title || contextMenuGrid.split('/').pop().replace('.html', '');
+        const newName = prompt('Enter new name:', currentName);
+        
+        if (!newName || newName === currentName) return;
+        
+        try {
+            const response = await fetch('/model-compare/gallery/api/rename', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    path: grid.encoded_path,
+                    newName: newName
+                })
+            });
+            
+            const result = await response.json();
+            
+            if (result.success) {
+                await loadGrids();
+            } else {
+                alert('Failed to rename: ' + result.error);
+            }
+        } catch (e) {
+            console.error('Rename error:', e);
+            alert('Error renaming grid');
+        }
+    }
+    
+    async function deleteGrid() {
+        if (!contextMenuGrid) return;
+        
+        const grid = grids.find(g => g.rel_path === contextMenuGrid);
+        if (!grid) return;
+        
+        if (!confirm(`Delete "${grid.title || contextMenuGrid}"? This cannot be undone.`)) {
+            return;
+        }
+        
+        try {
+            const response = await fetch('/model-compare/gallery/api/delete?path=' + encodeURIComponent(grid.encoded_path), {
+                method: 'DELETE'
+            });
+            
+            const result = await response.json();
+            
+            if (result.success) {
+                await loadGrids();
+            } else {
+                alert('Failed to delete: ' + result.error);
+            }
+        } catch (e) {
+            console.error('Delete error:', e);
+            alert('Error deleting grid');
+        }
+    }
 })();
 '''
 
@@ -1037,6 +1401,174 @@ async def handle_api_default_path(request):
     output_dir = folder_paths.get_output_directory()
     default_path = os.path.join(output_dir, "model-compare")
     return web.json_response({"path": default_path})
+
+
+async def handle_api_rename_grid(request):
+    """API endpoint to rename a grid file.
+    
+    POST body: {"path": "encoded_path", "newName": "new_filename"}
+    """
+    import base64
+    
+    try:
+        data = await request.json()
+        encoded_path = data.get("path", "")
+        new_name = data.get("newName", "")
+        
+        if not encoded_path or not new_name:
+            return web.json_response({"success": False, "error": "Missing path or newName"}, status=400)
+        
+        # Decode path
+        try:
+            decoded_bytes = base64.urlsafe_b64decode(encoded_path)
+            full_path = decoded_bytes.decode('utf-8')
+        except Exception:
+            return web.json_response({"success": False, "error": "Invalid path encoding"}, status=400)
+        
+        full_path = os.path.abspath(full_path)
+        
+        # Security check
+        if not _is_path_allowed(full_path):
+            return web.json_response({"success": False, "error": "Path not allowed"}, status=403)
+        
+        if not os.path.exists(full_path):
+            return web.json_response({"success": False, "error": "File not found"}, status=404)
+        
+        # Sanitize new name
+        new_name = re.sub(r'[<>:"/\\|?*]', '_', new_name)
+        if not new_name.endswith('.html'):
+            new_name += '.html'
+        
+        # Build new path
+        dir_name = os.path.dirname(full_path)
+        new_path = os.path.join(dir_name, new_name)
+        
+        if os.path.exists(new_path):
+            return web.json_response({"success": False, "error": "A file with that name already exists"}, status=409)
+        
+        # Rename the file
+        os.rename(full_path, new_path)
+        
+        # Generate new encoded path for the response
+        new_encoded = base64.urlsafe_b64encode(new_path.encode('utf-8')).decode('ascii')
+        
+        return web.json_response({
+            "success": True,
+            "newPath": new_encoded,
+            "newName": new_name
+        })
+        
+    except Exception as e:
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+async def handle_api_delete_grid(request):
+    """API endpoint to delete a grid file.
+    
+    DELETE query param: path=encoded_path
+    """
+    import base64
+    
+    try:
+        encoded_path = request.query.get("path", "")
+        
+        if not encoded_path:
+            return web.json_response({"success": False, "error": "Missing path"}, status=400)
+        
+        # Decode path
+        try:
+            decoded_bytes = base64.urlsafe_b64decode(encoded_path)
+            full_path = decoded_bytes.decode('utf-8')
+        except Exception:
+            return web.json_response({"success": False, "error": "Invalid path encoding"}, status=400)
+        
+        full_path = os.path.abspath(full_path)
+        
+        # Security check
+        if not _is_path_allowed(full_path):
+            return web.json_response({"success": False, "error": "Path not allowed"}, status=403)
+        
+        if not os.path.exists(full_path):
+            return web.json_response({"success": False, "error": "File not found"}, status=404)
+        
+        # Delete the file
+        os.remove(full_path)
+        
+        return web.json_response({"success": True})
+        
+    except Exception as e:
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+async def handle_api_bulk_delete_grids(request):
+    """API endpoint to delete multiple grid files.
+    
+    POST body: {"paths": ["encoded_path1", "encoded_path2", ...]}
+    """
+    import base64
+    
+    try:
+        data = await request.json()
+        encoded_paths = data.get("paths", [])
+        
+        if not encoded_paths:
+            return web.json_response({"success": False, "error": "No paths provided"}, status=400)
+        
+        deleted = []
+        errors = []
+        
+        for encoded_path in encoded_paths:
+            try:
+                # Decode path
+                decoded_bytes = base64.urlsafe_b64decode(encoded_path)
+                full_path = decoded_bytes.decode('utf-8')
+                full_path = os.path.abspath(full_path)
+                
+                # Security check
+                if not _is_path_allowed(full_path):
+                    errors.append({"path": encoded_path, "error": "Path not allowed"})
+                    continue
+                
+                if not os.path.exists(full_path):
+                    errors.append({"path": encoded_path, "error": "File not found"})
+                    continue
+                
+                # Delete the file
+                os.remove(full_path)
+                deleted.append(encoded_path)
+                
+            except Exception as e:
+                errors.append({"path": encoded_path, "error": str(e)})
+        
+        return web.json_response({
+            "success": len(errors) == 0,
+            "deleted": deleted,
+            "errors": errors,
+            "deletedCount": len(deleted),
+            "errorCount": len(errors)
+        })
+        
+    except Exception as e:
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+def _is_path_allowed(full_path: str) -> bool:
+    """Check if a path is in an allowed directory."""
+    allowed_paths = [os.path.abspath(folder_paths.get_output_directory())]
+    settings = load_settings()
+    for scan_path in settings.get("scan_paths", []):
+        if os.path.exists(scan_path):
+            allowed_paths.append(os.path.abspath(scan_path))
+    
+    for allowed in allowed_paths:
+        try:
+            # Check if full_path starts with an allowed path
+            if full_path.startswith(allowed + os.sep) or full_path == allowed:
+                return True
+        except Exception:
+            continue
+    
+    return False
 
 
 async def handle_view_grid(request):
@@ -1186,6 +1718,11 @@ def setup_gallery_routes():
         app.router.add_get('/model-compare/gallery/api/settings', handle_api_settings_get)
         app.router.add_post('/model-compare/gallery/api/settings', handle_api_settings_post)
         app.router.add_get('/model-compare/gallery/api/default-path', handle_api_default_path)
+        
+        # Grid management endpoints
+        app.router.add_post('/model-compare/gallery/api/rename', handle_api_rename_grid)
+        app.router.add_delete('/model-compare/gallery/api/delete', handle_api_delete_grid)
+        app.router.add_post('/model-compare/gallery/api/bulk-delete', handle_api_bulk_delete_grids)
         
         # View grid with proper content-type (supports base64 encoded paths)
         app.router.add_get('/model-compare/view/{path:.*}', handle_view_grid)

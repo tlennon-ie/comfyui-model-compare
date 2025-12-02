@@ -50,13 +50,18 @@ class GridCompare:
             except:
                 pass
 
+        # Axis options for grid layout
+        axis_options = ["auto", "model", "vae", "clip", "lora_name", "lora_strength", "sampler_name", "scheduler", 
+                       "lumina_shift", "qwen_shift", "wan_shift", "wan22_shift", "hunyuan_shift", "flux_guidance",
+                       "cfg", "steps", "seed", "width", "height", "prompt_positive", "prompt_negative"]
+        nest_options = ["none"] + axis_options[1:]  # none + all axis options except auto
+        
         return {
             "required": {
                 "images": ("IMAGE",),
                 "config": ("MODEL_COMPARE_CONFIG",),
-                "labels": ("STRING",),
                 "save_location": ("STRING", {
-                    "default": "model-compare/ComfyUI",
+                    "default": "model-compare",
                     "multiline": False,
                     "tooltip": "Output folder path for saving grid",
                 }),
@@ -66,7 +71,7 @@ class GridCompare:
                     "tooltip": "Name for the saved grid file",
                 }),
                 "gap_size": ("INT", {
-                    "default": 10,
+                    "default": 14,
                     "min": 0,
                     "max": 100,
                     "step": 1,
@@ -78,9 +83,9 @@ class GridCompare:
                     "tooltip": "Hex color for image borders",
                 }),
                 "border_width": ("INT", {
-                    "default": 2,
+                    "default": 10,
                     "min": 0,
-                    "max": 10,
+                    "max": 20,
                     "step": 1,
                     "tooltip": "Border width in pixels",
                 }),
@@ -101,13 +106,13 @@ class GridCompare:
                     "tooltip": "Font for text labels",
                 }),
                 "show_positive_prompt": ("BOOLEAN", {
-                    "default": False,
+                    "default": True,
                     "label_on": "yes",
                     "label_off": "no",
                     "tooltip": "Show positive prompt text below each prompt section",
                 }),
                 "show_negative_prompt": ("BOOLEAN", {
-                    "default": False,
+                    "default": True,
                     "label_on": "yes",
                     "label_off": "no",
                     "tooltip": "Show negative prompt text below each prompt section",
@@ -119,7 +124,7 @@ class GridCompare:
                     "tooltip": "Save each prompt variation as a separate grid file (useful for many prompts)",
                 }),
                 "save_individuals": ("BOOLEAN", {
-                    "default": True,
+                    "default": False,
                     "label_on": "yes",
                     "label_off": "no",
                     "tooltip": "Save individual images in addition to grid",
@@ -131,7 +136,7 @@ class GridCompare:
                     "tooltip": "Embed workflow metadata in PNG files",
                 }),
                 # Grid split options for multi-value variations
-                "grid_split_by": (["none", "model", "sampler", "scheduler", "chain", "prompt_positive", "prompt_negative", "auto"], {
+                "grid_split_by": (["none", "model", "vae", "clip", "lora_name", "sampler_name", "scheduler", "prompt_positive", "prompt_negative", "auto"], {
                     "default": "none",
                     "tooltip": "Split into multiple grids by grouping dimension (useful for many variations)"
                 }),
@@ -140,37 +145,85 @@ class GridCompare:
                     "multiline": False,
                     "tooltip": "Prefix for individual image filenames (structured naming)"
                 }),
-                # Smart grid layout controls
-                "row_axis": (["auto", "sampler", "scheduler", "height", "width", "lumina_shift", "qwen_shift", "wan_shift", "wan22_shift", "hunyuan_shift", "flux_guidance", "cfg", "steps", "model", "seed", "lora_name", "lora_strength", "vae", "clip", "prompt_positive", "prompt_negative"], {
+                # Smart grid layout controls - row and column axes
+                "row_axis": (axis_options, {
                     "default": "auto",
                     "tooltip": "Which variation dimension to use for rows (Y-axis)"
                 }),
-                "col_axis": (["auto", "sampler", "scheduler", "height", "width", "lumina_shift", "qwen_shift", "wan_shift", "wan22_shift", "hunyuan_shift", "flux_guidance", "cfg", "steps", "model", "seed", "lora_name", "lora_strength", "vae", "clip", "prompt_positive", "prompt_negative"], {
+                "col_axis": (axis_options, {
                     "default": "auto",
                     "tooltip": "Which variation dimension to use for columns (X-axis)"
                 }),
-                # Third axis for nested grids
-                "nest_axis": (["none", "auto", "sampler", "scheduler", "height", "width", "lumina_shift", "qwen_shift", "wan_shift", "wan22_shift", "hunyuan_shift", "flux_guidance", "cfg", "steps", "model", "seed", "lora_name", "lora_strength", "vae", "clip", "prompt_positive", "prompt_negative"], {
+                # Deep nesting support - up to 8 levels
+                "nest_axis_1": (nest_options, {
                     "default": "none",
-                    "tooltip": "Third dimension for nested grids (creates separate grids per value)"
+                    "tooltip": "First nesting level (creates separate grids per value)"
                 }),
+                "nest_axis_2": (nest_options, {
+                    "default": "none",
+                    "tooltip": "Second nesting level"
+                }),
+                "nest_axis_3": (nest_options, {
+                    "default": "none",
+                    "tooltip": "Third nesting level"
+                }),
+                "nest_axis_4": (nest_options, {
+                    "default": "none",
+                    "tooltip": "Fourth nesting level"
+                }),
+                "nest_axis_5": (nest_options, {
+                    "default": "none",
+                    "tooltip": "Fifth nesting level"
+                }),
+                "nest_axis_6": (nest_options, {
+                    "default": "none",
+                    "tooltip": "Sixth nesting level"
+                }),
+                "nest_axis_7": (nest_options, {
+                    "default": "none",
+                    "tooltip": "Seventh nesting level"
+                }),
+                "nest_axis_8": (nest_options, {
+                    "default": "none",
+                    "tooltip": "Eighth nesting level (max depth before auto-split)"
+                }),
+                # Subtitle configuration - show selected fields below grid
+                "subtitle_show_model": ("BOOLEAN", {"default": False, "label_on": "yes", "label_off": "no", "tooltip": "Show model name in subtitle"}),
+                "subtitle_show_vae": ("BOOLEAN", {"default": False, "label_on": "yes", "label_off": "no", "tooltip": "Show VAE name in subtitle"}),
+                "subtitle_show_clip": ("BOOLEAN", {"default": False, "label_on": "yes", "label_off": "no", "tooltip": "Show CLIP info in subtitle"}),
+                "subtitle_show_lora": ("BOOLEAN", {"default": False, "label_on": "yes", "label_off": "no", "tooltip": "Show LoRA info in subtitle"}),
+                "subtitle_show_sampler": ("BOOLEAN", {"default": False, "label_on": "yes", "label_off": "no", "tooltip": "Show sampler in subtitle"}),
+                "subtitle_show_scheduler": ("BOOLEAN", {"default": False, "label_on": "yes", "label_off": "no", "tooltip": "Show scheduler in subtitle"}),
+                "subtitle_show_cfg": ("BOOLEAN", {"default": False, "label_on": "yes", "label_off": "no", "tooltip": "Show CFG in subtitle"}),
+                "subtitle_show_steps": ("BOOLEAN", {"default": False, "label_on": "yes", "label_off": "no", "tooltip": "Show steps in subtitle"}),
+                "subtitle_show_seed": ("BOOLEAN", {"default": False, "label_on": "yes", "label_off": "no", "tooltip": "Show seed in subtitle"}),
+                "subtitle_show_dimensions": ("BOOLEAN", {"default": False, "label_on": "yes", "label_off": "no", "tooltip": "Show dimensions in subtitle"}),
+                "subtitle_show_field_names": ("BOOLEAN", {"default": True, "label_on": "yes", "label_off": "no", "tooltip": "Show field names in subtitle (e.g., 'Model: X' vs 'X')"}),
                 # HTML Grid output options
                 "html_grid_output": ("BOOLEAN", {
-                    "default": False,
+                    "default": True,
                     "label_on": "yes",
                     "label_off": "no",
                     "tooltip": "Generate an interactive HTML grid with filters, lightbox, and metadata"
                 }),
-                "html_image_format": (["JPEG", "PNG"], {
-                    "default": "JPEG",
-                    "tooltip": "Image format for HTML grid (JPEG = smaller file, PNG = lossless)"
+                "html_image_format": (["PNG", "JPEG"], {
+                    "default": "PNG",
+                    "tooltip": "Image format for HTML grid (PNG = lossless, JPEG = smaller file)"
                 }),
                 "html_image_quality": ("INT", {
-                    "default": 85,
+                    "default": 100,
                     "min": 50,
                     "max": 100,
                     "step": 5,
-                    "tooltip": "JPEG quality for HTML grid images (higher = larger file)"
+                    "tooltip": "Image quality for HTML grid (higher = larger file)"
+                }),
+                # Grid size limits
+                "max_grid_pixels": ("INT", {
+                    "default": 8000,
+                    "min": 2000,
+                    "max": 20000,
+                    "step": 1000,
+                    "tooltip": "Maximum grid dimension in pixels before auto-splitting"
                 }),
             },
             "optional": {
@@ -191,39 +244,114 @@ class GridCompare:
     FUNCTION = "create_grid"
     OUTPUT_NODE = True
     
-    def _detect_varying_dimensions(self, combinations: List[Dict]) -> Dict[str, List[Any]]:
+    # Label priority order - higher priority fields appear first in labels
+    # When base model is same, LoRA info becomes more important
+    LABEL_PRIORITY = [
+        'model', 'vae', 'clip', 'lora_name', 'lora_strength', 'lora_display',
+        'sampler_name', 'scheduler', 'lumina_shift', 'qwen_shift', 'wan_shift',
+        'wan22_shift', 'hunyuan_shift', 'flux_guidance', 'cfg', 'steps', 
+        'seed', 'width', 'height', 'prompt_positive', 'prompt_negative'
+    ]
+    
+    def _detect_varying_dimensions(self, combinations: List[Dict], config: Dict = None) -> Dict[str, List[Any]]:
         """
         Analyze combinations to find which dimensions have multiple unique values.
+        Properly extracts nested data from lora_config, model_variations, etc.
         
         Returns dict of dimension_name -> list of unique values (sorted)
         """
         if not combinations:
             return {}
         
-        # Dimensions to check (from sampling override and combo fields)
-        check_fields = [
-            'sampler_name', 'scheduler', 'steps', 'cfg', 'denoise',
-            'width', 'height', 'lumina_shift', 'qwen_shift', 'wan_shift',
-            'wan22_shift', 'hunyuan_shift', 'flux_guidance', 'model',
-            'seed', 'lora_name', 'lora_strength', 'vae', 'clip',
-            'lora_names', 'lora_strengths',  # Also check list versions
-            'prompt_positive', 'prompt_negative'  # Prompt variations
-        ]
+        # Initialize field value sets
+        field_values = {
+            'model': set(),
+            'vae': set(),
+            'clip': set(),
+            'lora_name': set(),
+            'lora_strength': set(),
+            'lora_display': set(),
+            'sampler_name': set(),
+            'scheduler': set(),
+            'steps': set(),
+            'cfg': set(),
+            'denoise': set(),
+            'seed': set(),
+            'width': set(),
+            'height': set(),
+            'lumina_shift': set(),
+            'qwen_shift': set(),
+            'wan_shift': set(),
+            'wan22_shift': set(),
+            'hunyuan_shift': set(),
+            'flux_guidance': set(),
+            'prompt_positive': set(),
+            'prompt_negative': set(),
+        }
         
-        # Collect all values per field
-        field_values = {f: set() for f in check_fields}
+        # Get model variations for name lookup
+        model_variations = config.get('model_variations', []) if config else []
         
         for combo in combinations:
             # Check _sampling_override first (for expanded variations)
             override = combo.get('_sampling_override', {})
             
-            for field in check_fields:
-                # First try override, then combo itself
+            # Extract model name from model_index
+            model_idx = combo.get('model_index', 0)
+            if model_idx < len(model_variations):
+                model_entry = model_variations[model_idx]
+                model_name = model_entry.get('display_name', model_entry.get('name', f'Model {model_idx}'))
+                # Clean up model name (remove .safetensors extension)
+                if model_name.endswith('.safetensors'):
+                    model_name = model_name[:-12]
+                field_values['model'].add(model_name)
+            
+            # Extract VAE name
+            vae_name = combo.get('vae_name')
+            if vae_name:
+                if vae_name.endswith('.safetensors'):
+                    vae_name = vae_name[:-12]
+                field_values['vae'].add(vae_name)
+            
+            # Extract CLIP info
+            clip_var = combo.get('clip_variation')
+            if clip_var:
+                if clip_var.get('type') == 'pair':
+                    clip_name = f"{clip_var.get('a', '')}+{clip_var.get('b', '')}"
+                else:
+                    clip_name = clip_var.get('model', clip_var.get('clip_type', ''))
+                if clip_name:
+                    field_values['clip'].add(clip_name)
+            
+            # Extract LoRA info from lora_config
+            lora_config = combo.get('lora_config', {})
+            loras = lora_config.get('loras', [])
+            lora_display = lora_config.get('display', '')
+            
+            if loras:
+                for lora in loras:
+                    lora_name = lora.get('label', lora.get('name', ''))
+                    if lora_name:
+                        field_values['lora_name'].add(lora_name)
+                    lora_strength = lora.get('strength')
+                    if lora_strength is not None:
+                        field_values['lora_strength'].add(lora_strength)
+            
+            if lora_display and lora_display != 'No LoRA':
+                field_values['lora_display'].add(lora_display)
+            
+            # Extract sampling parameters from override or combo
+            for field in ['sampler_name', 'scheduler', 'steps', 'cfg', 'denoise', 'seed',
+                         'width', 'height', 'lumina_shift', 'qwen_shift', 'wan_shift',
+                         'wan22_shift', 'hunyuan_shift', 'flux_guidance']:
                 value = override.get(field, combo.get(field))
                 if value is not None:
-                    # Normalize to hashable
-                    if isinstance(value, (list, tuple)):
-                        value = tuple(value)
+                    field_values[field].add(value)
+            
+            # Extract prompts
+            for field in ['prompt_positive', 'prompt_negative']:
+                value = combo.get(field)
+                if value:
                     field_values[field].add(value)
         
         # Return only fields with >1 unique value
@@ -239,10 +367,138 @@ class GridCompare:
         
         return varying
     
-    def _get_combo_value(self, combo: Dict, field: str) -> Any:
-        """Get a field value from combo, checking override first."""
+    def _get_priority_varying_dims(self, varying_dims: Dict[str, List[Any]]) -> List[str]:
+        """Return varying dimensions sorted by label priority."""
+        return [dim for dim in self.LABEL_PRIORITY if dim in varying_dims]
+    
+    def _generate_cell_label(self, combo: Dict, config: Dict, varying_dims: Dict[str, List[Any]], 
+                             exclude_axes: List[str] = None) -> str:
+        """
+        Generate a concise label for a grid cell based on varying dimensions.
+        Excludes dimensions already shown in row/col/nest headers.
+        Uses priority ordering.
+        """
+        if exclude_axes is None:
+            exclude_axes = []
+        
+        # Get model variations for name lookup
+        model_variations = config.get('model_variations', []) if config else []
         override = combo.get('_sampling_override', {})
-        return override.get(field, combo.get(field))
+        
+        label_parts = []
+        
+        # Go through priority order
+        for field in self.LABEL_PRIORITY:
+            if field not in varying_dims or field in exclude_axes:
+                continue
+            
+            value = None
+            
+            if field == 'model':
+                model_idx = combo.get('model_index', 0)
+                if model_idx < len(model_variations):
+                    model_entry = model_variations[model_idx]
+                    value = model_entry.get('display_name', model_entry.get('name', f'Model {model_idx}'))
+                    if value and value.endswith('.safetensors'):
+                        value = value[:-12]
+            elif field == 'vae':
+                value = combo.get('vae_name', '')
+                if value and value.endswith('.safetensors'):
+                    value = value[:-12]
+            elif field == 'clip':
+                clip_var = combo.get('clip_variation')
+                if clip_var:
+                    if clip_var.get('type') == 'pair':
+                        value = f"{clip_var.get('a', '')}+{clip_var.get('b', '')}"
+                    else:
+                        value = clip_var.get('model', clip_var.get('clip_type', ''))
+            elif field == 'lora_display':
+                lora_config = combo.get('lora_config', {})
+                value = lora_config.get('display', '')
+                if value == 'No LoRA':
+                    value = None
+            elif field == 'lora_name':
+                lora_config = combo.get('lora_config', {})
+                loras = lora_config.get('loras', [])
+                if loras:
+                    value = ', '.join(l.get('label', l.get('name', '')) for l in loras)
+            elif field == 'lora_strength':
+                lora_config = combo.get('lora_config', {})
+                loras = lora_config.get('loras', [])
+                if loras:
+                    strengths = [str(l.get('strength', '')) for l in loras]
+                    value = ', '.join(strengths)
+            elif field in ['prompt_positive', 'prompt_negative']:
+                value = combo.get(field, '')
+                if value and len(value) > 30:
+                    value = value[:27] + '...'
+            else:
+                # Standard field from override or combo
+                value = override.get(field, combo.get(field))
+            
+            if value is not None and value != '':
+                # Format the value
+                if isinstance(value, float):
+                    value = f"{value:.2f}".rstrip('0').rstrip('.')
+                label_parts.append(str(value))
+        
+        return ' | '.join(label_parts) if label_parts else ''
+    
+    def _get_combo_field_value(self, combo: Dict, config: Dict, field: str) -> Any:
+        """Get a specific field value from a combo, handling nested structures.
+        
+        IMPORTANT: Return values must match the format used in _detect_varying_dimensions
+        for grid mapping to work correctly.
+        """
+        model_variations = config.get('model_variations', []) if config else []
+        override = combo.get('_sampling_override', {})
+        
+        if field == 'model':
+            model_idx = combo.get('model_index', 0)
+            if model_idx < len(model_variations):
+                model_entry = model_variations[model_idx]
+                value = model_entry.get('display_name', model_entry.get('name', f'Model {model_idx}'))
+                if value and value.endswith('.safetensors'):
+                    value = value[:-12]
+                return value
+            return None
+        elif field == 'vae':
+            value = combo.get('vae_name', '')
+            if value and value.endswith('.safetensors'):
+                value = value[:-12]
+            return value if value else None
+        elif field == 'clip':
+            clip_var = combo.get('clip_variation')
+            if clip_var:
+                if clip_var.get('type') == 'pair':
+                    return f"{clip_var.get('a', '')}+{clip_var.get('b', '')}"
+                return clip_var.get('model', clip_var.get('clip_type', ''))
+            return None
+        elif field == 'lora_display':
+            lora_config = combo.get('lora_config', {})
+            value = lora_config.get('display', '')
+            return value if value and value != 'No LoRA' else None
+        elif field == 'lora_name':
+            # Return the FIRST lora name (matches how _detect_varying_dimensions stores individual names)
+            lora_config = combo.get('lora_config', {})
+            loras = lora_config.get('loras', [])
+            if loras:
+                name = loras[0].get('label', loras[0].get('name', ''))
+                if name:
+                    return name
+            return None
+        elif field == 'lora_strength':
+            # Return the FIRST lora strength as numeric (matches _detect_varying_dimensions)
+            lora_config = combo.get('lora_config', {})
+            loras = lora_config.get('loras', [])
+            if loras:
+                strength = loras[0].get('strength')
+                return strength  # Return as-is (numeric), not as string
+            return None
+        elif field in ['prompt_positive', 'prompt_negative']:
+            return combo.get(field, '')
+        else:
+            return override.get(field, combo.get(field))
     
     def _create_xy_grid(
         self,
@@ -261,6 +517,7 @@ class GridCompare:
         title: str = "",
         show_positive_prompt: bool = False,
         show_negative_prompt: bool = False,
+        varying_dims: Dict[str, List[Any]] = None,
     ) -> Image.Image:
         """
         Create a smart XY grid with user-specified or auto-detected axes.
@@ -268,12 +525,13 @@ class GridCompare:
         Args:
             row_axis: Field to use for rows (y-axis), or "auto" to detect
             col_axis: Field to use for columns (x-axis), or "auto" to detect
+            varying_dims: Pre-computed varying dimensions (optional, will detect if not provided)
         """
         if not images:
             return Image.new('RGB', (100, 100), color='white')
         
-        # Detect varying dimensions
-        varying = self._detect_varying_dimensions(combinations)
+        # Use pre-computed varying dimensions or detect them
+        varying = varying_dims if varying_dims is not None else self._detect_varying_dimensions(combinations, config)
         
         if not varying:
             # No variations detected - single row grid
@@ -328,8 +586,8 @@ class GridCompare:
             if idx >= len(images):
                 break
             
-            row_val = self._get_combo_value(combo, actual_row_axis) if actual_row_axis else None
-            col_val = self._get_combo_value(combo, actual_col_axis) if actual_col_axis else None
+            row_val = self._get_combo_field_value(combo, config, actual_row_axis) if actual_row_axis else None
+            col_val = self._get_combo_field_value(combo, config, actual_col_axis) if actual_col_axis else None
             
             key = (row_val, col_val)
             if key not in grid_map:
@@ -351,10 +609,27 @@ class GridCompare:
         text_rgb = self._parse_color(text_color)
         border_rgb = self._parse_color(border_color)
         
+        # Check if using prompt as an axis - need special handling
+        is_prompt_row_axis = actual_row_axis in ('prompt_positive', 'prompt_negative')
+        is_prompt_col_axis = actual_col_axis in ('prompt_positive', 'prompt_negative')
+        
         # Spacing - increased padding for better readability
         title_height = font_size + 40 if title else 0
-        col_header_height = int(font_size * 1.0) + 25
-        row_label_width = int(font_size * 5) if actual_row_axis else 0
+        
+        # For prompt column headers, we need much more height to show wrapped text
+        if is_prompt_col_axis:
+            col_header_height = int(font_size * 0.6) * 4 + 40  # ~4 lines for prompt
+        else:
+            col_header_height = int(font_size * 1.0) + 25
+        
+        # For prompt row labels, we need more width
+        if is_prompt_row_axis:
+            row_label_width = int(img_width * 0.6)  # 60% of image width for prompt text
+        elif actual_row_axis:
+            row_label_width = int(font_size * 5)
+        else:
+            row_label_width = 0
+            
         cell_label_height = int(font_size * 0.8) + 20  # More space for labels below images
         
         # Calculate prompt height if needed
@@ -398,19 +673,64 @@ class GridCompare:
         if actual_col_axis:
             for col_idx, col_val in enumerate(col_values):
                 x = row_label_width + gap_size + col_idx * (img_width + gap_size) + img_width // 2
-                header_text = f"{self._format_axis_label(actual_col_axis)}: {self._format_value(col_val)}"
-                draw.text((x, current_y + col_header_height // 2), header_text,
-                          fill=text_rgb, font=header_font, anchor="mm")
+                
+                if is_prompt_col_axis:
+                    # For prompt columns, show wrapped text
+                    header_text = f"{self._format_axis_label(actual_col_axis)}:"
+                    draw.text((x, current_y + 5), header_text,
+                              fill=text_rgb, font=header_font, anchor="mt")
+                    # Wrap and draw the prompt text below
+                    prompt_val = str(col_val) if col_val else ""
+                    wrapped = self._wrap_text(prompt_val, prompt_font, img_width - 10)
+                    # Limit to ~3 lines
+                    lines = wrapped.split('\n')[:3]
+                    if len(wrapped.split('\n')) > 3:
+                        lines[-1] = lines[-1][:20] + "..."
+                    wrapped = '\n'.join(lines)
+                    # Draw multiline text line by line (PIL anchor doesn't work with multiline)
+                    prompt_y = current_y + int(font_size * 0.9)
+                    for line in lines:
+                        draw.text((x, prompt_y), line, fill=(80, 80, 80), font=prompt_font, anchor="mt")
+                        prompt_y += int(font_size * 0.6)
+                else:
+                    header_text = f"{self._format_axis_label(actual_col_axis)}: {self._format_value(col_val)}"
+                    draw.text((x, current_y + col_header_height // 2), header_text,
+                              fill=text_rgb, font=header_font, anchor="mm")
         current_y += col_header_height
         
         # Draw rows
         for row_idx, row_val in enumerate(row_values):
             # Draw row label
             if actual_row_axis and row_val is not None:
-                label_y = current_y + (img_height + cell_label_height) // 2
-                row_text = f"{self._format_axis_label(actual_row_axis)}\n{self._format_value(row_val)}"
-                draw.text((gap_size + row_label_width // 2, label_y), row_text,
-                          fill=text_rgb, font=label_font, anchor="mm")
+                if is_prompt_row_axis:
+                    # For prompt rows, draw wrapped text on the left
+                    label_x = gap_size + 5
+                    label_y = current_y + 10
+                    header_text = f"{self._format_axis_label(actual_row_axis)}:"
+                    draw.text((label_x, label_y), header_text,
+                              fill=text_rgb, font=label_font, anchor="lt")
+                    # Wrap and draw the prompt text below
+                    prompt_val = str(row_val) if row_val else ""
+                    wrapped = self._wrap_text(prompt_val, prompt_font, row_label_width - 20)
+                    # Limit lines to fit in row height
+                    max_lines = max(3, (img_height + cell_label_height) // int(font_size * 0.6))
+                    lines = wrapped.split('\n')[:max_lines]
+                    if len(wrapped.split('\n')) > max_lines:
+                        lines[-1] = lines[-1][:20] + "..."
+                    # Draw multiline text line by line (PIL anchor doesn't work with multiline)
+                    prompt_y = label_y + int(font_size * 0.7)
+                    for line in lines:
+                        draw.text((label_x, prompt_y), line, fill=(80, 80, 80), font=prompt_font)
+                        prompt_y += int(font_size * 0.6)
+                else:
+                    label_y = current_y + (img_height + cell_label_height) // 2
+                    # Draw row label as two lines (PIL anchor doesn't work with multiline)
+                    axis_label = self._format_axis_label(actual_row_axis)
+                    value_label = self._format_value(row_val)
+                    draw.text((gap_size + row_label_width // 2, label_y - int(font_size * 0.4)), axis_label,
+                              fill=text_rgb, font=label_font, anchor="mm")
+                    draw.text((gap_size + row_label_width // 2, label_y + int(font_size * 0.4)), value_label,
+                              fill=text_rgb, font=label_font, anchor="mm")
             
             # Draw images in this row
             for col_idx, col_val in enumerate(col_values):
@@ -539,7 +859,7 @@ class GridCompare:
         config: Dict[str, Any],
         row_axis: str,
         col_axis: str,
-        nest_axis: str,
+        nest_axes: List[str],
         varying_dims: Dict[str, List[Any]],
         gap_size: int,
         border_color: str,
@@ -550,15 +870,24 @@ class GridCompare:
         title: str = "",
         show_positive_prompt: bool = False,
         show_negative_prompt: bool = False,
+        max_grid_pixels: int = 8000,
     ) -> Image.Image:
         """
         Create nested grids when there are 3+ varying dimensions.
         Creates one XY grid for each value of the nest_axis, then combines them.
         
+        Args:
+            nest_axes: List of field names to use for nesting (up to 8 levels)
+            max_grid_pixels: Maximum dimension before auto-splitting into separate grids
+            
         Layout: Multiple XY grids stacked vertically or horizontally, one per nest_axis value.
         """
         if not images:
             return Image.new('RGB', (100, 100), color='white')
+        
+        # Use first nest axis or auto-detect
+        # TODO: Implement full multi-level nesting using all nest_axes
+        nest_axis = nest_axes[0] if nest_axes else "auto"
         
         # Determine the nest axis (third dimension)
         priority = ['scheduler', 'sampler_name', 'height', 'lumina_shift', 'qwen_shift', 
@@ -614,7 +943,7 @@ class GridCompare:
                 gap_size=gap_size, border_color=border_color, border_width=border_width,
                 text_color=text_color, font_size=font_size, font_name=font_name,
                 title=title, show_positive_prompt=show_positive_prompt,
-                show_negative_prompt=show_negative_prompt
+                show_negative_prompt=show_negative_prompt, varying_dims=varying_dims
             )
         
         # Get nest axis values
@@ -626,14 +955,14 @@ class GridCompare:
                 gap_size=gap_size, border_color=border_color, border_width=border_width,
                 text_color=text_color, font_size=font_size, font_name=font_name,
                 title=title, show_positive_prompt=show_positive_prompt,
-                show_negative_prompt=show_negative_prompt
+                show_negative_prompt=show_negative_prompt, varying_dims=varying_dims
             )
         
         # Group images by nest axis value
         nested_groups = {}  # nest_value -> [(idx, image, label, combo)]
         for idx, (img, combo) in enumerate(zip(images, combinations)):
             label = labels[idx] if idx < len(labels) else f"Image {idx}"
-            nest_val = self._get_combo_value(combo, actual_nest_axis)
+            nest_val = self._get_combo_field_value(combo, config, actual_nest_axis)
             
             if nest_val not in nested_groups:
                 nested_groups[nest_val] = []
@@ -654,6 +983,9 @@ class GridCompare:
             nest_label = f"{self._format_axis_label(actual_nest_axis)}: {self._format_value(nest_val)}"
             sub_title = f"{title} [{nest_label}]" if title else nest_label
             
+            # Compute varying dims for the sub-group
+            sub_varying = self._detect_varying_dimensions(group_combos, config)
+            
             sub_grid = self._create_xy_grid(
                 images=group_images,
                 labels=group_labels,
@@ -670,6 +1002,7 @@ class GridCompare:
                 title=sub_title,
                 show_positive_prompt=False,  # Only show prompt once at the end
                 show_negative_prompt=False,
+                varying_dims=sub_varying,
             )
             sub_grids.append((nest_val, sub_grid))
         
@@ -978,14 +1311,19 @@ class GridCompare:
         }
         return labels.get(axis, axis)
     
-    def _format_value(self, value: Any) -> str:
-        """Format a value for display."""
+    def _format_value(self, value: Any, max_length: int = 50) -> str:
+        """Format a value for display, with optional truncation for long strings."""
         if value is None:
             return ""
         if isinstance(value, float):
             return f"{value:.2f}".rstrip('0').rstrip('.')
-        if isinstance(value, str) and value.endswith('.safetensors'):
-            return value[:-12]
+        if isinstance(value, str):
+            # Remove .safetensors extension
+            if value.endswith('.safetensors'):
+                value = value[:-12]
+            # Truncate long strings (like prompts)
+            if len(value) > max_length:
+                return value[:max_length-3] + "..."
         return str(value)
     
     def _shorten_label(self, label: str, row_axis: str, col_axis: str) -> str:
@@ -1309,7 +1647,6 @@ class GridCompare:
     def create_grid(
         self,
         images: torch.Tensor,
-        labels: str,
         config: Dict[str, Any],
         save_location: str,
         grid_title: str,
@@ -1328,18 +1665,40 @@ class GridCompare:
         output_prefix: str = "compare",
         row_axis: str = "auto",
         col_axis: str = "auto",
-        nest_axis: str = "none",
+        # Deep nesting - up to 8 levels
+        nest_axis_1: str = "none",
+        nest_axis_2: str = "none",
+        nest_axis_3: str = "none",
+        nest_axis_4: str = "none",
+        nest_axis_5: str = "none",
+        nest_axis_6: str = "none",
+        nest_axis_7: str = "none",
+        nest_axis_8: str = "none",
+        # Subtitle configuration
+        subtitle_show_model: bool = False,
+        subtitle_show_vae: bool = False,
+        subtitle_show_clip: bool = False,
+        subtitle_show_lora: bool = False,
+        subtitle_show_sampler: bool = False,
+        subtitle_show_scheduler: bool = False,
+        subtitle_show_cfg: bool = False,
+        subtitle_show_steps: bool = False,
+        subtitle_show_seed: bool = False,
+        subtitle_show_dimensions: bool = False,
+        subtitle_show_field_names: bool = True,
+        # HTML and grid limits
         html_grid_output: bool = False,
         html_image_format: str = "JPEG",
         html_image_quality: int = 85,
+        max_grid_pixels: int = 8000,
         video_config: Dict[str, Any] = None,
         prompt=None,
         extra_pnginfo=None,
-        **kwargs  # Ignore any optional x_label, y_label, z_label
+        **kwargs  # Ignore any extra parameters for backwards compatibility
     ) -> Tuple[torch.Tensor, str, str, str]:
         """
-        Create a comparison grid from images and labels.
-        Organizes images by LoRA rows and strength columns with proper axis labels.
+        Create a comparison grid from images.
+        Labels are derived automatically from config based on varying dimensions.
         
         For video output, handles multi-frame results and creates video grids.
         Video options come from optional video_config input (from Video Grid Config node).
@@ -1356,18 +1715,43 @@ class GridCompare:
             video_codec = video_config.get("video_codec", "libx264")
             video_quality = video_config.get("video_quality", 23)
         
-        # Parse labels - try newline-separated first, then semicolon for backwards compatibility
-        if "\n" in labels:
-            label_list = [l.strip() for l in labels.split("\n") if l.strip()]
-        else:
-            label_list = [l.strip() for l in labels.split(";") if l.strip()]
+        # Collect active nest axes (non-"none" values)
+        nest_axes = [ax for ax in [nest_axis_1, nest_axis_2, nest_axis_3, nest_axis_4,
+                                   nest_axis_5, nest_axis_6, nest_axis_7, nest_axis_8] 
+                     if ax and ax != "none"]
+        
+        # Collect subtitle config for label generation
+        subtitle_config = {
+            'model': subtitle_show_model,
+            'vae': subtitle_show_vae,
+            'clip': subtitle_show_clip,
+            'lora': subtitle_show_lora,
+            'sampler': subtitle_show_sampler,
+            'scheduler': subtitle_show_scheduler,
+            'cfg': subtitle_show_cfg,
+            'steps': subtitle_show_steps,
+            'seed': subtitle_show_seed,
+            'dimensions': subtitle_show_dimensions,
+            'show_field_names': subtitle_show_field_names,
+        }
+        
+        # Get combinations for label generation
+        combinations = config.get("combinations", [])
+        
+        # Detect varying dimensions
+        varying_dims = self._detect_varying_dimensions(combinations, config)
+        
+        # Generate labels from config - show only varying dimensions
+        label_list = []
+        for combo in combinations:
+            label = self._generate_cell_label(combo, config, varying_dims)
+            label_list.append(label)
         
         # Convert ALL images to PIL (needed for video grid)
         all_pil_images = self._tensor_to_pil_list(images)
         
         # Check if images were padded (different original sizes stored in config)
         # If so, crop each image back to its original size
-        combinations = config.get("combinations", [])
         has_different_sizes = any(
             combo.get("output_width") and combo.get("output_height") 
             for combo in combinations
@@ -1499,8 +1883,7 @@ class GridCompare:
                 while len(label_list) < len(pil_images):
                     label_list.append(f"Image {len(label_list)}")
 
-            # Detect what dimensions are varying in this comparison
-            varying_dims = self._detect_varying_dimensions(combinations)
+            # varying_dims already detected at start of method
             
             # Check if we have sampling variations (multi-value fields from config chain)
             has_sampling_variations = any(
@@ -1514,26 +1897,11 @@ class GridCompare:
                 # Check if we have 3+ varying dimensions and need nested grids
                 num_varying = len(varying_dims)
                 
-                # If split_by is "none" and we have 3+ dimensions, create a complete grid showing ALL images
-                if grid_split_by == "none" and num_varying > 2:
-                    grid_image = self._create_complete_grid(
-                        images=pil_images,
-                        labels=label_list,
-                        combinations=combinations,
-                        config=config,
-                        varying_dims=varying_dims,
-                        gap_size=gap_size,
-                        border_color=border_color,
-                        border_width=border_width,
-                        text_color=text_color,
-                        font_size=font_size,
-                        font_name=font_name,
-                        title=grid_title,
-                        show_positive_prompt=show_positive_prompt,
-                        show_negative_prompt=show_negative_prompt,
-                    )
-                elif num_varying > 2 or (nest_axis != "none" and nest_axis != "auto"):
-                    # Create nested grids - one XY grid per value of nest_axis
+                # Determine if user specified nesting or we need auto-nesting for 3+ dimensions
+                has_user_nest = len(nest_axes) > 0
+                
+                if has_user_nest or num_varying > 2:
+                    # Create nested grids - one XY grid per combination of nest axis values
                     grid_image = self._create_nested_xy_grids(
                         images=pil_images,
                         labels=label_list,
@@ -1541,7 +1909,7 @@ class GridCompare:
                         config=config,
                         row_axis=row_axis,
                         col_axis=col_axis,
-                        nest_axis=nest_axis,
+                        nest_axes=nest_axes,
                         varying_dims=varying_dims,
                         gap_size=gap_size,
                         border_color=border_color,
@@ -1552,6 +1920,7 @@ class GridCompare:
                         title=grid_title,
                         show_positive_prompt=show_positive_prompt,
                         show_negative_prompt=show_negative_prompt,
+                        max_grid_pixels=max_grid_pixels,
                     )
                 else:
                     # Use smart XY grid with user-specified or auto-detected axes
@@ -1562,6 +1931,7 @@ class GridCompare:
                         config=config,
                         row_axis=row_axis,
                         col_axis=col_axis,
+                        varying_dims=varying_dims,
                         gap_size=gap_size,
                         border_color=border_color,
                         border_width=border_width,
@@ -1623,6 +1993,7 @@ class GridCompare:
                         config=config,
                         row_axis="auto",
                         col_axis="auto",
+                        varying_dims=varying_dims,
                         gap_size=gap_size,
                         border_color=border_color,
                         border_width=border_width,
@@ -3003,9 +3374,48 @@ class GridCompare:
                 font_size=font_size,
                 font_name=font_name,
                 title=sub_title,
-                show_positive_prompt=show_positive_prompt,
-                show_negative_prompt=show_negative_prompt,
+                show_positive_prompt=False,  # We'll add prompt text manually for prompt splits
+                show_negative_prompt=False,
             )
+            
+            # If splitting by prompt, add the actual prompt text below the grid
+            if split_by in ("prompt_positive", "prompt_negative") and group_combos:
+                # Get the actual prompt text from the first combo in this group
+                prompt_text = ""
+                if split_by == "prompt_positive":
+                    prompt_text = group_combos[0].get("prompt_positive", "")
+                else:
+                    prompt_text = group_combos[0].get("prompt_negative", "")
+                
+                if prompt_text:
+                    # Add the prompt text to the grid image
+                    prompt_info = {"positive": prompt_text} if split_by == "prompt_positive" else {"negative": prompt_text}
+                    sub_grid = self._add_prompt_text_to_grid(
+                        grid_image=sub_grid,
+                        prompt_info=prompt_info,
+                        show_positive=(split_by == "prompt_positive"),
+                        show_negative=(split_by == "prompt_negative"),
+                        text_color=text_color,
+                        font_name=font_name,
+                        font_size=font_size,
+                    )
+            elif show_positive_prompt or show_negative_prompt:
+                # For non-prompt splits, show prompts if requested
+                if group_combos:
+                    prompt_info = {
+                        "positive": group_combos[0].get("prompt_positive", ""),
+                        "negative": group_combos[0].get("prompt_negative", "")
+                    }
+                    if prompt_info["positive"] or prompt_info["negative"]:
+                        sub_grid = self._add_prompt_text_to_grid(
+                            grid_image=sub_grid,
+                            prompt_info=prompt_info,
+                            show_positive=show_positive_prompt,
+                            show_negative=show_negative_prompt,
+                            text_color=text_color,
+                            font_name=font_name,
+                            font_size=font_size,
+                        )
             
             result.append({
                 "image": sub_grid,
@@ -3355,7 +3765,7 @@ class GridCompare:
             return ""
 
     @classmethod
-    def IS_CHANGED(cls, images, config, labels, save_location, grid_title, **kwargs):
+    def IS_CHANGED(cls, images, config, save_location, grid_title, **kwargs):
         """
         Compute a hash to determine if re-execution is needed.
         """
@@ -3365,7 +3775,7 @@ class GridCompare:
         combo_count = len(config.get("combinations", [])) if config else 0
         img_shape = str(images.shape) if hasattr(images, 'shape') else "unknown"
         
-        hash_input = f"{combo_count}|{img_shape}|{labels}|{save_location}|{grid_title}"
+        hash_input = f"{combo_count}|{img_shape}|{save_location}|{grid_title}"
         
         # Add relevant kwargs
         for key in sorted(kwargs.keys()):
