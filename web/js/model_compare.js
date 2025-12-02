@@ -1782,9 +1782,27 @@ function registerExtension(app) {
 function updateTrackerDisplay(node, data) {
     if (!node) return;
     
+    const currentStatus = node._trackerData?.status;
+    const newStatus = data.status || "sampling";
+    
+    // Don't downgrade from "complete" to "preparing" or "idle" - preserve completed state
+    // Only reset if we're actually starting sampling (status="sampling" with completed=0)
+    if (currentStatus === "complete") {
+        // Only allow transition FROM complete if:
+        // 1. New status is "sampling" AND completed is 0 (new job starting)
+        // 2. New status is explicitly "complete" (update to complete state)
+        const isNewJobStarting = newStatus === "sampling" && (data.completed_combinations === 0 || data.completed_combinations === undefined);
+        const isStillComplete = newStatus === "complete";
+        
+        if (!isNewJobStarting && !isStillComplete) {
+            // Ignore this update - don't overwrite completed state with preparing/idle
+            return;
+        }
+    }
+    
     // Update the node's tracker data
     node._trackerData = {
-        status: data.status || "sampling",
+        status: newStatus,
         total: data.total_combinations || 0,
         completed: data.completed_combinations || 0,
         currentModel: data.current_model || "",
