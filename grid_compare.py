@@ -1842,6 +1842,14 @@ class GridCompare:
         else:
             pil_images = all_pil_images
 
+        # Check if pagination is needed (exceeds max_images_per_grid)
+        num_images = len(pil_images)
+        if num_images > max_images_per_grid:
+            print(f"[GridCompare] WARNING: {num_images} images exceed max_images_per_grid ({max_images_per_grid})")
+            print(f"[GridCompare] Consider enabling 'save_prompt_grids_separately' or splitting by model")
+            # For now, just warn - full pagination would require multi-grid output
+            # Future: implement actual splitting and return multiple grids
+
         # Handle "Save each prompt as separate grid" option
         prompt_variations = config.get("prompt_variations", [])
         
