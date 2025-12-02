@@ -1249,11 +1249,22 @@ def generate_html_grid(
         if "vae_name" in combo:
             params["vae"] = combo["vae_name"]
         
-        # Add prompts from config
-        prompt_variations = config.get("prompt_variations", [])
-        if prompt_variations:
-            params["prompt_positive"] = prompt_variations[0].get("positive", "")
-            params["prompt_negative"] = prompt_variations[0].get("negative", "")
+        # Add prompts - use per-image prompts from combo, not global first prompt
+        # Each combo has its own prompt_positive and prompt_negative from the combination
+        if "prompt_positive" in params and params["prompt_positive"]:
+            # Already extracted from combo via get_combo_params
+            pass
+        elif combo.get("prompt_positive"):
+            params["prompt_positive"] = combo.get("prompt_positive", "")
+        
+        if "prompt_negative" in params and params["prompt_negative"]:
+            pass
+        elif combo.get("prompt_negative"):
+            params["prompt_negative"] = combo.get("prompt_negative", "")
+        
+        # Add prompt_index for filtering if available
+        if combo.get("prompt_index"):
+            params["prompt_index"] = combo.get("prompt_index")
         
         grid_data.append({
             "image": img_data,

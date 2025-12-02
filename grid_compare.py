@@ -131,7 +131,7 @@ class GridCompare:
                     "tooltip": "Embed workflow metadata in PNG files",
                 }),
                 # Grid split options for multi-value variations
-                "grid_split_by": (["none", "model", "sampler", "scheduler", "chain", "auto"], {
+                "grid_split_by": (["none", "model", "sampler", "scheduler", "chain", "prompt_positive", "prompt_negative", "auto"], {
                     "default": "none",
                     "tooltip": "Split into multiple grids by grouping dimension (useful for many variations)"
                 }),
@@ -141,16 +141,16 @@ class GridCompare:
                     "tooltip": "Prefix for individual image filenames (structured naming)"
                 }),
                 # Smart grid layout controls
-                "row_axis": (["auto", "sampler", "scheduler", "height", "width", "lumina_shift", "qwen_shift", "wan_shift", "wan22_shift", "hunyuan_shift", "flux_guidance", "cfg", "steps", "model", "seed", "lora_name", "lora_strength", "vae", "clip"], {
+                "row_axis": (["auto", "sampler", "scheduler", "height", "width", "lumina_shift", "qwen_shift", "wan_shift", "wan22_shift", "hunyuan_shift", "flux_guidance", "cfg", "steps", "model", "seed", "lora_name", "lora_strength", "vae", "clip", "prompt_positive", "prompt_negative"], {
                     "default": "auto",
                     "tooltip": "Which variation dimension to use for rows (Y-axis)"
                 }),
-                "col_axis": (["auto", "sampler", "scheduler", "height", "width", "lumina_shift", "qwen_shift", "wan_shift", "wan22_shift", "hunyuan_shift", "flux_guidance", "cfg", "steps", "model", "seed", "lora_name", "lora_strength", "vae", "clip"], {
+                "col_axis": (["auto", "sampler", "scheduler", "height", "width", "lumina_shift", "qwen_shift", "wan_shift", "wan22_shift", "hunyuan_shift", "flux_guidance", "cfg", "steps", "model", "seed", "lora_name", "lora_strength", "vae", "clip", "prompt_positive", "prompt_negative"], {
                     "default": "auto",
                     "tooltip": "Which variation dimension to use for columns (X-axis)"
                 }),
                 # Third axis for nested grids
-                "nest_axis": (["none", "auto", "sampler", "scheduler", "height", "width", "lumina_shift", "qwen_shift", "wan_shift", "wan22_shift", "hunyuan_shift", "flux_guidance", "cfg", "steps", "model", "seed", "lora_name", "lora_strength", "vae", "clip"], {
+                "nest_axis": (["none", "auto", "sampler", "scheduler", "height", "width", "lumina_shift", "qwen_shift", "wan_shift", "wan22_shift", "hunyuan_shift", "flux_guidance", "cfg", "steps", "model", "seed", "lora_name", "lora_strength", "vae", "clip", "prompt_positive", "prompt_negative"], {
                     "default": "none",
                     "tooltip": "Third dimension for nested grids (creates separate grids per value)"
                 }),
@@ -206,7 +206,8 @@ class GridCompare:
             'width', 'height', 'lumina_shift', 'qwen_shift', 'wan_shift',
             'wan22_shift', 'hunyuan_shift', 'flux_guidance', 'model',
             'seed', 'lora_name', 'lora_strength', 'vae', 'clip',
-            'lora_names', 'lora_strengths'  # Also check list versions
+            'lora_names', 'lora_strengths',  # Also check list versions
+            'prompt_positive', 'prompt_negative'  # Prompt variations
         ]
         
         # Collect all values per field
@@ -972,6 +973,8 @@ class GridCompare:
             'vae': 'VAE',
             'clip': 'CLIP',
             'denoise': 'Denoise',
+            'prompt_positive': 'Pos Prompt',
+            'prompt_negative': 'Neg Prompt',
         }
         return labels.get(axis, axis)
     
