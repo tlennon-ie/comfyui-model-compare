@@ -2032,6 +2032,14 @@ class GridCompare:
                     )
                 else:
                     # Use smart XY grid with user-specified or auto-detected axes
+                    print(f"[GridCompare] Calling _create_xy_grid with row_axis={row_axis}, col_axis={col_axis}")
+                    print(f"[GridCompare] varying_dims keys: {list(varying_dims.keys())}")
+                    print(f"[GridCompare] num combinations: {len(combinations)}, num images: {len(pil_images)}")
+                    # Debug: print first combo structure
+                    if combinations:
+                        print(f"[GridCompare] First combo keys: {list(combinations[0].keys())}")
+                        print(f"[GridCompare] First combo lora_config: {combinations[0].get('lora_config')}")
+                        print(f"[GridCompare] First combo prompt_positive: {combinations[0].get('prompt_positive', '')[:50]}...")
                     grid_image = self._create_xy_grid(
                         images=pil_images,
                         labels=label_list,
