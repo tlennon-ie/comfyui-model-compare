@@ -1406,7 +1406,7 @@ class GridCompare:
         prompt_variations = config.get("prompt_variations", [])
         
         if save_prompt_grids_separately and len(prompt_variations) > 1 and len(combinations) == len(pil_images):
-            return self._create_separate_prompt_grids(
+            result = self._create_separate_prompt_grids(
                 pil_images=pil_images,
                 label_list=label_list,
                 config=config,
@@ -1425,6 +1425,59 @@ class GridCompare:
                 prompt=prompt,
                 extra_pnginfo=extra_pnginfo,
             )
+            
+            # Generate HTML grid even for separate prompt grids if enabled
+            html_path = ""
+            if html_grid_output:
+                try:
+                    from .html_grid_generator import generate_html_grid, save_html_grid
+                    
+                    # Convert the stacked tensor back to PIL for HTML generation
+                    stacked_tensor = result[0]
+                    grid_pil_images = self._tensor_to_pil_list(stacked_tensor)
+                    grid_for_thumbnail = grid_pil_images[0] if grid_pil_images else None
+                    
+                    html_content = generate_html_grid(
+                        images=pil_images,
+                        labels=label_list,
+                        combinations=combinations,
+                        config=config,
+                        title=grid_title,
+                        use_base64=True,
+                        image_format=html_image_format,
+                        image_quality=html_image_quality,
+                        grid_image=grid_for_thumbnail,
+                    )
+                    
+                    output_dir = folder_paths.get_output_directory()
+                    html_save_dir = os.path.join(output_dir, save_location) if save_location else output_dir
+                    os.makedirs(html_save_dir, exist_ok=True)
+                    
+                    from datetime import datetime
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    safe_title = sanitize_filename(grid_title)
+                    html_filename = f"{safe_title}_{timestamp}.html"
+                    html_path = os.path.join(html_save_dir, html_filename)
+                    
+                    save_html_grid(html_content, html_path)
+                    print(f"[GridCompare] HTML grid saved to: {html_path}")
+                    
+                    # Notify tracker
+                    try:
+                        from .compare_tracker import set_html_grid_available
+                        import base64 as b64
+                        html_abs = os.path.abspath(html_path)
+                        encoded_path = b64.urlsafe_b64encode(html_abs.encode('utf-8')).decode('ascii')
+                        view_url = f"/model-compare/view/{encoded_path}"
+                        set_html_grid_available(html_path, view_url)
+                    except Exception as e:
+                        print(f"[GridCompare] Could not notify tracker: {e}")
+                except Exception as e:
+                    print(f"[GridCompare] Error generating HTML grid: {e}")
+                    import traceback
+                    traceback.print_exc()
+            
+            return (result[0], result[1], result[2], html_path)
 
         # Check if sampling failed (e.g., "No successful samples" returned)
         if len(pil_images) > 0 and len(label_list) == 1 and label_list[0].lower().startswith("no "):
@@ -1589,6 +1642,35 @@ class GridCompare:
                         title=grid_title,
                     )
 
+        # Add prompt text to the main grid if prompts are enabled and we're NOT in grouped mode
+        # (grouped mode already handles prompts internally)
+        is_grouped = config.get("is_grouped", False)
+        if not is_grouped and (show_positive_prompt or show_negative_prompt):
+            # Get prompt info from the first prompt variation
+            prompt_info = None
+            if prompt_variations:
+                prompt_info = prompt_variations[0]
+            elif combinations:
+                # Fallback: try to get prompt from combinations
+                for combo in combinations:
+                    if combo.get("prompt_positive") or combo.get("prompt_negative"):
+                        prompt_info = {
+                            "positive": combo.get("prompt_positive", ""),
+                            "negative": combo.get("prompt_negative", "")
+                        }
+                        break
+            
+            if prompt_info:
+                grid_image = self._add_prompt_text_to_grid(
+                    grid_image=grid_image,
+                    prompt_info=prompt_info,
+                    show_positive=show_positive_prompt,
+                    show_negative=show_negative_prompt,
+                    text_color=text_color,
+                    font_name=font_name,
+                    font_size=font_size,
+                )
+        
         # Handle grid splitting if requested
         all_grid_images = [grid_image]
         grid_labels = [grid_title]
@@ -2018,7 +2100,11 @@ class GridCompare:
         else:
             stacked_grids = torch.zeros((1, 64, 64, 3))
         
-        return (stacked_grids, combined_paths, "", "")  # No video/html path for separate prompt grids yet
+        # Generate HTML grid for all separate prompt grids if html_grid_output was enabled
+        # We need to get this from the caller - check if it was passed via kwargs or config
+        html_path = ""
+        
+        return (stacked_grids, combined_paths, "", html_path)
 
     def _add_prompt_text_to_grid(
         self,

@@ -918,10 +918,15 @@ GALLERY_JS = '''
         
         gridCount.textContent = grids.length === 1 ? '1 grid found' : `${grids.length} grids found`;
         
-        gridGallery.innerHTML = grids.map(grid => `
+        gridGallery.innerHTML = grids.map(grid => {
+            // Check if thumbnail is a valid data URL (base64 image)
+            const hasValidThumbnail = grid.thumbnail && 
+                                      grid.thumbnail.startsWith('data:image/') && 
+                                      grid.thumbnail.length > 100;
+            return `
             <div class="grid-card" data-path="${escapeAttr(grid.rel_path)}">
-                ${grid.thumbnail 
-                    ? `<img class="grid-card-thumbnail" src="${grid.thumbnail}" alt="${escapeAttr(grid.title)}">`
+                ${hasValidThumbnail 
+                    ? `<img class="grid-card-thumbnail" src="${grid.thumbnail}" alt="${escapeAttr(grid.title)}" onerror="this.outerHTML='<div class=grid-card-thumbnail placeholder>🖼️</div>'">`
                     : `<div class="grid-card-thumbnail placeholder">🖼️</div>`
                 }
                 <div class="grid-card-info">
@@ -932,7 +937,7 @@ GALLERY_JS = '''
                     </div>
                 </div>
             </div>
-        `).join('');
+        `}).join('');
         
         // Add click handlers
         document.querySelectorAll('.grid-card').forEach(card => {
