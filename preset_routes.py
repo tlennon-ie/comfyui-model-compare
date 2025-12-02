@@ -6,6 +6,7 @@ without running the full generation pipeline.
 """
 
 import json
+from dataclasses import asdict
 
 # Lazy imports - these are only available within ComfyUI context
 aiohttp_web = None
@@ -21,11 +22,10 @@ def register_preset_routes():
     from server import PromptServer
     
     from .grid_preset_analyzer import (
-        analyze_variations,
-        generate_optimal_layout,
-        get_field_options_for_dropdown,
-        validate_layout,
+        analyze_config,
+        analyze_from_variation_lists,
         LayoutRecommendation,
+        FieldAnalysis,
     )
     
     @PromptServer.instance.routes.post("/model_compare/analyze_config")
@@ -35,7 +35,7 @@ def register_preset_routes():
         
         Request body:
         {
-            "config": { ... },  // MODEL_COMPARE_CONFIG data
+            "config": { ... },  // MODEL_COMPARE_CONFIG data (raw variation lists)
             "max_per_grid": 500  // Optional: max images per grid
         }
         
@@ -43,19 +43,19 @@ def register_preset_routes():
         {
             "success": true,
             "analysis": {
-                "fields": { field_name: { values, count, is_numeric, ... }, ... },
+                "fields": { field_name: { display_name, values, value_count, priority }, ... },
                 "total_combinations": 128,
             },
             "layout": {
                 "x_axis": "lora_strength",
-                "y_axis": "scheduler",
-                "nest_levels": ["prompt", "sampler_name"],
-                "num_grids": 1,
-                "images_per_grid": 128,
-                "preview_text": "...",
-                "field_options": ["prompt", "sampler_name", ...],
+                "y_axis": "model", 
+                "nest_levels": ["prompt"],
+                "strategy": "nested",
+                "explanation": "...",
+                "num_grids": 2,
+                "combinations_per_grid": 64,
             },
-            "warnings": ["..."]
+            "warnings": []
         }
         """
         try:
@@ -69,70 +69,50 @@ def register_preset_routes():
                     "error": "No config provided"
                 }, status=400)
             
-            # Analyze variations
-            analysis = analyze_variations(config)
+            # Analyze configuration and get optimal layout
+            layout = analyze_config(config, max_per_grid)
             
-            if not analysis:
-                return aiohttp_web.json_response({
-                    "success": True,
-                    "analysis": {
-                        "fields": {},
-                        "total_combinations": len(config.get('combinations', [])) or 1,
-                    },
-                    "layout": {
-                        "x_axis": None,
-                        "y_axis": None,
-                        "nest_levels": [],
-                        "num_grids": 1,
-                        "images_per_grid": len(config.get('combinations', [])) or 1,
-                        "preview_text": "No varying dimensions detected - static configuration",
-                        "field_options": [],
-                    },
-                    "warnings": []
-                })
-            
-            # Generate optimal layout
-            layout = generate_optimal_layout(analysis, max_per_grid, config)
-            
-            # Get field options for dropdowns
-            field_options = get_field_options_for_dropdown(analysis)
-            
-            # Validate and get warnings
-            warnings = validate_layout(layout, analysis)
-            
-            # Serialize analysis
+            # Build response
             analysis_dict = {}
-            for field_name, field_analysis in analysis.items():
-                analysis_dict[field_name] = {
-                    "display_name": field_analysis.display_name,
-                    "values": [str(v) for v in field_analysis.values],
-                    "value_count": field_analysis.value_count,
-                    "priority": field_analysis.priority,
-                    "is_numeric": field_analysis.is_numeric,
-                    "is_x_axis_candidate": field_analysis.is_x_axis_candidate,
-                    "is_y_axis_candidate": field_analysis.is_y_axis_candidate,
-                    "is_nest_candidate": field_analysis.is_nest_candidate,
-                }
+            field_options = []
+            
+            if layout.field_analysis:
+                for field_name, field_analysis in layout.field_analysis.items():
+                    analysis_dict[field_name] = {
+                        "display_name": field_analysis.display_name,
+                        "values": [str(v) for v in field_analysis.values],
+                        "value_count": field_analysis.value_count,
+                        "priority": field_analysis.priority,
+                        "is_row_candidate": field_analysis.is_row_candidate,
+                        "is_col_candidate": field_analysis.is_col_candidate,
+                        "is_nest_candidate": field_analysis.is_nest_candidate,
+                    }
+                    field_options.append({
+                        "value": field_name,
+                        "label": field_analysis.display_name,
+                        "count": field_analysis.value_count,
+                    })
+            
+            # Sort field options by priority
+            field_options.sort(key=lambda x: analysis_dict.get(x["value"], {}).get("priority", 0), reverse=True)
             
             return aiohttp_web.json_response({
                 "success": True,
                 "analysis": {
                     "fields": analysis_dict,
                     "total_combinations": layout.total_combinations,
-                    "summary": layout.analysis_summary,
                 },
                 "layout": {
                     "x_axis": layout.x_axis,
                     "y_axis": layout.y_axis,
                     "nest_levels": layout.nest_levels,
+                    "strategy": layout.strategy,
+                    "explanation": layout.explanation,
                     "num_grids": layout.num_grids,
-                    "images_per_grid": layout.images_per_grid,
-                    "grid_split_field": layout.grid_split_field,
-                    "preview_text": layout.preview_text,
-                    "field_options": [opt[0] for opt in field_options],
-                    "field_labels": {opt[0]: opt[1] for opt in field_options},
+                    "combinations_per_grid": layout.combinations_per_grid,
+                    "field_options": field_options,
                 },
-                "warnings": warnings
+                "warnings": []
             })
             
         except json.JSONDecodeError:
@@ -144,68 +124,6 @@ def register_preset_routes():
             print(f"[ModelCompare] Error in analyze_config: {e}")
             import traceback
             traceback.print_exc()
-            return aiohttp_web.json_response({
-                "success": False,
-                "error": str(e)
-            }, status=500)
-    
-    @PromptServer.instance.routes.post("/model_compare/validate_layout")
-    async def validate_layout_handler(request):
-        """
-        Validate a custom layout configuration.
-        
-        Request body:
-        {
-            "config": { ... },
-            "layout": {
-                "x_axis": "...",
-                "y_axis": "...",
-                "nest_levels": [...]
-            }
-        }
-        
-        Response:
-        {
-            "success": true,
-            "valid": true,
-            "warnings": ["..."],
-            "preview_text": "..."
-        }
-        """
-        try:
-            data = await request.json()
-            config = data.get('config', {})
-            layout_data = data.get('layout', {})
-            
-            # Analyze to get field info
-            analysis = analyze_variations(config)
-            
-            # Create layout object from request
-            layout = LayoutRecommendation(
-                x_axis=layout_data.get('x_axis'),
-                y_axis=layout_data.get('y_axis'),
-                nest_levels=layout_data.get('nest_levels', []),
-                total_combinations=len(config.get('combinations', [])),
-            )
-            
-            # Validate
-            warnings = validate_layout(layout, analysis)
-            
-            # Generate preview for this layout
-            from .grid_preset_analyzer import _format_nested_preview
-            if analysis:
-                preview = _format_nested_preview(analysis, layout)
-            else:
-                preview = "No varying dimensions"
-            
-            return aiohttp_web.json_response({
-                "success": True,
-                "valid": len([w for w in warnings if w.startswith("Warning:")]) == 0,
-                "warnings": warnings,
-                "preview_text": preview
-            })
-            
-        except Exception as e:
             return aiohttp_web.json_response({
                 "success": False,
                 "error": str(e)

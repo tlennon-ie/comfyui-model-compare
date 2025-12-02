@@ -1,108 +1,40 @@
 """
-Grid Preset Analyzer Module
+Grid Preset Analyzer - Analyzes model comparison configurations and recommends optimal grid layouts.
 
-Analyzes model compare configurations to determine optimal grid layout.
-Uses a scoring system based on:
-- Number of varying fields (non-static dimensions)
-- Number of unique values per field
-- Field type priority (prompts outer, strengths on X-axis)
-
-Generates layout recommendations with:
-- X/Y axis assignments
-- Nesting hierarchy (up to 5 levels)
-- Pagination for large grids (max 500 images per grid)
+Combination-count-based strategies:
+- 1-25 combinations: Simple XY grid (no nesting)
+- 26-100 combinations: 1 nest level
+- 101-300 combinations: 2 nest levels  
+- 300+ combinations: Paginate by outermost dimension
 """
 
-from typing import Dict, List, Any, Tuple, Optional, Set
 from dataclasses import dataclass, field
+from typing import Dict, List, Any, Optional, Set, Tuple
 import math
 
 
-# Field priority for nesting order (higher = more outer/earlier in hierarchy)
-# Prompts and models are typically the "grouping" dimensions
-# Numeric values like strengths are best on X-axis for comparison
+# Priority weights for different fields (higher = more important to vary visually)
 FIELD_PRIORITY = {
-    'prompt': 100,
-    'prompt_positive': 100,
-    'prompt_index': 100,
-    'model': 90,
-    'model_index': 90,
-    'vae': 80,
-    'vae_name': 80,
-    'clip': 75,
-    'clip_variation': 75,
-    'sampler_name': 60,
-    'sampler': 60,
-    'scheduler': 55,
-    'lora_name': 50,
-    'lora_display': 50,
-    'lora_config': 50,
-    'seed': 40,
-    'cfg': 30,
-    'steps': 25,
-    'width': 22,
-    'height': 21,
-    'denoise': 20,
-    'lora_strength': 15,
-    'lumina_shift': 12,
-    'qwen_shift': 11,
-    'wan_shift': 10,
-    'wan22_shift': 10,
-    'hunyuan_shift': 10,
-    'flux_guidance': 10,
+    'prompt': 100,       # Most important - people want to see prompt differences
+    'model': 90,         # Second most important - comparing models is primary use case
+    'vae': 85,           # VAE differences are significant
+    'sampler': 60,       # Sampling differences are interesting
+    'scheduler': 55,     # Related to sampler
+    'steps': 40,         # Technical parameter
+    'cfg': 35,           # Technical parameter
+    'lora': 30,          # LoRA selection
+    'lora_strength': 15, # LoRA strength variations
+    'seed': 5,           # Usually least important for visual comparison
 }
 
-# Fields best suited for X-axis (numeric, good for side-by-side comparison)
-X_AXIS_PREFERRED = {
-    'lora_strength', 'cfg', 'steps', 'denoise',
-    'lumina_shift', 'qwen_shift', 'wan_shift', 'wan22_shift',
-    'hunyuan_shift', 'flux_guidance', 'width', 'height'
-}
+# Fields that work well as row axes (typically fewer values, important differences)
+ROW_AXIS_CANDIDATES = {'prompt', 'model', 'vae', 'sampler'}
 
-# Fields best suited for Y-axis (categorical, row labels)
-Y_AXIS_PREFERRED = {
-    'scheduler', 'sampler_name', 'sampler', 'lora_name', 'lora_display',
-    'seed'
-}
+# Fields that work well as column axes (can have more values)
+COL_AXIS_CANDIDATES = {'model', 'sampler', 'scheduler', 'steps', 'cfg', 'lora', 'lora_strength'}
 
-# Fields best for outer nesting (create separate grid sections)
-NEST_PREFERRED = {
-    'prompt', 'prompt_positive', 'prompt_index',
-    'model', 'model_index', 'vae', 'vae_name', 'clip',
-    'sampler_name', 'sampler', 'scheduler'
-}
-
-# Display names for fields
-FIELD_DISPLAY_NAMES = {
-    'prompt': 'Prompt',
-    'prompt_positive': 'Prompt',
-    'prompt_index': 'Prompt',
-    'model': 'Model',
-    'model_index': 'Model',
-    'vae': 'VAE',
-    'vae_name': 'VAE',
-    'clip': 'CLIP',
-    'clip_variation': 'CLIP',
-    'sampler_name': 'Sampler',
-    'sampler': 'Sampler',
-    'scheduler': 'Scheduler',
-    'lora_name': 'LoRA',
-    'lora_display': 'LoRA',
-    'lora_config': 'LoRA Config',
-    'lora_strength': 'LoRA Strength',
-    'cfg': 'CFG',
-    'steps': 'Steps',
-    'seed': 'Seed',
-    'width': 'Width',
-    'height': 'Height',
-    'denoise': 'Denoise',
-    'lumina_shift': 'Lumina Shift',
-    'qwen_shift': 'Qwen Shift',
-    'wan_shift': 'WAN Shift',
-    'wan22_shift': 'WAN 2.2 Shift',
-    'hunyuan_shift': 'Hunyuan Shift',
-    'flux_guidance': 'FLUX Guidance',
-}
+# Fields that work well as nest levels (grouping outer dimensions)
+NEST_CANDIDATES = {'prompt', 'model', 'vae', 'sampler', 'scheduler'}
 
 
 @dataclass
@@ -113,476 +45,613 @@ class FieldAnalysis:
     values: List[Any]
     value_count: int
     priority: int
-    is_numeric: bool
-    is_x_axis_candidate: bool
-    is_y_axis_candidate: bool
-    is_nest_candidate: bool
+    is_row_candidate: bool = False
+    is_col_candidate: bool = False
+    is_nest_candidate: bool = False
 
 
-@dataclass
+@dataclass 
 class LayoutRecommendation:
-    """Recommended grid layout configuration."""
+    """Recommended grid layout based on analysis."""
     x_axis: Optional[str] = None
     y_axis: Optional[str] = None
     nest_levels: List[str] = field(default_factory=list)
     total_combinations: int = 0
-    images_per_grid: int = 0
+    combinations_per_grid: int = 0
     num_grids: int = 1
-    grid_split_field: Optional[str] = None
-    preview_text: str = ""
-    field_options: List[str] = field(default_factory=list)
-    analysis_summary: str = ""
+    strategy: str = "simple"  # simple, nested, paginated
+    explanation: str = ""
+    field_analysis: Dict[str, FieldAnalysis] = field(default_factory=dict)
 
 
-def analyze_variations(config: Dict[str, Any]) -> Dict[str, FieldAnalysis]:
-    """
-    Analyze a MODEL_COMPARE_CONFIG to find all varying dimensions.
+def _extract_unique_values(items: List[Any], key: str = None) -> List[Any]:
+    """Extract unique values from a list, optionally by key."""
+    if not items:
+        return []
     
-    Args:
-        config: The configuration dictionary from ModelCompareLoaders
+    seen = set()
+    unique = []
+    for item in items:
+        if key and isinstance(item, dict):
+            val = item.get(key)
+        else:
+            val = item
         
-    Returns:
-        Dict mapping field name to FieldAnalysis with unique values
-    """
-    if not config:
-        return {}
+        # Convert to hashable for set
+        hashable = str(val) if isinstance(val, (dict, list)) else val
+        if hashable not in seen:
+            seen.add(hashable)
+            unique.append(val)
     
-    combinations = config.get('combinations', [])
-    if not combinations:
-        return {}
+    return unique
+
+
+def _get_list_variations(items: List[Any], key: str) -> List[Any]:
+    """Get unique values of a specific key from a list of dicts."""
+    if not items:
+        return []
     
-    # Collect all values for each field across combinations
-    field_values: Dict[str, Set] = {}
-    
-    # Fields to check
-    check_fields = [
-        'model_index', 'vae_name', 'prompt_index',
-        'sampler_name', 'scheduler', 'steps', 'cfg', 'denoise',
-        'width', 'height', 'seed',
-        'lora_display', 'lora_strength',
-        'lumina_shift', 'qwen_shift', 'wan_shift', 'wan22_shift',
-        'hunyuan_shift', 'flux_guidance'
-    ]
-    
-    for combo in combinations:
-        # Check _sampling_override first (for expanded variations)
-        override = combo.get('_sampling_override', {})
-        
-        for field_name in check_fields:
-            value = override.get(field_name, combo.get(field_name))
-            if value is not None:
-                if field_name not in field_values:
-                    field_values[field_name] = set()
-                # Convert to hashable
-                if isinstance(value, (list, dict)):
-                    value = str(value)
-                field_values[field_name].add(value)
-        
-        # Special handling for lora_config
-        lora_config = combo.get('lora_config', {})
-        if lora_config:
-            display = lora_config.get('display', '')
-            if display and display != 'No LoRA':
-                if 'lora_display' not in field_values:
-                    field_values['lora_display'] = set()
-                field_values['lora_display'].add(display)
-            
-            # Extract individual lora strengths
-            loras = lora_config.get('loras', [])
-            for lora in loras:
-                strength = lora.get('strength')
-                if strength is not None:
-                    if 'lora_strength' not in field_values:
-                        field_values['lora_strength'] = set()
-                    field_values['lora_strength'].add(strength)
-        
-        # Extract clip variation
-        clip_var = combo.get('clip_variation')
-        if clip_var:
-            if clip_var.get('type') == 'pair':
-                clip_str = f"{clip_var.get('a', '')}+{clip_var.get('b', '')}"
+    values = []
+    for item in items:
+        if isinstance(item, dict) and key in item:
+            val = item[key]
+            if isinstance(val, list):
+                values.extend(val)
             else:
-                clip_str = clip_var.get('model', clip_var.get('clip_type', ''))
-            if clip_str:
-                if 'clip' not in field_values:
-                    field_values['clip'] = set()
-                field_values['clip'].add(clip_str)
+                values.append(val)
     
-    # Convert model_index to model names if available
+    return _extract_unique_values(values)
+
+
+def analyze_from_variation_lists(config: Dict[str, Any]) -> Dict[str, FieldAnalysis]:
+    """
+    Analyze a configuration with raw variation lists (before combinations are computed).
+    
+    Expected config structure from JS:
+    {
+        "model_variations": [{"model_name": "...", "vae_name": "..."}],
+        "lora_config": [{"name": "...", "strength_model": [...], ...}],
+        "sampling_params": [{"sampler_name": "...", "scheduler": "...", "steps": [...], "cfg": [...]}],
+        "prompt_variations": [{"positive": "...", "negative": "..."}],
+        "combinations": []  # May be empty
+    }
+    """
+    analysis: Dict[str, FieldAnalysis] = {}
+    
+    # Analyze model variations
     model_variations = config.get('model_variations', [])
-    if 'model_index' in field_values and model_variations:
-        model_names = set()
-        for idx in field_values['model_index']:
-            if isinstance(idx, int) and idx < len(model_variations):
-                name = model_variations[idx].get('display_name', 
-                       model_variations[idx].get('name', f'Model {idx}'))
-                if name.endswith('.safetensors'):
-                    name = name[:-12]
-                model_names.add(name)
-        if model_names:
-            field_values['model'] = model_names
-            del field_values['model_index']
-    
-    # Convert prompt_index to prompt text if available
-    prompt_variations = config.get('prompt_variations', [])
-    if 'prompt_index' in field_values and prompt_variations:
-        # Keep as index for filtering, but note we have prompts
-        field_values['prompt'] = field_values['prompt_index']
-        del field_values['prompt_index']
-    
-    # Filter to only varying fields (>1 unique value)
-    varying_fields: Dict[str, FieldAnalysis] = {}
-    
-    for field_name, values in field_values.items():
-        if len(values) > 1:
-            sorted_values = _sort_values(list(values))
-            is_numeric = all(isinstance(v, (int, float)) or 
-                           (isinstance(v, str) and _is_numeric_string(v)) 
-                           for v in sorted_values)
-            
-            varying_fields[field_name] = FieldAnalysis(
-                name=field_name,
-                display_name=FIELD_DISPLAY_NAMES.get(field_name, field_name.replace('_', ' ').title()),
-                values=sorted_values,
-                value_count=len(sorted_values),
-                priority=FIELD_PRIORITY.get(field_name, 0),
-                is_numeric=is_numeric,
-                is_x_axis_candidate=field_name in X_AXIS_PREFERRED or is_numeric,
-                is_y_axis_candidate=field_name in Y_AXIS_PREFERRED or not is_numeric,
-                is_nest_candidate=field_name in NEST_PREFERRED,
+    if model_variations:
+        # Extract model names
+        models = _extract_unique_values(model_variations, 'model_name')
+        models = [m for m in models if m]  # Filter None/empty
+        if len(models) > 1:
+            analysis['model'] = FieldAnalysis(
+                name='model',
+                display_name='Model',
+                values=models,
+                value_count=len(models),
+                priority=FIELD_PRIORITY.get('model', 50),
+                is_row_candidate='model' in ROW_AXIS_CANDIDATES,
+                is_col_candidate='model' in COL_AXIS_CANDIDATES,
+                is_nest_candidate='model' in NEST_CANDIDATES,
+            )
+        
+        # Extract VAE names
+        vaes = _extract_unique_values(model_variations, 'vae_name')
+        vaes = [v for v in vaes if v and v != 'Default']
+        if len(vaes) > 1:
+            analysis['vae'] = FieldAnalysis(
+                name='vae',
+                display_name='VAE',
+                values=vaes,
+                value_count=len(vaes),
+                priority=FIELD_PRIORITY.get('vae', 50),
+                is_row_candidate='vae' in ROW_AXIS_CANDIDATES,
+                is_col_candidate='vae' in COL_AXIS_CANDIDATES,
+                is_nest_candidate='vae' in NEST_CANDIDATES,
             )
     
-    return varying_fields
-
-
-def _sort_values(values: List[Any]) -> List[Any]:
-    """Sort values, handling mixed types."""
-    try:
-        # Try numeric sort first
-        numeric = [(float(v) if isinstance(v, str) else v, v) for v in values]
-        numeric.sort(key=lambda x: x[0])
-        return [v[1] for v in numeric]
-    except (ValueError, TypeError):
-        # Fall back to string sort
-        try:
-            return sorted(values, key=str)
-        except TypeError:
-            return list(values)
-
-
-def _is_numeric_string(s: str) -> bool:
-    """Check if string represents a number."""
-    try:
-        float(s)
-        return True
-    except (ValueError, TypeError):
-        return False
+    # Analyze sampling params
+    sampling_params = config.get('sampling_params', [])
+    if sampling_params:
+        # Samplers
+        samplers = _get_list_variations(sampling_params, 'sampler_name')
+        if len(samplers) > 1:
+            analysis['sampler'] = FieldAnalysis(
+                name='sampler',
+                display_name='Sampler',
+                values=samplers,
+                value_count=len(samplers),
+                priority=FIELD_PRIORITY.get('sampler', 50),
+                is_row_candidate='sampler' in ROW_AXIS_CANDIDATES,
+                is_col_candidate='sampler' in COL_AXIS_CANDIDATES,
+                is_nest_candidate='sampler' in NEST_CANDIDATES,
+            )
+        
+        # Schedulers
+        schedulers = _get_list_variations(sampling_params, 'scheduler')
+        if len(schedulers) > 1:
+            analysis['scheduler'] = FieldAnalysis(
+                name='scheduler',
+                display_name='Scheduler',
+                values=schedulers,
+                value_count=len(schedulers),
+                priority=FIELD_PRIORITY.get('scheduler', 50),
+                is_row_candidate='scheduler' in ROW_AXIS_CANDIDATES,
+                is_col_candidate='scheduler' in COL_AXIS_CANDIDATES,
+                is_nest_candidate='scheduler' in NEST_CANDIDATES,
+            )
+        
+        # Steps
+        steps = _get_list_variations(sampling_params, 'steps')
+        if len(steps) > 1:
+            analysis['steps'] = FieldAnalysis(
+                name='steps',
+                display_name='Steps',
+                values=steps,
+                value_count=len(steps),
+                priority=FIELD_PRIORITY.get('steps', 50),
+                is_row_candidate=False,
+                is_col_candidate='steps' in COL_AXIS_CANDIDATES,
+                is_nest_candidate='steps' in NEST_CANDIDATES,
+            )
+        
+        # CFG
+        cfgs = _get_list_variations(sampling_params, 'cfg')
+        if len(cfgs) > 1:
+            analysis['cfg'] = FieldAnalysis(
+                name='cfg',
+                display_name='CFG Scale',
+                values=cfgs,
+                value_count=len(cfgs),
+                priority=FIELD_PRIORITY.get('cfg', 50),
+                is_row_candidate=False,
+                is_col_candidate='cfg' in COL_AXIS_CANDIDATES,
+                is_nest_candidate='cfg' in NEST_CANDIDATES,
+            )
+    
+    # Analyze LoRA config
+    lora_config = config.get('lora_config', [])
+    if lora_config:
+        # LoRA names
+        lora_names = _extract_unique_values(lora_config, 'name')
+        lora_names = [n for n in lora_names if n and n != 'None']
+        if len(lora_names) > 1:
+            analysis['lora'] = FieldAnalysis(
+                name='lora',
+                display_name='LoRA',
+                values=lora_names,
+                value_count=len(lora_names),
+                priority=FIELD_PRIORITY.get('lora', 50),
+                is_row_candidate='lora' in ROW_AXIS_CANDIDATES,
+                is_col_candidate='lora' in COL_AXIS_CANDIDATES,
+                is_nest_candidate='lora' in NEST_CANDIDATES,
+            )
+        
+        # LoRA strengths (collect all unique strengths across all LoRAs)
+        all_strengths = set()
+        for lora in lora_config:
+            if isinstance(lora, dict):
+                for key in ['strength_model', 'strength_clip', 'strength']:
+                    strengths = lora.get(key, [])
+                    if isinstance(strengths, list):
+                        all_strengths.update(strengths)
+                    elif strengths is not None:
+                        all_strengths.add(strengths)
+        
+        all_strengths = sorted([s for s in all_strengths if s is not None])
+        if len(all_strengths) > 1:
+            analysis['lora_strength'] = FieldAnalysis(
+                name='lora_strength',
+                display_name='LoRA Strength',
+                values=all_strengths,
+                value_count=len(all_strengths),
+                priority=FIELD_PRIORITY.get('lora_strength', 50),
+                is_row_candidate=False,
+                is_col_candidate='lora_strength' in COL_AXIS_CANDIDATES,
+                is_nest_candidate='lora_strength' in NEST_CANDIDATES,
+            )
+    
+    # Analyze prompt variations
+    prompt_variations = config.get('prompt_variations', [])
+    if prompt_variations and len(prompt_variations) > 1:
+        # Use index as identifier since prompts can be long
+        prompt_labels = [f"Prompt {i+1}" for i in range(len(prompt_variations))]
+        analysis['prompt'] = FieldAnalysis(
+            name='prompt',
+            display_name='Prompt',
+            values=prompt_labels,
+            value_count=len(prompt_variations),
+            priority=FIELD_PRIORITY.get('prompt', 100),
+            is_row_candidate='prompt' in ROW_AXIS_CANDIDATES,
+            is_col_candidate='prompt' in COL_AXIS_CANDIDATES,
+            is_nest_candidate='prompt' in NEST_CANDIDATES,
+        )
+    
+    return analysis
 
 
 def calculate_total_combinations(analysis: Dict[str, FieldAnalysis]) -> int:
-    """Calculate total number of image combinations from varying fields."""
+    """Calculate total number of combinations from analyzed fields."""
     if not analysis:
         return 1
     
     total = 1
     for field_analysis in analysis.values():
         total *= field_analysis.value_count
+    
     return total
 
 
 def generate_optimal_layout(
     analysis: Dict[str, FieldAnalysis],
-    max_per_grid: int = 500,
-    config: Dict[str, Any] = None
+    max_per_grid: int = 500
 ) -> LayoutRecommendation:
     """
-    Generate optimal grid layout based on variation analysis.
+    Generate optimal grid layout based on field analysis.
     
-    Algorithm:
-    1. Sort fields by priority (high priority = outer nesting)
-    2. Assign lowest priority numeric field to X-axis
-    3. Assign next lowest categorical field to Y-axis
-    4. Remaining high-priority fields become nest levels (outer to inner)
-    5. If total > max_per_grid, determine split point
-    
-    Args:
-        analysis: Dict of field name to FieldAnalysis
-        max_per_grid: Maximum images per grid page (default 500)
-        config: Optional config for additional context
-        
-    Returns:
-        LayoutRecommendation with axis assignments and nesting
+    Combination-count-based strategies:
+    - 1-25: Simple XY grid (no nesting)
+    - 26-100: 1 nest level (outer group)
+    - 101-300: 2 nest levels
+    - 300+: Paginate by outermost dimension
     """
-    result = LayoutRecommendation()
-    
     if not analysis:
-        result.preview_text = "No varying dimensions detected"
-        result.analysis_summary = "Static configuration - single image"
-        return result
+        return LayoutRecommendation(
+            explanation="No varying fields detected. Using default layout."
+        )
     
-    # Get actual combination count from config if available
-    if config and 'combinations' in config:
-        result.total_combinations = len(config['combinations'])
-    else:
-        result.total_combinations = calculate_total_combinations(analysis)
+    total_combos = calculate_total_combinations(analysis)
     
-    # Build list of fields sorted by priority (high to low for nesting)
-    fields_by_priority = sorted(
+    # Sort fields by priority (highest first)
+    sorted_fields = sorted(
         analysis.values(),
-        key=lambda f: (-f.priority, f.value_count)
+        key=lambda f: (f.priority, f.value_count),
+        reverse=True
     )
     
-    result.field_options = [f.name for f in fields_by_priority]
-    
-    # Special case: only 1 varying field
-    if len(fields_by_priority) == 1:
-        field = fields_by_priority[0]
-        result.x_axis = field.name
-        result.y_axis = None
-        result.images_per_grid = min(field.value_count, max_per_grid)
-        result.num_grids = math.ceil(field.value_count / max_per_grid)
-        result.preview_text = _format_simple_preview(field)
-        result.analysis_summary = f"Single dimension: {field.display_name} ({field.value_count} values)"
-        return result
-    
-    # Special case: only 2 varying fields - simple XY grid
-    if len(fields_by_priority) == 2:
-        # Put numeric/strength on X, categorical on Y
-        if fields_by_priority[1].is_x_axis_candidate:
-            result.x_axis = fields_by_priority[1].name
-            result.y_axis = fields_by_priority[0].name
-        else:
-            result.x_axis = fields_by_priority[0].name if fields_by_priority[0].is_x_axis_candidate else fields_by_priority[1].name
-            result.y_axis = fields_by_priority[1].name if result.x_axis == fields_by_priority[0].name else fields_by_priority[0].name
-        
-        result.images_per_grid = min(result.total_combinations, max_per_grid)
-        result.num_grids = math.ceil(result.total_combinations / max_per_grid)
-        result.preview_text = _format_xy_preview(
-            analysis[result.x_axis], 
-            analysis[result.y_axis]
-        )
-        result.analysis_summary = f"2 dimensions: {analysis[result.x_axis].display_name} × {analysis[result.y_axis].display_name}"
-        return result
-    
-    # Complex case: 3+ varying fields - need nesting
-    assigned = set()
-    
-    # 1. Find best X-axis field (lowest priority numeric field)
-    x_candidates = [f for f in reversed(fields_by_priority) if f.is_x_axis_candidate]
-    if x_candidates:
-        result.x_axis = x_candidates[0].name
-        assigned.add(result.x_axis)
-    
-    # 2. Find best Y-axis field (low priority categorical)
-    y_candidates = [f for f in reversed(fields_by_priority) 
-                   if f.is_y_axis_candidate and f.name not in assigned]
-    if y_candidates:
-        result.y_axis = y_candidates[0].name
-        assigned.add(result.y_axis)
-    elif not result.x_axis:
-        # No X assigned yet, use first two fields
-        result.x_axis = fields_by_priority[-1].name
-        assigned.add(result.x_axis)
-        if len(fields_by_priority) > 1:
-            result.y_axis = fields_by_priority[-2].name
-            assigned.add(result.y_axis)
-    
-    # 3. Remaining fields become nest levels (highest priority = outermost)
-    nest_candidates = [f for f in fields_by_priority if f.name not in assigned]
-    result.nest_levels = [f.name for f in nest_candidates[:5]]  # Max 5 nest levels
-    
-    # 4. Calculate pagination
-    result.images_per_grid = min(result.total_combinations, max_per_grid)
-    
-    if result.total_combinations > max_per_grid and result.nest_levels:
-        # Split by outermost nest level
-        result.grid_split_field = result.nest_levels[0]
-        split_field = analysis[result.grid_split_field]
-        result.num_grids = split_field.value_count
-        result.images_per_grid = result.total_combinations // result.num_grids
+    # Determine strategy based on combination count
+    if total_combos <= 25:
+        return _simple_xy_layout(sorted_fields, total_combos, analysis)
+    elif total_combos <= 100:
+        return _single_nest_layout(sorted_fields, total_combos, max_per_grid, analysis)
+    elif total_combos <= 300:
+        return _double_nest_layout(sorted_fields, total_combos, max_per_grid, analysis)
     else:
-        result.num_grids = math.ceil(result.total_combinations / max_per_grid)
-    
-    # 5. Generate preview
-    result.preview_text = _format_nested_preview(analysis, result)
-    result.analysis_summary = _format_analysis_summary(analysis, result)
-    
-    return result
+        return _paginated_layout(sorted_fields, total_combos, max_per_grid, analysis)
 
 
-def _format_simple_preview(field: FieldAnalysis) -> str:
-    """Format preview for single-dimension grid."""
-    values_str = ", ".join(str(v) for v in field.values[:5])
-    if len(field.values) > 5:
-        values_str += f", ... ({len(field.values)} total)"
-    
-    return f"""Layout Preview:
-─ {field.display_name} [X-axis]
-  └─ Values: {values_str}
-  └─ {field.value_count} images in row"""
-
-
-def _format_xy_preview(x_field: FieldAnalysis, y_field: FieldAnalysis) -> str:
-    """Format preview for simple XY grid."""
-    x_vals = ", ".join(str(v) for v in x_field.values[:4])
-    if len(x_field.values) > 4:
-        x_vals += "..."
-    
-    y_vals = ", ".join(str(v) for v in y_field.values[:4])
-    if len(y_field.values) > 4:
-        y_vals += "..."
-    
-    return f"""Layout Preview ({x_field.value_count * y_field.value_count} images):
-┌─ {y_field.display_name} [Y-axis: {y_field.value_count} rows]
-│  └─ {y_vals}
-└─ {x_field.display_name} [X-axis: {x_field.value_count} columns]
-   └─ {x_vals}
-
-Grid: {y_field.value_count} rows × {x_field.value_count} columns"""
-
-
-def _format_nested_preview(
-    analysis: Dict[str, FieldAnalysis], 
-    layout: LayoutRecommendation
-) -> str:
-    """Format preview for nested grid layout."""
-    lines = [f"Layout Preview ({layout.total_combinations} images, {layout.num_grids} grid(s)):"]
-    
-    indent = ""
-    
-    # Nest levels (outermost first)
-    for i, nest_field in enumerate(layout.nest_levels):
-        field = analysis[nest_field]
-        marker = "┌" if i == 0 else "├"
-        lines.append(f"{indent}{marker}─ {field.display_name} ({field.value_count} sections)")
-        
-        # Show first few values
-        vals = ", ".join(str(v)[:20] for v in field.values[:3])
-        if len(field.values) > 3:
-            vals += "..."
-        lines.append(f"{indent}│  └─ {vals}")
-        
-        if i == 0 and layout.grid_split_field == nest_field:
-            lines.append(f"{indent}│  ⚡ [Grid split point]")
-        
-        indent += "│  "
-    
-    # Y-axis
-    if layout.y_axis:
-        y_field = analysis[layout.y_axis]
-        lines.append(f"{indent}├─ {y_field.display_name} [Y-axis: {y_field.value_count} rows]")
-    
-    # X-axis
-    if layout.x_axis:
-        x_field = analysis[layout.x_axis]
-        lines.append(f"{indent}└─ {x_field.display_name} [X-axis: {x_field.value_count} columns]")
-    
-    # Summary line
-    if layout.y_axis and layout.x_axis:
-        x_count = analysis[layout.x_axis].value_count
-        y_count = analysis[layout.y_axis].value_count
-        lines.append(f"\nInner grid: {y_count} rows × {x_count} columns = {y_count * x_count} images")
-    
-    return "\n".join(lines)
-
-
-def _format_analysis_summary(
-    analysis: Dict[str, FieldAnalysis],
-    layout: LayoutRecommendation
-) -> str:
-    """Format a brief summary of the analysis."""
-    parts = [f"{len(analysis)} varying dimensions"]
-    parts.append(f"{layout.total_combinations} total combinations")
-    
-    if layout.num_grids > 1:
-        parts.append(f"split into {layout.num_grids} grids")
-    
-    dims = []
-    for nest in layout.nest_levels:
-        dims.append(f"{analysis[nest].display_name}({analysis[nest].value_count})")
-    if layout.y_axis:
-        dims.append(f"{analysis[layout.y_axis].display_name}({analysis[layout.y_axis].value_count})")
-    if layout.x_axis:
-        dims.append(f"{analysis[layout.x_axis].display_name}({analysis[layout.x_axis].value_count})")
-    
-    if dims:
-        parts.append("→ " + " × ".join(dims))
-    
-    return " | ".join(parts)
-
-
-def get_field_options_for_dropdown(analysis: Dict[str, FieldAnalysis]) -> List[Tuple[str, str]]:
-    """
-    Get field options formatted for dropdown widgets.
-    
-    Returns:
-        List of (value, display_label) tuples
-    """
-    options = [("auto", "Auto"), ("none", "None")]
-    
-    for field_name, field_analysis in sorted(
-        analysis.items(),
-        key=lambda x: -x[1].priority
-    ):
-        label = f"{field_analysis.display_name} ({field_analysis.value_count} values)"
-        options.append((field_name, label))
-    
-    return options
-
-
-def validate_layout(
-    layout: LayoutRecommendation,
+def _simple_xy_layout(
+    sorted_fields: List[FieldAnalysis],
+    total_combos: int,
     analysis: Dict[str, FieldAnalysis]
-) -> List[str]:
+) -> LayoutRecommendation:
     """
-    Validate a layout configuration and return any warnings.
-    
-    Returns:
-        List of warning messages (empty if valid)
+    Simple XY grid for 1-25 combinations.
+    Best field goes to rows (y_axis), second best to columns (x_axis).
     """
-    warnings = []
+    x_axis = None
+    y_axis = None
     
-    # Check for duplicate assignments
-    assigned = []
-    if layout.x_axis and layout.x_axis != 'auto' and layout.x_axis != 'none':
-        assigned.append(layout.x_axis)
-    if layout.y_axis and layout.y_axis != 'auto' and layout.y_axis != 'none':
-        assigned.append(layout.y_axis)
-    for nest in layout.nest_levels:
-        if nest and nest != 'auto' and nest != 'none':
-            assigned.append(nest)
+    # Find best row candidate (y_axis)
+    for f in sorted_fields:
+        if f.is_row_candidate:
+            y_axis = f.name
+            break
     
-    if len(assigned) != len(set(assigned)):
-        warnings.append("Warning: Same field assigned to multiple positions")
+    # If no row candidate, use highest priority field
+    if not y_axis and sorted_fields:
+        y_axis = sorted_fields[0].name
     
-    # Check for missing fields
-    assigned_set = set(assigned)
-    unassigned = [f for f in analysis.keys() if f not in assigned_set]
-    if unassigned:
-        warnings.append(f"Note: {len(unassigned)} field(s) not explicitly assigned: {', '.join(unassigned)}")
+    # Find best column candidate (x_axis) that isn't already used
+    for f in sorted_fields:
+        if f.name != y_axis and f.is_col_candidate:
+            x_axis = f.name
+            break
     
-    # Check for large grids
-    if layout.total_combinations > 500:
-        warnings.append(f"Large grid: {layout.total_combinations} images will be split into {layout.num_grids} pages")
+    # If no column candidate, use second highest priority field
+    if not x_axis:
+        for f in sorted_fields:
+            if f.name != y_axis:
+                x_axis = f.name
+                break
     
-    # Check X-axis assignment
-    if layout.x_axis and layout.x_axis in analysis:
-        field = analysis[layout.x_axis]
-        if not field.is_x_axis_candidate and field.value_count > 10:
-            warnings.append(f"Consider: {field.display_name} has many values ({field.value_count}) - may be wide")
+    # Build explanation
+    parts = []
+    if y_axis:
+        parts.append(f"Rows: {analysis[y_axis].display_name}")
+    if x_axis:
+        parts.append(f"Columns: {analysis[x_axis].display_name}")
     
-    return warnings
+    return LayoutRecommendation(
+        x_axis=x_axis,
+        y_axis=y_axis,
+        nest_levels=[],
+        total_combinations=total_combos,
+        combinations_per_grid=total_combos,
+        num_grids=1,
+        strategy="simple",
+        explanation=f"Simple grid with {total_combos} combinations. " + ", ".join(parts),
+        field_analysis=analysis,
+    )
 
 
-# Export for API
-__all__ = [
-    'analyze_variations',
-    'generate_optimal_layout',
-    'calculate_total_combinations',
-    'get_field_options_for_dropdown',
-    'validate_layout',
-    'FieldAnalysis',
-    'LayoutRecommendation',
-    'FIELD_PRIORITY',
-    'FIELD_DISPLAY_NAMES',
-]
+def _single_nest_layout(
+    sorted_fields: List[FieldAnalysis],
+    total_combos: int,
+    max_per_grid: int,
+    analysis: Dict[str, FieldAnalysis]
+) -> LayoutRecommendation:
+    """
+    Single nest level for 26-100 combinations.
+    Highest priority field becomes outer nest, next two become X/Y.
+    """
+    nest_levels = []
+    x_axis = None
+    y_axis = None
+    
+    available = list(sorted_fields)
+    
+    # Pick nest level (prefer nest candidates)
+    for i, f in enumerate(available):
+        if f.is_nest_candidate:
+            nest_levels.append(f.name)
+            available.pop(i)
+            break
+    
+    # If no nest candidate found, use highest priority
+    if not nest_levels and available:
+        nest_levels.append(available.pop(0).name)
+    
+    # Pick Y axis (row)
+    for i, f in enumerate(available):
+        if f.is_row_candidate:
+            y_axis = f.name
+            available.pop(i)
+            break
+    if not y_axis and available:
+        y_axis = available.pop(0).name
+    
+    # Pick X axis (column)
+    for i, f in enumerate(available):
+        if f.is_col_candidate:
+            x_axis = f.name
+            available.pop(i)
+            break
+    if not x_axis and available:
+        x_axis = available.pop(0).name
+    
+    # Calculate combinations per nested grid
+    nest_count = analysis[nest_levels[0]].value_count if nest_levels else 1
+    combos_per_grid = total_combos // nest_count if nest_count > 0 else total_combos
+    
+    # Build explanation
+    parts = []
+    if nest_levels:
+        parts.append(f"Grouped by: {analysis[nest_levels[0]].display_name}")
+    if y_axis:
+        parts.append(f"Rows: {analysis[y_axis].display_name}")
+    if x_axis:
+        parts.append(f"Columns: {analysis[x_axis].display_name}")
+    
+    return LayoutRecommendation(
+        x_axis=x_axis,
+        y_axis=y_axis,
+        nest_levels=nest_levels,
+        total_combinations=total_combos,
+        combinations_per_grid=combos_per_grid,
+        num_grids=nest_count,
+        strategy="nested",
+        explanation=f"Nested grid with {total_combos} combinations across {nest_count} groups. " + ", ".join(parts),
+        field_analysis=analysis,
+    )
+
+
+def _double_nest_layout(
+    sorted_fields: List[FieldAnalysis],
+    total_combos: int,
+    max_per_grid: int,
+    analysis: Dict[str, FieldAnalysis]
+) -> LayoutRecommendation:
+    """
+    Double nest level for 101-300 combinations.
+    Two highest priority fields become outer nests, next two become X/Y.
+    """
+    nest_levels = []
+    x_axis = None
+    y_axis = None
+    
+    available = list(sorted_fields)
+    
+    # Pick first nest level
+    for i, f in enumerate(available):
+        if f.is_nest_candidate:
+            nest_levels.append(f.name)
+            available.pop(i)
+            break
+    if not nest_levels and available:
+        nest_levels.append(available.pop(0).name)
+    
+    # Pick second nest level
+    for i, f in enumerate(available):
+        if f.is_nest_candidate:
+            nest_levels.append(f.name)
+            available.pop(i)
+            break
+    if len(nest_levels) < 2 and available:
+        nest_levels.append(available.pop(0).name)
+    
+    # Pick Y axis (row)
+    for i, f in enumerate(available):
+        if f.is_row_candidate:
+            y_axis = f.name
+            available.pop(i)
+            break
+    if not y_axis and available:
+        y_axis = available.pop(0).name
+    
+    # Pick X axis (column)
+    for i, f in enumerate(available):
+        if f.is_col_candidate:
+            x_axis = f.name
+            available.pop(i)
+            break
+    if not x_axis and available:
+        x_axis = available.pop(0).name
+    
+    # Calculate combinations per nested grid
+    nest_count = 1
+    for n in nest_levels:
+        if n in analysis:
+            nest_count *= analysis[n].value_count
+    combos_per_grid = total_combos // nest_count if nest_count > 0 else total_combos
+    
+    # Build explanation
+    parts = []
+    if nest_levels:
+        nest_names = [analysis[n].display_name for n in nest_levels]
+        parts.append(f"Grouped by: {' → '.join(nest_names)}")
+    if y_axis:
+        parts.append(f"Rows: {analysis[y_axis].display_name}")
+    if x_axis:
+        parts.append(f"Columns: {analysis[x_axis].display_name}")
+    
+    return LayoutRecommendation(
+        x_axis=x_axis,
+        y_axis=y_axis,
+        nest_levels=nest_levels,
+        total_combinations=total_combos,
+        combinations_per_grid=combos_per_grid,
+        num_grids=nest_count,
+        strategy="nested",
+        explanation=f"Double-nested grid with {total_combos} combinations across {nest_count} groups. " + ", ".join(parts),
+        field_analysis=analysis,
+    )
+
+
+def _paginated_layout(
+    sorted_fields: List[FieldAnalysis],
+    total_combos: int,
+    max_per_grid: int,
+    analysis: Dict[str, FieldAnalysis]
+) -> LayoutRecommendation:
+    """
+    Paginated layout for 300+ combinations.
+    Uses nesting and pagination by outermost dimension.
+    """
+    # Start with double nest layout as base
+    layout = _double_nest_layout(sorted_fields, total_combos, max_per_grid, analysis)
+    
+    # Calculate pagination
+    if layout.combinations_per_grid > max_per_grid:
+        num_pages = math.ceil(layout.combinations_per_grid / max_per_grid)
+        layout.num_grids = layout.num_grids * num_pages
+        layout.combinations_per_grid = max_per_grid
+    
+    layout.strategy = "paginated"
+    layout.explanation = (
+        f"Paginated grid with {total_combos} total combinations. "
+        f"Split into ~{layout.num_grids} grids of up to {max_per_grid} images each. "
+        + layout.explanation.split(". ", 1)[-1] if ". " in layout.explanation else ""
+    )
+    
+    return layout
+
+
+def analyze_config(config: Dict[str, Any], max_per_grid: int = 500) -> LayoutRecommendation:
+    """
+    Main entry point: analyze a configuration and return layout recommendation.
+    
+    Works with both pre-computed combinations and raw variation lists.
+    """
+    # First try to analyze from combinations array (if populated)
+    combinations = config.get('combinations', [])
+    
+    if combinations:
+        # Use combinations-based analysis
+        analysis = analyze_from_combinations(combinations)
+    else:
+        # Fall back to raw variation lists
+        analysis = analyze_from_variation_lists(config)
+    
+    return generate_optimal_layout(analysis, max_per_grid)
+
+
+def analyze_from_combinations(combinations: List[Dict[str, Any]]) -> Dict[str, FieldAnalysis]:
+    """
+    Analyze from pre-computed combinations array.
+    Each combination is a dict with field values.
+    """
+    if not combinations:
+        return {}
+    
+    analysis: Dict[str, FieldAnalysis] = {}
+    
+    # Collect all unique values for each field
+    field_values: Dict[str, Set[Any]] = {}
+    
+    for combo in combinations:
+        if not isinstance(combo, dict):
+            continue
+        for key, value in combo.items():
+            if key not in field_values:
+                field_values[key] = set()
+            # Convert to hashable
+            hashable = str(value) if isinstance(value, (dict, list)) else value
+            field_values[key].add(hashable)
+    
+    # Create FieldAnalysis for fields with multiple values
+    for field_name, values in field_values.items():
+        if len(values) > 1:
+            # Map field name to canonical form
+            canonical = _canonicalize_field_name(field_name)
+            
+            analysis[canonical] = FieldAnalysis(
+                name=canonical,
+                display_name=_get_display_name(canonical),
+                values=list(values),
+                value_count=len(values),
+                priority=FIELD_PRIORITY.get(canonical, 50),
+                is_row_candidate=canonical in ROW_AXIS_CANDIDATES,
+                is_col_candidate=canonical in COL_AXIS_CANDIDATES,
+                is_nest_candidate=canonical in NEST_CANDIDATES,
+            )
+    
+    return analysis
+
+
+def _canonicalize_field_name(name: str) -> str:
+    """Convert field name to canonical form."""
+    name_lower = name.lower()
+    
+    mappings = {
+        'model_name': 'model',
+        'checkpoint': 'model',
+        'vae_name': 'vae',
+        'sampler_name': 'sampler',
+        'positive': 'prompt',
+        'positive_prompt': 'prompt',
+        'strength_model': 'lora_strength',
+        'strength_clip': 'lora_strength',
+        'lora_name': 'lora',
+    }
+    
+    return mappings.get(name_lower, name_lower)
+
+
+def _get_display_name(canonical: str) -> str:
+    """Get display name for canonical field name."""
+    display_names = {
+        'model': 'Model',
+        'vae': 'VAE',
+        'sampler': 'Sampler',
+        'scheduler': 'Scheduler',
+        'steps': 'Steps',
+        'cfg': 'CFG Scale',
+        'prompt': 'Prompt',
+        'lora': 'LoRA',
+        'lora_strength': 'LoRA Strength',
+        'seed': 'Seed',
+    }
+    
+    return display_names.get(canonical, canonical.replace('_', ' ').title())

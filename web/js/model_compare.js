@@ -980,9 +980,9 @@ function registerExtension(app) {
 
                         const updateGridVisibility = () => {
                             const presetModeWidget = self.widgets.find(w => w.name === "preset_mode");
-                            const presetMode = presetModeWidget ? presetModeWidget.value : "manual";
+                            const presetMode = presetModeWidget ? presetModeWidget.value : "smart";
 
-                            const isSmartMode = presetMode === "smart_auto" || presetMode === "smart_custom";
+                            const isSmartMode = presetMode === "smart";
                             const isManualMode = presetMode === "manual";
 
                             // Widgets shown only in manual mode (user configures axes)
@@ -997,14 +997,12 @@ function registerExtension(app) {
 
                                 let shouldShow = true;
 
-                                // In smart_auto mode, hide manual axis controls
-                                if (presetMode === "smart_auto") {
+                                // In smart mode, hide manual axis controls (they get auto-filled)
+                                if (isSmartMode) {
                                     if (manualOnlyWidgets.includes(widget.name)) {
                                         shouldShow = false;
                                     }
                                 }
-                                // In smart_custom mode, show axis controls but grayed out for customization
-                                // (they get populated by analyze results)
 
                                 // Apply visibility
                                 if (shouldShow) {
@@ -1412,9 +1410,11 @@ function registerExtension(app) {
                                         status: "analyzed",
                                         total: result.analysis?.total_combinations || 0,
                                         analysisResult: {
-                                            rowAxis: layout.y_axis || 'auto',
-                                            colAxis: layout.x_axis || 'auto',
+                                            rowAxis: layout.y_axis || 'N/A',
+                                            colAxis: layout.x_axis || 'N/A',
                                             nestLevels: layout.nest_levels || [],
+                                            strategy: layout.strategy || 'simple',
+                                            explanation: layout.explanation || '',
                                             warnings: result.warnings || []
                                         }
                                     };
@@ -1431,12 +1431,16 @@ function registerExtension(app) {
                                 } else {
                                     const layout = result.layout || {};
                                     console.log("[GridCompare] Layout optimized!");
-                                    console.log(`  Row axis: ${layout.y_axis || 'auto'}`);
-                                    console.log(`  Col axis: ${layout.x_axis || 'auto'}`);
+                                    console.log(`  Strategy: ${layout.strategy || 'simple'}`);
+                                    console.log(`  Row axis (y): ${layout.y_axis || 'N/A'}`);
+                                    console.log(`  Col axis (x): ${layout.x_axis || 'N/A'}`);
                                     if (layout.nest_levels?.length > 0) {
                                         console.log(`  Nest levels: ${layout.nest_levels.join(' → ')}`);
                                     }
                                     console.log(`  Total combinations: ${result.analysis?.total_combinations || 'unknown'}`);
+                                    if (layout.explanation) {
+                                        console.log(`  Explanation: ${layout.explanation}`);
+                                    }
                                 }
                             }
                         };

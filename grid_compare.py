@@ -18,11 +18,10 @@ args = comfy.cli_args.args
 
 # Import smart preset analyzer
 try:
-    from .grid_preset_analyzer import analyze_variations, generate_optimal_layout
+    from .grid_preset_analyzer import analyze_config as smart_analyze_config
 except ImportError:
     # Fallback if not available
-    analyze_variations = None
-    generate_optimal_layout = None
+    smart_analyze_config = None
 
 
 def sanitize_filename(name: str) -> str:
@@ -234,9 +233,9 @@ class GridCompare:
                     "tooltip": "Maximum grid dimension in pixels before auto-splitting"
                 }),
                 # Smart preset analysis
-                "preset_mode": (["manual", "smart_auto", "smart_custom"], {
-                    "default": "manual",
-                    "tooltip": "Grid layout mode: manual (use row/col/nest settings), smart_auto (auto-detect optimal layout), smart_custom (analyze then customize)"
+                "preset_mode": (["smart", "manual"], {
+                    "default": "smart",
+                    "tooltip": "Grid layout mode: smart (auto-detect optimal layout based on combinations), manual (use row/col/nest settings)"
                 }),
                 "max_images_per_grid": ("INT", {
                     "default": 500,
@@ -1744,16 +1743,16 @@ class GridCompare:
                      if ax and ax != "none"]
         
         # Smart preset mode: override manual axis settings with optimal layout
-        if preset_mode in ("smart_auto", "smart_custom") and generate_optimal_layout is not None:
+        if preset_mode == "smart" and smart_analyze_config is not None:
             try:
-                # Analyze variations and get optimal layout
-                analysis = analyze_variations(config)
-                layout = generate_optimal_layout(analysis)
+                # Analyze config and get optimal layout
+                layout = smart_analyze_config(config, max_images_per_grid)
                 
                 if layout:
                     # Override row/col/nest axes with smart layout
-                    row_axis = layout.row_axis or "auto"
-                    col_axis = layout.col_axis or "auto"
+                    # x_axis = columns, y_axis = rows
+                    row_axis = layout.y_axis or "auto"
+                    col_axis = layout.x_axis or "auto"
                     
                     # Apply nest levels from layout
                     if layout.nest_levels:
@@ -1769,7 +1768,7 @@ class GridCompare:
                             elif i == 6: nest_axis_7 = ax
                             elif i == 7: nest_axis_8 = ax
                     
-                    print(f"[GridCompare] Smart preset mode: row={row_axis}, col={col_axis}, nest={nest_axes}")
+                    print(f"[GridCompare] Smart preset mode: row={row_axis}, col={col_axis}, nest={nest_axes}, strategy={layout.strategy}")
             except Exception as e:
                 print(f"[GridCompare] Smart preset analysis failed, using manual settings: {e}")
         
