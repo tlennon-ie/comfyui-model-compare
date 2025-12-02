@@ -1440,13 +1440,6 @@ function registerExtension(app) {
                                 }
                             }
                         };
-                                }
-
-                            } catch (e) {
-                                console.error("[GridCompare] Analyze error:", e);
-                                alert(`Analysis error: ${e.message}`);
-                            }
-                        };
 
                         // Add analyze button
                         this.addWidget("button", "🔍 Analyze & Optimize Layout", null, () => {
