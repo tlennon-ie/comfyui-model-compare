@@ -520,6 +520,6 @@ NODE_CLASS_MAPPINGS = {
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "HistogramAnalyzer": "Histogram Analyzer",
-    "HistogramComparator": "Histogram Comparator",
+    "HistogramAnalyzer": "Ⓜ️ Model Compare - Histogram Analyzer",
+    "HistogramComparator": "Ⓜ️ Model Compare - Histogram Comparison",
 }

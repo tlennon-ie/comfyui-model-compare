@@ -8,6 +8,7 @@ Features:
 - Generate comparison grids with multiple configurations
 - Create customizable comparison grids with labels
 - Histogram analysis for image comparison
+- Gallery viewer for browsing all generated grids
 
 Author: Your Name
 Repository: https://github.com/yourusername/comfyui-model-compare
@@ -26,12 +27,20 @@ from .sampler_compare_advanced import NODE_CLASS_MAPPINGS as SAMPLER_ADVANCED_MA
 from .sampler_compare_advanced import NODE_DISPLAY_NAME_MAPPINGS as SAMPLER_ADVANCED_DISPLAYS
 from .grid_compare import NODE_CLASS_MAPPINGS as GRID_MAPPINGS
 from .grid_compare import NODE_DISPLAY_NAME_MAPPINGS as GRID_DISPLAYS
+from .video_grid_config import NODE_CLASS_MAPPINGS as VIDEO_CONFIG_MAPPINGS
+from .video_grid_config import NODE_DISPLAY_NAME_MAPPINGS as VIDEO_CONFIG_DISPLAYS
 from .histogram_analyzer import NODE_CLASS_MAPPINGS as HISTOGRAM_MAPPINGS
 from .histogram_analyzer import NODE_DISPLAY_NAME_MAPPINGS as HISTOGRAM_DISPLAYS
 from .video_preview import NODE_CLASS_MAPPINGS as VIDEO_PREVIEW_MAPPINGS
 from .video_preview import NODE_DISPLAY_NAME_MAPPINGS as VIDEO_PREVIEW_DISPLAYS
 from .compare_tracker import NODE_CLASS_MAPPINGS as TRACKER_MAPPINGS
 from .compare_tracker import NODE_DISPLAY_NAME_MAPPINGS as TRACKER_DISPLAYS
+
+# Import gallery routes to register them with the server
+try:
+    from . import gallery_routes
+except Exception as e:
+    print(f"[ModelCompare] Warning: Could not load gallery routes: {e}")
 
 # Merge all node mappings - only include the active nodes
 NODE_CLASS_MAPPINGS = {
@@ -41,6 +50,7 @@ NODE_CLASS_MAPPINGS = {
     **LORA_MAPPINGS,
     **SAMPLER_ADVANCED_MAPPINGS,
     **GRID_MAPPINGS,
+    **VIDEO_CONFIG_MAPPINGS,
     **HISTOGRAM_MAPPINGS,
     **VIDEO_PREVIEW_MAPPINGS,
     **TRACKER_MAPPINGS,
@@ -53,6 +63,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     **LORA_DISPLAYS,
     **SAMPLER_ADVANCED_DISPLAYS,
     **GRID_DISPLAYS,
+    **VIDEO_CONFIG_DISPLAYS,
     **HISTOGRAM_DISPLAYS,
     **VIDEO_PREVIEW_DISPLAYS,
     **TRACKER_DISPLAYS,

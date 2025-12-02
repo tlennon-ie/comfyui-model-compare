@@ -130,26 +130,6 @@ class GridCompare:
                     "label_off": "no",
                     "tooltip": "Embed workflow metadata in PNG files",
                 }),
-                # Video grid options
-                "video_output_mode": (["images_only", "video_only", "both"], {
-                    "default": "images_only",
-                    "tooltip": "Output mode: images only, video only, or both (for mixed image/video results)"
-                }),
-                "video_format": (["mp4", "gif", "webm"], {
-                    "default": "mp4",
-                    "tooltip": "Video format for video grid output"
-                }),
-                "video_codec": (["libx264", "libx265"], {
-                    "default": "libx264",
-                    "tooltip": "Video codec (h264 recommended for compatibility)"
-                }),
-                "video_quality": ("INT", {
-                    "default": 23,
-                    "min": 1,
-                    "max": 51,
-                    "step": 1,
-                    "tooltip": "Video quality (CRF: lower = better, 18-28 recommended)"
-                }),
                 # Grid split options for multi-value variations
                 "grid_split_by": (["none", "model", "sampler", "scheduler", "chain", "auto"], {
                     "default": "none",
@@ -191,6 +171,11 @@ class GridCompare:
                     "max": 100,
                     "step": 5,
                     "tooltip": "JPEG quality for HTML grid images (higher = larger file)"
+                }),
+            },
+            "optional": {
+                "video_config": ("VIDEO_GRID_CONFIG", {
+                    "tooltip": "Optional video configuration from 'Model Compare - Video Grid Config' node"
                 }),
             },
             "hidden": {
@@ -1336,10 +1321,6 @@ class GridCompare:
         save_prompt_grids_separately: bool = False,
         save_individuals: bool = False,
         save_metadata: bool = False,
-        video_output_mode: str = "images_only",
-        video_format: str = "mp4",
-        video_codec: str = "libx264",
-        video_quality: int = 23,
         grid_split_by: str = "none",
         output_prefix: str = "compare",
         row_axis: str = "auto",
@@ -1348,6 +1329,7 @@ class GridCompare:
         html_grid_output: bool = False,
         html_image_format: str = "JPEG",
         html_image_quality: int = 85,
+        video_config: Dict[str, Any] = None,
         prompt=None,
         extra_pnginfo=None,
         **kwargs  # Ignore any optional x_label, y_label, z_label
@@ -1357,7 +1339,20 @@ class GridCompare:
         Organizes images by LoRA rows and strength columns with proper axis labels.
         
         For video output, handles multi-frame results and creates video grids.
+        Video options come from optional video_config input (from Video Grid Config node).
         """
+        # Extract video options from video_config or use defaults (images only)
+        video_output_mode = "images_only"
+        video_format = "mp4"
+        video_codec = "libx264"
+        video_quality = 23
+        
+        if video_config:
+            video_output_mode = video_config.get("video_output_mode", "both")
+            video_format = video_config.get("video_format", "mp4")
+            video_codec = video_config.get("video_codec", "libx264")
+            video_quality = video_config.get("video_quality", 23)
+        
         # Parse labels - try newline-separated first, then semicolon for backwards compatibility
         if "\n" in labels:
             label_list = [l.strip() for l in labels.split("\n") if l.strip()]
@@ -1662,6 +1657,8 @@ class GridCompare:
                 from .html_grid_generator import generate_html_grid, save_html_grid
                 
                 # Generate HTML content
+                # Pass the composed grid image for use as gallery thumbnail
+                grid_for_thumbnail = all_grid_images[0] if all_grid_images else None
                 html_content = generate_html_grid(
                     images=pil_images,
                     labels=label_list,
@@ -1671,6 +1668,7 @@ class GridCompare:
                     use_base64=True,
                     image_format=html_image_format,
                     image_quality=html_image_quality,
+                    grid_image=grid_for_thumbnail,
                 )
                 
                 # Determine save path
@@ -1696,32 +1694,16 @@ class GridCompare:
                 try:
                     from .compare_tracker import set_html_grid_available
                     import urllib.parse
+                    import base64
                     
-                    # Get the output directory to calculate relative path
-                    comfy_output_dir = folder_paths.get_output_directory()
-                    
-                    # Check if html_path is under the output directory
-                    # Normalize paths for comparison
+                    # Use our custom /model-compare/view/ endpoint which works for any path
+                    # Encode the full path in base64 for safe URL transmission
                     html_abs = os.path.abspath(html_path)
-                    output_abs = os.path.abspath(comfy_output_dir)
+                    encoded_path = base64.urlsafe_b64encode(html_abs.encode('utf-8')).decode('ascii')
+                    view_url = f"/model-compare/view/{encoded_path}"
                     
-                    if html_abs.startswith(output_abs):
-                        # Path is under output directory - can use /view endpoint
-                        rel_path = os.path.relpath(html_path, comfy_output_dir)
-                        subfolder = os.path.dirname(rel_path).replace("\\", "/")
-                        filename = os.path.basename(html_path)
-                        
-                        # Build /view URL with proper encoding
-                        encoded_filename = urllib.parse.quote(filename)
-                        encoded_subfolder = urllib.parse.quote(subfolder)
-                        view_url = f"/view?filename={encoded_filename}&type=output&subfolder={encoded_subfolder}"
-                        
-                        set_html_grid_available(html_path, view_url)
-                    else:
-                        # Path is outside output directory - can't use /view endpoint
-                        # Just set the path, button won't work but path is logged
-                        print(f"[GridCompare] HTML saved outside output dir, view button disabled")
-                        set_html_grid_available(html_path, None)
+                    set_html_grid_available(html_path, view_url)
+                    print(f"[GridCompare] HTML view URL: {view_url}")
                 except Exception as e:
                     print(f"[GridCompare] Could not notify tracker: {e}")
                 
@@ -2011,8 +1993,28 @@ class GridCompare:
         combined_paths = ", ".join(all_paths)
         
         # Stack all grid tensors into a batch
+        # Grids may have different sizes due to prompt text, so pad to largest dimensions
         if all_grid_tensors:
-            stacked_grids = torch.cat(all_grid_tensors, dim=0)
+            if len(all_grid_tensors) == 1:
+                stacked_grids = all_grid_tensors[0]
+            else:
+                # Find max dimensions across all grids
+                max_h = max(t.shape[1] for t in all_grid_tensors)
+                max_w = max(t.shape[2] for t in all_grid_tensors)
+                
+                # Pad each tensor to max dimensions (bottom-right padding with white)
+                padded_tensors = []
+                for tensor in all_grid_tensors:
+                    h, w = tensor.shape[1], tensor.shape[2]
+                    if h < max_h or w < max_w:
+                        # Create white padded tensor
+                        padded = torch.ones((1, max_h, max_w, 3), dtype=tensor.dtype, device=tensor.device)
+                        padded[:, :h, :w, :] = tensor
+                        padded_tensors.append(padded)
+                    else:
+                        padded_tensors.append(tensor)
+                
+                stacked_grids = torch.cat(padded_tensors, dim=0)
         else:
             stacked_grids = torch.zeros((1, 64, 64, 3))
         
@@ -3277,5 +3279,5 @@ NODE_CLASS_MAPPINGS = {
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "GridCompare": "Grid Compare",
+    "GridCompare": "Ⓜ️ Model Compare - Grid",
 }

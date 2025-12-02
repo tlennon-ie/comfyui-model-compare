@@ -196,6 +196,6 @@ NODE_CLASS_MAPPINGS = {
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "VideoPreview": "Video Preview 🎥",
-    "VideoGridPreview": "Video Grid Preview 🎥",
+    "VideoPreview": "Ⓜ️ Model Compare - Video Preview",
+    "VideoGridPreview": "Ⓜ️ Model Compare - Video Grid Preview",
 }

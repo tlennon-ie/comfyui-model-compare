@@ -1934,4 +1934,77 @@ function setupProgressListener() {
 // Setup listener after a short delay
 setTimeout(setupProgressListener, 100);
 
+// ======== TOOLBAR BUTTON ========
+// Add Model Compare Gallery button to ComfyUI toolbar
+
+function getMCIcon() {
+    // MC Logo SVG (simplified for toolbar)
+    return `<svg viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg" style="width:20px;height:20px">
+        <defs>
+            <clipPath id="mc-text-mask">
+                <path d="M60 380 L60 130 L130 130 L195 280 L260 130 L330 130 L330 380 L260 380 L260 220 L195 380 L130 220 L130 380 Z" />
+                <path d="M482 190 A 130 130 0 1 0 482 320 L 412 290 A 60 60 0 1 1 412 220 Z" />
+            </clipPath>
+        </defs>
+        <rect x="0" y="0" width="512" height="512" fill="#DCEFF5" rx="80"/>
+        <g clip-path="url(#mc-text-mask)">
+            <rect width="512" height="512" fill="#081226"/>
+            <path d="M0 512 V 250 Q 150 350 300 200 T 512 150 V 512 Z" fill="#102240"/>
+            <path d="M0 512 V 320 Q 180 420 320 280 T 512 300 V 512 Z" fill="#1A355E"/>
+            <path d="M0 512 V 400 Q 200 480 350 350 T 512 380 V 512 Z" fill="#234B8E"/>
+        </g>
+    </svg>`;
+}
+
+function setupToolbarButton() {
+    // Wait for app to be ready
+    if (!window.comfyAPI?.app?.app?.menu?.settingsGroup) {
+        setTimeout(setupToolbarButton, 500);
+        return;
+    }
+    
+    try {
+        const app = window.comfyAPI.app.app;
+        const settingsGroup = app.menu.settingsGroup;
+        
+        if (!settingsGroup?.element?.parentElement) {
+            setTimeout(setupToolbarButton, 500);
+            return;
+        }
+        
+        // Check if button already exists
+        if (document.getElementById('mc-gallery-btn')) {
+            return;
+        }
+        
+        // Create button manually (more reliable across ComfyUI versions)
+        const buttonElement = document.createElement('button');
+        buttonElement.id = 'mc-gallery-btn';
+        buttonElement.className = 'comfyui-button comfyui-menu-mobile-collapse';
+        buttonElement.title = 'Model Compare Gallery';
+        buttonElement.innerHTML = getMCIcon();
+        buttonElement.style.cssText = 'display:flex;align-items:center;justify-content:center;padding:4px 8px;cursor:pointer;';
+        buttonElement.addEventListener('click', openGallery);
+        
+        // Wrap in button group div
+        const wrapper = document.createElement('div');
+        wrapper.className = 'comfyui-button-group';
+        wrapper.appendChild(buttonElement);
+        
+        settingsGroup.element.before(wrapper);
+        
+        console.log("[ModelCompare] Gallery toolbar button added");
+        
+    } catch (e) {
+        console.error("[ModelCompare] Error setting up toolbar button:", e);
+    }
+}
+
+function openGallery() {
+    window.open('/model-compare/gallery', '_blank');
+}
+
+// Setup toolbar button after a delay
+setTimeout(setupToolbarButton, 1000);
+
 tryRegisterExtension();

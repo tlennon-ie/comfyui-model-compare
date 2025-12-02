@@ -514,5 +514,5 @@ NODE_CLASS_MAPPINGS = {
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "SamplingConfigChain": "Sampling Config Chain ⛓️",
+    "SamplingConfigChain": "Ⓜ️ Model Compare - Variation Chain",
 }

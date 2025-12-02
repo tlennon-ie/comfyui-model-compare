@@ -391,5 +391,5 @@ NODE_CLASS_MAPPINGS = {
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "PromptCompare": "Prompt Compare",
+    "PromptCompare": "Ⓜ️ Model Compare - Prompts",
 }

@@ -1199,6 +1199,7 @@ def generate_html_grid(
     use_base64: bool = True,
     image_format: str = "JPEG",
     image_quality: int = 85,
+    grid_image: Optional[Image.Image] = None,
 ) -> str:
     """
     Generate a self-contained HTML grid file.
@@ -1212,6 +1213,7 @@ def generate_html_grid(
         use_base64: If True, embed images as base64. If False, use relative paths.
         image_format: "PNG" or "JPEG"
         image_quality: JPEG quality (1-100)
+        grid_image: Optional composed grid image (used for gallery thumbnail)
     
     Returns:
         Complete HTML string
@@ -1259,15 +1261,49 @@ def generate_html_grid(
             "params": params
         })
     
+    # Generate thumbnail for gallery (use the composed grid image if available)
+    thumbnail_data = ""
+    try:
+        if grid_image is not None:
+            # Use the actual composed grid as thumbnail - shows full comparison
+            thumb_img = grid_image.copy()
+            # Scale to max 400px while maintaining aspect ratio
+            thumb_img.thumbnail((400, 400), Image.Resampling.LANCZOS)
+            thumbnail_data = f"data:image/jpeg;base64,{image_to_base64(thumb_img, 'JPEG', 75)}"
+        elif images:
+            # Fallback: use first image if no grid provided
+            thumb_img = images[0].copy()
+            thumb_img.thumbnail((300, 300), Image.Resampling.LANCZOS)
+            thumbnail_data = f"data:image/jpeg;base64,{image_to_base64(thumb_img, 'JPEG', 60)}"
+    except Exception as e:
+        pass  # Thumbnail generation failed, not critical
+    
+    # Metadata for gallery discovery
+    grid_metadata = {
+        "title": title,
+        "created": datetime.now().isoformat(),
+        "image_count": len(images),
+        "thumbnail": thumbnail_data,
+        "varying_dims": list(varying_dims.keys()),
+    }
+    
     # Generate HTML
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    
+    # Signature for gallery discovery
+    GRID_SIGNATURE = "comfyui-model-compare-grid"
     
     html_content = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="generator" content="{GRID_SIGNATURE}">
     <title>{html.escape(title)}</title>
+    <link rel="icon" type="image/svg+xml" href="/model-compare/static/images/logo.svg">
+    <script type="application/json" id="model-compare-metadata">
+{json.dumps(grid_metadata, ensure_ascii=False, indent=2)}
+    </script>
     <style>
 {CSS_TEMPLATE}
     </style>

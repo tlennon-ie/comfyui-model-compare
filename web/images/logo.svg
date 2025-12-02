@@ -1,0 +1,52 @@
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <!-- New Geometric Letter Shapes -->
+    <clipPath id="text-mask">
+      <!-- Letter M: Straight vertical legs, geometric center point -->
+      <!-- Coordinates: x starts at 60, width approx 260. Leg width 70. -->
+      <path d="M60 380 L60 130 L130 130 L195 280 L260 130 L330 130 L330 380 L260 380 L260 220 L195 380 L130 220 L130 380 Z" />
+      
+      <!-- Letter C: Mathematically perfect arcs to prevent distortion -->
+      <!-- Center approx (370, 255). Outer Radius 130, Inner Radius 70. -->
+      <!-- This creates a thick, geometric C similar to the reference. -->
+      <path d="M482 190 
+               A 130 130 0 1 0 482 320 
+               L 412 290 
+               A 60 60 0 1 1 412 220 
+               Z" />
+    </clipPath>
+  </defs>
+
+  <!-- Background: Light Blue-Grey (Paper style background) -->
+  <rect x="0" y="0" width="512" height="512" fill="#DCEFF5"/>
+
+  <!-- Topographic Layers Grouped inside the Clip Mask -->
+  <g clip-path="url(#text-mask)">
+    
+    <!-- 1. Deepest Layer (Base) -->
+    <rect width="512" height="512" fill="#081226"/>
+
+    <!-- 2. Dark Navy Contour -->
+    <path d="M0 512 V 250 Q 150 350 300 200 T 512 150 V 512 Z" fill="#102240"/>
+
+    <!-- 3. Medium Deep Blue Contour -->
+    <path d="M0 512 V 320 Q 180 420 320 280 T 512 300 V 512 Z" fill="#1A355E"/>
+
+    <!-- 4. Medium Blue Contour -->
+    <path d="M0 512 V 400 Q 200 480 350 350 T 512 380 V 512 Z" fill="#234B8E"/>
+
+    <!-- 5. Top Highlight Layer (Lighter Blue Accents) -->
+    <!-- Added subtle curves at the top to mimic the 'L' reference shading -->
+    <path d="M512 0 V 120 Q 350 20 200 100 T 0 50 V 0 Z" fill="#102240" opacity="0.5"/>
+    
+    <!-- 6. Small organic island for detail -->
+    <path d="M400 400 Q 450 450 512 420 V 512 H 400 Z" fill="#2E5C99"/>
+
+  </g>
+  
+  <!-- Optional: Very faint stroke to define the letter edges against the BG -->
+  <g clip-path="url(#text-mask)">
+    <rect width="512" height="512" fill="none" stroke="#000000" stroke-width="2" opacity="0.05"/>
+  </g>
+
+</svg>

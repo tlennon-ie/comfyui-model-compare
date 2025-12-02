@@ -764,5 +764,5 @@ NODE_CLASS_MAPPINGS = {
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "ModelCompareLoaders": "Model Compare Loaders",
+    "ModelCompareLoaders": "Ⓜ️ Model Compare - Loaders",
 }
