@@ -1852,77 +1852,34 @@ function setupProgressListener() {
     // Track if we've successfully hooked
     let hooked = false;
     
-    // Method: Find and hook the websocket by searching the api object
-    function tryHookApi() {
-        try {
-            // Try to find the api object in various locations
-            let api = null;
+    // AGGRESSIVE APPROACH: Monkey-patch WebSocket to catch ALL websockets
+    if (!window._wsPatched) {
+        window._wsPatched = true;
+        const OrigWebSocket = window.WebSocket;
+        window.WebSocket = function(url, protocols) {
+            const ws = protocols ? new OrigWebSocket(url, protocols) : new OrigWebSocket(url);
             
-            // Check common locations
-            if (window.comfyAPI?.api) {
-                api = window.comfyAPI.api;
-            } else if (window.app?.api) {
-                api = window.app.api;
-            }
-            
-            if (!api) {
-                return false;
-            }
-            
-            // The socket might be a private property or accessed differently
-            // Let's search for it
-            let socket = null;
-            
-            // Try direct property
-            if (api.socket) {
-                socket = api.socket;
-            }
-            // Try as a getter or through prototype
-            else if (api._socket) {
-                socket = api._socket;
-            }
-            // Search through api properties
-            else {
-                for (const key of Object.keys(api)) {
-                    const val = api[key];
-                    if (val && val instanceof WebSocket) {
-                        socket = val;
-                        break;
+            // Add our listener to every new websocket
+            ws.addEventListener('message', function(event) {
+                try {
+                    const msg = JSON.parse(event.data);
+                    if (msg.type === "model_compare_progress") {
+                        window._modelCompareProgressHandler(msg.data);
                     }
-                }
-            }
+                } catch (e) {}
+            });
             
-            // Also check if api itself might have addEventListener (event emitter pattern)
-            if (!socket && api.addEventListener) {
-                // ComfyUI api might be an EventTarget
-                api.addEventListener("model_compare_progress", function(event) {
-                    window._modelCompareProgressHandler(event.detail);
-                });
-                hooked = true;
-                return true;
-            }
-            
-            if (socket && !socket._modelCompareHooked) {
-                socket.addEventListener('message', function(event) {
-                    try {
-                        const msg = JSON.parse(event.data);
-                        if (msg.type === "model_compare_progress") {
-                            window._modelCompareProgressHandler(msg.data);
-                        }
-                    } catch (e) {}
-                });
-                socket._modelCompareHooked = true;
-                hooked = true;
-                return true;
-            }
-        } catch (e) {
-            console.error("[ModelCompare] Hook error:", e);
-        }
-        return false;
+            return ws;
+        };
+        window.WebSocket.prototype = OrigWebSocket.prototype;
+        window.WebSocket.CONNECTING = OrigWebSocket.CONNECTING;
+        window.WebSocket.OPEN = OrigWebSocket.OPEN;
+        window.WebSocket.CLOSING = OrigWebSocket.CLOSING;
+        window.WebSocket.CLOSED = OrigWebSocket.CLOSED;
     }
     
-    // Also try to find ALL websockets on the page
-    function findAllWebSockets() {
+    // Also try to hook existing websockets
+    function tryHookExistingWebSockets() {
         // Check if there are any websockets in the global scope
         const checkLocations = [
             'window.comfyAPI.api.socket',
@@ -1945,13 +1902,13 @@ function setupProgressListener() {
                         } catch (e) {}
                     });
                     socket._modelCompareHooked = true;
-                    return true;
+                    hooked = true;
                 }
             } catch (e) {
                 // Location doesn't exist
             }
         }
-        return false;
+        return hooked;
     }
     
     // Try hooking periodically until successful
@@ -1959,39 +1916,10 @@ function setupProgressListener() {
     const maxAttempts = 60;
     const retryInterval = setInterval(() => {
         attempts++;
-        if (tryHookApi() || findAllWebSockets() || attempts >= maxAttempts) {
+        if (tryHookExistingWebSockets() || attempts >= maxAttempts) {
             clearInterval(retryInterval);
-            if (attempts >= maxAttempts && !hooked) {
-                // Fallback: poll for websocket messages by checking a global
-                startPollingFallback();
-            }
         }
     }, 500);
-}
-
-// Fallback: Create our own websocket connection to receive messages
-function startPollingFallback() {
-    // Create a separate websocket to the same endpoint
-    try {
-        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const wsUrl = `${protocol}//${window.location.host}/ws`;
-        const ws = new WebSocket(wsUrl);
-        
-        ws.onmessage = function(event) {
-            try {
-                const msg = JSON.parse(event.data);
-                if (msg.type === "model_compare_progress") {
-                    window._modelCompareProgressHandler(msg.data);
-                }
-            } catch (e) {}
-        };
-        
-        ws.onerror = function(e) {
-            console.error("[ModelCompare] Fallback WS error:", e);
-        };
-    } catch (e) {
-        console.error("[ModelCompare] Could not create fallback WS:", e);
-    }
 }
 
 // Setup listener after a short delay

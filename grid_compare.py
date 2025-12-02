@@ -1695,11 +1695,10 @@ class GridCompare:
                 # Notify tracker that HTML grid is available
                 try:
                     from .compare_tracker import set_html_grid_available
-                    # Create a relative URL for viewing the file
-                    # ComfyUI serves output files via /view endpoint
-                    rel_path = os.path.relpath(html_path, output_dir)
-                    view_url = f"/view?filename={rel_path.replace(os.sep, '/')}&type=output"
-                    set_html_grid_available(html_path, view_url)
+                    # Create a file:// URL for direct access to the HTML file
+                    # Convert Windows path to file URL format
+                    file_url = "file:///" + html_path.replace("\\", "/")
+                    set_html_grid_available(html_path, file_url)
                 except Exception as e:
                     print(f"[GridCompare] Could not notify tracker: {e}")
                 
