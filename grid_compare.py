@@ -552,6 +552,10 @@ class GridCompare:
         # Use pre-computed varying dimensions or detect them
         varying = varying_dims if varying_dims is not None else self._detect_varying_dimensions(combinations, config)
         
+        # Debug logging
+        print(f"[_create_xy_grid] Input row_axis={row_axis}, col_axis={col_axis}")
+        print(f"[_create_xy_grid] varying keys={list(varying.keys()) if varying else 'None'}")
+        
         if not varying:
             # No variations detected - single row grid
             return self._create_row_grid(
@@ -589,8 +593,45 @@ class GridCompare:
                         break
         
         # Get unique values for each axis
-        row_values = varying.get(actual_row_axis, [None])
-        col_values = varying.get(actual_col_axis, [None])
+        # If axis isn't in varying dict (e.g., user explicitly selected an axis), 
+        # extract unique values directly from combinations
+        if actual_row_axis and actual_row_axis not in varying:
+            # Extract unique values for this axis from combinations
+            row_vals_set = set()
+            for combo in combinations:
+                val = self._get_combo_field_value(combo, config, actual_row_axis)
+                if val is not None:
+                    row_vals_set.add(val)
+            if row_vals_set:
+                try:
+                    row_values = sorted(list(row_vals_set))
+                except TypeError:
+                    row_values = list(row_vals_set)
+                # Also add to varying so subsequent code can use it
+                varying[actual_row_axis] = row_values
+            else:
+                row_values = [None]
+        else:
+            row_values = varying.get(actual_row_axis, [None])
+        
+        if actual_col_axis and actual_col_axis not in varying:
+            # Extract unique values for this axis from combinations
+            col_vals_set = set()
+            for combo in combinations:
+                val = self._get_combo_field_value(combo, config, actual_col_axis)
+                if val is not None:
+                    col_vals_set.add(val)
+            if col_vals_set:
+                try:
+                    col_values = sorted(list(col_vals_set))
+                except TypeError:
+                    col_values = list(col_vals_set)
+                # Also add to varying so subsequent code can use it
+                varying[actual_col_axis] = col_values
+            else:
+                col_values = [None]
+        else:
+            col_values = varying.get(actual_col_axis, [None])
         
         # If we only have one axis, make it columns
         if actual_row_axis and not actual_col_axis:
@@ -598,6 +639,10 @@ class GridCompare:
             col_values = row_values
             actual_row_axis = None
             row_values = [None]
+        
+        # Debug logging
+        print(f"[_create_xy_grid] actual_row_axis={actual_row_axis}, actual_col_axis={actual_col_axis}")
+        print(f"[_create_xy_grid] row_values={row_values}, col_values={col_values}")
         
         # Create mapping from (row_val, col_val) -> image index
         grid_map = {}
@@ -612,6 +657,9 @@ class GridCompare:
             if key not in grid_map:
                 grid_map[key] = []
             grid_map[key].append(idx)
+        
+        # Debug logging
+        print(f"[_create_xy_grid] grid_map keys={list(grid_map.keys())}")
         
         # Get image dimensions
         img_width, img_height = images[0].size
