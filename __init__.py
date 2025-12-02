@@ -42,6 +42,12 @@ try:
 except Exception as e:
     print(f"[ModelCompare] Warning: Could not load gallery routes: {e}")
 
+# Import preset analysis routes
+try:
+    from . import preset_routes
+except Exception as e:
+    print(f"[ModelCompare] Warning: Could not load preset routes: {e}")
+
 # Merge all node mappings - only include the active nodes
 NODE_CLASS_MAPPINGS = {
     **LOADER_MAPPINGS,

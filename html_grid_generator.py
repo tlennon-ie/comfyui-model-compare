@@ -137,9 +137,8 @@ def get_varying_dimensions(combinations: List[Dict], config: Dict = None) -> Dic
         for prompt_field in ['prompt_positive', 'prompt_negative']:
             value = combo.get(prompt_field, '')
             if value:
-                # Truncate long prompts for comparison
-                truncated = value[:50] if len(value) > 50 else value
-                field_values[prompt_field].add(truncated)
+                # Store full prompts - truncation happens in display only
+                field_values[prompt_field].add(value)
     
     # Return only fields with >1 unique value (varying dimensions)
     varying = {}
