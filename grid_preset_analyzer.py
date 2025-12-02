@@ -118,6 +118,33 @@ def _get_list_variations(items: List[Any], key: str) -> List[Any]:
     return _extract_unique_values(values)
 
 
+def _get_single_entry_variations(items: List[Any], key: str) -> List[Any]:
+    """
+    Get variations for a key, but ONLY if a single entry contains multiple values.
+    
+    This is important for sampling_params where multiple entries come from different
+    SamplingConfigChain nodes - those aren't variations, they're different configs.
+    Only if ONE entry has an array with multiple values is it a real variation.
+    
+    Example:
+    - [{"scheduler": ["beta", "normal"]}] -> ["beta", "normal"] (real variation)
+    - [{"scheduler": ["beta"]}, {"scheduler": ["normal"]}] -> [] (not a variation, different configs)
+    """
+    if not items:
+        return []
+    
+    # Check each entry - if any single entry has multiple values for this key, those are variations
+    for item in items:
+        if isinstance(item, dict) and key in item:
+            val = item[key]
+            if isinstance(val, list) and len(val) > 1:
+                # This single entry has multiple values - these are real variations
+                return _extract_unique_values(val)
+    
+    # No single entry had multiple values - not a variation
+    return []
+
+
 def analyze_from_variation_lists(config: Dict[str, Any]) -> Dict[str, FieldAnalysis]:
     """
     Analyze a configuration with raw variation lists (before combinations are computed).
@@ -167,10 +194,16 @@ def analyze_from_variation_lists(config: Dict[str, Any]) -> Dict[str, FieldAnaly
             )
     
     # Analyze sampling params
+    # IMPORTANT: Multiple sampling_params entries are from different SamplingConfigChain nodes.
+    # We should only consider values as "variations" if they appear as arrays WITHIN a single entry,
+    # not if different entries have different single values.
     sampling_params = config.get('sampling_params', [])
     if sampling_params:
-        # Samplers - use 'sampler_name' to match GridCompare dropdown
-        samplers = _get_list_variations(sampling_params, 'sampler_name')
+        # For each sampling field, check if ANY single entry has multiple values (an array)
+        # That indicates an actual variation, not just different configs from different nodes
+        
+        # Samplers - only count as variation if one entry has multiple samplers
+        samplers = _get_single_entry_variations(sampling_params, 'sampler_name')
         if len(samplers) > 1:
             analysis['sampler_name'] = FieldAnalysis(
                 name='sampler_name',
@@ -184,7 +217,7 @@ def analyze_from_variation_lists(config: Dict[str, Any]) -> Dict[str, FieldAnaly
             )
         
         # Schedulers
-        schedulers = _get_list_variations(sampling_params, 'scheduler')
+        schedulers = _get_single_entry_variations(sampling_params, 'scheduler')
         if len(schedulers) > 1:
             analysis['scheduler'] = FieldAnalysis(
                 name='scheduler',
@@ -198,7 +231,7 @@ def analyze_from_variation_lists(config: Dict[str, Any]) -> Dict[str, FieldAnaly
             )
         
         # Steps
-        steps = _get_list_variations(sampling_params, 'steps')
+        steps = _get_single_entry_variations(sampling_params, 'steps')
         if len(steps) > 1:
             analysis['steps'] = FieldAnalysis(
                 name='steps',
@@ -212,7 +245,7 @@ def analyze_from_variation_lists(config: Dict[str, Any]) -> Dict[str, FieldAnaly
             )
         
         # CFG
-        cfgs = _get_list_variations(sampling_params, 'cfg')
+        cfgs = _get_single_entry_variations(sampling_params, 'cfg')
         if len(cfgs) > 1:
             analysis['cfg'] = FieldAnalysis(
                 name='cfg',
