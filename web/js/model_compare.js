@@ -1189,7 +1189,7 @@ function registerExtension(app) {
                                 const response = await fetch('/model_compare/analyze_config', {
                                     method: 'POST',
                                     headers: { 'Content-Type': 'application/json' },
-                                    body: JSON.stringify(mockConfig)
+                                    body: JSON.stringify({ config: mockConfig })
                                 });
 
                                 if (!response.ok) {
@@ -1205,16 +1205,18 @@ function registerExtension(app) {
                                     const layout = result.layout;
                                     
                                     // Update row/col axis widgets
+                                    // API returns x_axis/y_axis, map to row_axis/col_axis
                                     const rowAxisWidget = self.widgets.find(w => w.name === "row_axis");
                                     const colAxisWidget = self.widgets.find(w => w.name === "col_axis");
                                     
-                                    if (rowAxisWidget && layout.row_axis) {
-                                        rowAxisWidget.value = layout.row_axis;
-                                        if (rowAxisWidget.callback) rowAxisWidget.callback(layout.row_axis);
+                                    // y_axis = row (vertical), x_axis = col (horizontal)
+                                    if (rowAxisWidget && layout.y_axis) {
+                                        rowAxisWidget.value = layout.y_axis;
+                                        if (rowAxisWidget.callback) rowAxisWidget.callback(layout.y_axis);
                                     }
-                                    if (colAxisWidget && layout.col_axis) {
-                                        colAxisWidget.value = layout.col_axis;
-                                        if (colAxisWidget.callback) colAxisWidget.callback(layout.col_axis);
+                                    if (colAxisWidget && layout.x_axis) {
+                                        colAxisWidget.value = layout.x_axis;
+                                        if (colAxisWidget.callback) colAxisWidget.callback(layout.x_axis);
                                     }
                                     
                                     // Update nest axes
@@ -1231,8 +1233,8 @@ function registerExtension(app) {
                                     
                                     // Show success message
                                     let msg = `Layout optimized!\n`;
-                                    msg += `• Row axis: ${layout.row_axis || 'auto'}\n`;
-                                    msg += `• Col axis: ${layout.col_axis || 'auto'}\n`;
+                                    msg += `• Row axis: ${layout.y_axis || 'auto'}\n`;
+                                    msg += `• Col axis: ${layout.x_axis || 'auto'}\n`;
                                     if (layout.nest_levels?.length > 0) {
                                         msg += `• Nest levels: ${layout.nest_levels.join(' → ')}\n`;
                                     }
