@@ -48,7 +48,22 @@ _tracker_state = {
 
 
 def reset_tracker_state():
-    """Reset tracker state for a new run."""
+    """Reset tracker state for a new run.
+    
+    NOTE: Only resets if not in 'complete' status, to preserve completed state
+    until a new workflow actually starts. Call force_reset_tracker_state() to
+    forcefully reset regardless of status.
+    """
+    global _tracker_state
+    # Don't reset if we're showing completed results - user wants to see them
+    if _tracker_state.get("status") == "complete":
+        return
+    
+    _force_reset_tracker_state()
+
+
+def _force_reset_tracker_state():
+    """Forcefully reset tracker state regardless of current status."""
     global _tracker_state
     _tracker_state = {
         "total_combinations": 0,
@@ -301,14 +316,21 @@ class CompareTracker:
         
         This method is called when the workflow runs. It initializes tracking
         state and returns UI data for display.
+        
+        Behavior:
+        - If config provided: Force reset and start new tracking session
+        - If no config: Return current state (preserving completed state)
         """
         warnings = []
         total_combinations = 0
         total_models = 0
         total_chains = 1
         
-        # If config provided, analyze it
+        # If config provided, this is a NEW workflow run - force reset and initialize
         if config:
+            # Force reset for new job
+            _force_reset_tracker_state()
+            
             combinations = config.get("combinations", [])
             model_variations = config.get("model_variations", [])
             sampling_configs = config.get("sampling_configs", {})
@@ -346,8 +368,7 @@ class CompareTracker:
             if total_models > 1:
                 warnings.append(f"{total_models} models to load sequentially")
             
-            # Initialize global tracker state
-            reset_tracker_state()
+            # Initialize global tracker state (already force reset above)
             update_tracker_state(
                 total_combinations=total_combinations,
                 completed_combinations=0,
@@ -358,12 +379,20 @@ class CompareTracker:
                 status="preparing",
             )
         else:
-            # No config - just get current state
+            # No config - just get current state (preserves completed state)
             state = get_tracker_state()
             total_combinations = state.get("total_combinations", 0)
             total_models = state.get("total_models", 0)
             total_chains = state.get("total_chains", 1)
             warnings = state.get("warnings", [])
+        
+        # Determine status to return
+        # If config provided, we're starting fresh -> "preparing"
+        # If no config, use current state status (could be "complete", "idle", etc.)
+        if config:
+            return_status = "preparing"
+        else:
+            return_status = get_tracker_state().get("status", "idle")
         
         # Return UI data for the node to display
         # The actual display is handled by JavaScript
@@ -374,7 +403,7 @@ class CompareTracker:
                 "models": [total_models],
                 "chains": [total_chains],
                 "warnings": [warnings],
-                "status": ["preparing" if config else "idle"],
+                "status": [return_status],
             }
         }
 
