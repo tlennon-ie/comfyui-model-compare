@@ -789,11 +789,23 @@ function registerExtension(app) {
                                     }
                                 }
 
-                                // Apply visibility
+                                // Apply visibility using both computeSize AND hidden property
                                 if (shouldShow) {
                                     widget.computeSize = widget.origComputeSize;
+                                    widget.hidden = false;
+                                    // Restore original type if it was converted
+                                    if (widget._origType) {
+                                        widget.type = widget._origType;
+                                        delete widget._origType;
+                                    }
                                 } else {
                                     widget.computeSize = () => [0, -4];
+                                    widget.hidden = true;
+                                    // For multiline widgets, convert to hidden type
+                                    if (widget.type && widget.type !== "converted-widget") {
+                                        widget._origType = widget.type;
+                                        widget.type = "converted-widget";
+                                    }
                                 }
                             });
 
