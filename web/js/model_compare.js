@@ -1044,7 +1044,11 @@ function registerExtension(app) {
                             // Find connected config input
                             const configInput = self.inputs?.find(i => i.name === "config");
                             if (!configInput || !configInput.link) {
-                                alert("Connect a config input first (from SamplerCompare node)");
+                                console.log("[GridCompare] No config input connected");
+                                showAnalysisResult(self, {
+                                    success: false,
+                                    error: "Connect a config input first (from SamplerCompare node)"
+                                });
                                 return;
                             }
 
@@ -1052,18 +1056,24 @@ function registerExtension(app) {
                             const graph = appRef.graph;
                             const link = graph.links[configInput.link];
                             if (!link) {
-                                alert("Could not find connected config link");
+                                showAnalysisResult(self, {
+                                    success: false,
+                                    error: "Could not find connected config link"
+                                });
                                 return;
                             }
 
                             const sourceNode = graph.getNodeById(link.origin_id);
                             if (!sourceNode) {
-                                alert("Could not find source config node");
+                                showAnalysisResult(self, {
+                                    success: false,
+                                    error: "Could not find source config node"
+                                });
                                 return;
                             }
 
-                            // Build a mock config from the source node's values
-                            // This traverses upstream to gather model/prompt/sampling variations
+                            // Build a mock config by traversing the ENTIRE upstream graph
+                            // This finds all Model Compare nodes and extracts their settings
                             const buildMockConfig = async () => {
                                 const config = {
                                     model_variations: [],
@@ -1075,17 +1085,31 @@ function registerExtension(app) {
                                     combinations: []
                                 };
 
-                                // Find connected upstream nodes
-                                const findUpstreamNode = (node, inputName) => {
-                                    const input = node.inputs?.find(i => i.name === inputName);
-                                    if (input && input.link) {
-                                        const upLink = graph.links[input.link];
-                                        if (upLink) {
-                                            return graph.getNodeById(upLink.origin_id);
+                                // Recursively find all upstream nodes
+                                const visitedNodes = new Set();
+                                const findAllUpstreamNodes = (node, depth = 0) => {
+                                    if (!node || visitedNodes.has(node.id) || depth > 20) return [];
+                                    visitedNodes.add(node.id);
+                                    
+                                    const nodes = [node];
+                                    if (node.inputs) {
+                                        for (const input of node.inputs) {
+                                            if (input.link) {
+                                                const upLink = graph.links[input.link];
+                                                if (upLink) {
+                                                    const upNode = graph.getNodeById(upLink.origin_id);
+                                                    if (upNode) {
+                                                        nodes.push(...findAllUpstreamNodes(upNode, depth + 1));
+                                                    }
+                                                }
+                                            }
                                         }
                                     }
-                                    return null;
+                                    return nodes;
                                 };
+
+                                const allUpstreamNodes = findAllUpstreamNodes(sourceNode);
+                                console.log("[GridCompare] Found upstream nodes:", allUpstreamNodes.map(n => n.type));
 
                                 // Extract values from widget by name
                                 const getWidgetValue = (node, name, defaultVal = null) => {
@@ -1093,97 +1117,207 @@ function registerExtension(app) {
                                     return widget ? widget.value : defaultVal;
                                 };
 
-                                // Find ModelCompareLoaders upstream
-                                const modelNode = findUpstreamNode(sourceNode, "model") || 
-                                                  findUpstreamNode(sourceNode, "loaders");
-                                if (modelNode && modelNode.type === "ModelCompareLoaders") {
-                                    const numModels = getWidgetValue(modelNode, "num_diffusion_models", 1);
-                                    const baseModel = getWidgetValue(modelNode, "diffusion_model", "");
-                                    
-                                    // Add base model
-                                    if (baseModel) {
-                                        config.model_variations.push({ 
-                                            name: baseModel.split('/').pop(),
-                                            display_name: baseModel.split('/').pop() 
+                                // Process each node type
+                                for (const node of allUpstreamNodes) {
+                                    if (node.type === "ModelCompareLoaders") {
+                                        const numModels = parseInt(getWidgetValue(node, "num_diffusion_models", 1));
+                                        const baseModel = getWidgetValue(node, "diffusion_model", "");
+                                        
+                                        // Add base model
+                                        if (baseModel && baseModel !== "NONE") {
+                                            config.model_variations.push({ 
+                                                name: baseModel.split('/').pop().replace('.safetensors', ''),
+                                                display_name: baseModel.split('/').pop().replace('.safetensors', '')
+                                            });
+                                        }
+                                        
+                                        // Add model variations
+                                        for (let i = 1; i < numModels; i++) {
+                                            const varModel = getWidgetValue(node, `diffusion_model_variation_${i}`, "");
+                                            if (varModel && varModel !== "NONE") {
+                                                config.model_variations.push({ 
+                                                    name: varModel.split('/').pop().replace('.safetensors', ''),
+                                                    display_name: varModel.split('/').pop().replace('.safetensors', '')
+                                                });
+                                            }
+                                        }
+
+                                        // VAE variations
+                                        const numVAE = parseInt(getWidgetValue(node, "num_vae_variations", 1));
+                                        const baseVAE = getWidgetValue(node, "vae", "");
+                                        if (baseVAE && baseVAE !== "NONE") {
+                                            config.vae_variations.push({ name: baseVAE });
+                                        }
+                                        for (let i = 0; i < numVAE; i++) {
+                                            const varVAE = getWidgetValue(node, `vae_variation_${i}`, "");
+                                            if (varVAE && varVAE !== "NONE" && !config.vae_variations.find(v => v.name === varVAE)) {
+                                                config.vae_variations.push({ name: varVAE });
+                                            }
+                                        }
+
+                                        // LoRA config
+                                        const numLoras = parseInt(getWidgetValue(node, "num_loras", 0));
+                                        for (let i = 0; i < numLoras; i++) {
+                                            const loraName = getWidgetValue(node, `lora_${i}`, "");
+                                            const loraStrengths = getWidgetValue(node, `lora_${i}_strengths`, "1.0");
+                                            if (loraName && loraName !== "NONE") {
+                                                const strengths = loraStrengths.toString().split(',')
+                                                    .map(s => parseFloat(s.trim()))
+                                                    .filter(v => !isNaN(v));
+                                                config.lora_config.push({
+                                                    name: loraName,
+                                                    strengths: strengths.length > 0 ? strengths : [1.0]
+                                                });
+                                            }
+                                        }
+                                    }
+                                    else if (node.type === "PromptCompare") {
+                                        const promptSource = getWidgetValue(node, "prompt_source", "manual");
+                                        
+                                        if (promptSource === "manual") {
+                                            const numPos = parseInt(getWidgetValue(node, "num_positive_prompts", 1));
+                                            const numNeg = parseInt(getWidgetValue(node, "num_negative_prompts", 1));
+                                            
+                                            for (let i = 1; i <= numPos; i++) {
+                                                const posPrompt = getWidgetValue(node, `positive_prompt_${i}`, "");
+                                                for (let j = 1; j <= numNeg; j++) {
+                                                    const negPrompt = getWidgetValue(node, `negative_prompt_${j}`, "");
+                                                    if (posPrompt || negPrompt) {
+                                                        config.prompt_variations.push({
+                                                            positive: posPrompt,
+                                                            negative: negPrompt
+                                                        });
+                                                    }
+                                                }
+                                            }
+                                        } else if (promptSource === "file") {
+                                            // File prompts - we can't read the file from JS, estimate from settings
+                                            const fileLoadMode = getWidgetValue(node, "file_load_mode", "all");
+                                            const maxPrompts = parseInt(getWidgetValue(node, "file_max_prompts", 10));
+                                            
+                                            // Add placeholder prompts based on estimated count
+                                            const estimatedCount = fileLoadMode === "range" ? maxPrompts : 10;
+                                            for (let i = 0; i < estimatedCount; i++) {
+                                                config.prompt_variations.push({
+                                                    positive: `[File Prompt ${i + 1}]`,
+                                                    negative: ""
+                                                });
+                                            }
+                                        }
+                                    }
+                                    else if (node.type === "SamplingConfigChain") {
+                                        // Build sampling params from config chain
+                                        const samplers = getWidgetValue(node, "sampler_name", "euler");
+                                        const schedulers = getWidgetValue(node, "scheduler", "normal");
+                                        const steps = getWidgetValue(node, "steps", "20");
+                                        const cfg = getWidgetValue(node, "cfg", "7.0");
+                                        const seed = getWidgetValue(node, "seed", "0");
+                                        
+                                        const parseCsv = (val, isInt = false) => {
+                                            if (!val) return [];
+                                            const str = val.toString();
+                                            if (str.includes(',')) {
+                                                return str.split(',').map(s => isInt ? parseInt(s.trim()) : parseFloat(s.trim())).filter(v => !isNaN(v));
+                                            }
+                                            const parsed = isInt ? parseInt(str) : parseFloat(str);
+                                            return isNaN(parsed) ? [str.trim()] : [parsed];
+                                        };
+                                        
+                                        const parseCsvStr = (val) => {
+                                            if (!val) return [];
+                                            const str = val.toString();
+                                            return str.includes(',') ? str.split(',').map(s => s.trim()) : [str.trim()];
+                                        };
+                                        
+                                        config.sampling_params.push({
+                                            sampler_name: parseCsvStr(samplers),
+                                            scheduler: parseCsvStr(schedulers),
+                                            steps: parseCsv(steps, true),
+                                            cfg: parseCsv(cfg),
+                                            seed: parseCsv(seed, true)
                                         });
                                     }
-                                    
-                                    // Add model variations
-                                    for (let i = 1; i < numModels; i++) {
-                                        const varModel = getWidgetValue(modelNode, `diffusion_model_variation_${i}`, "");
-                                        if (varModel) {
-                                            config.model_variations.push({ 
-                                                name: varModel.split('/').pop(),
-                                                display_name: varModel.split('/').pop() 
-                                            });
+                                    else if (node.type === "LoraCompare") {
+                                        const numLoras = parseInt(getWidgetValue(node, "num_loras", 1));
+                                        
+                                        for (let i = 0; i < numLoras; i++) {
+                                            const loraName = getWidgetValue(node, `lora_${i}`, "");
+                                            const loraStrengths = getWidgetValue(node, `lora_${i}_strengths`, "1.0");
+                                            if (loraName && loraName !== "NONE") {
+                                                const strengths = loraStrengths.toString().split(',')
+                                                    .map(s => parseFloat(s.trim()))
+                                                    .filter(v => !isNaN(v));
+                                                config.lora_config.push({
+                                                    name: loraName,
+                                                    strengths: strengths.length > 0 ? strengths : [1.0]
+                                                });
+                                            }
                                         }
                                     }
-
-                                    // VAE variations
-                                    const numVAE = getWidgetValue(modelNode, "num_vae_variations", 1);
-                                    const baseVAE = getWidgetValue(modelNode, "vae", "");
-                                    if (baseVAE) config.vae_variations.push({ name: baseVAE });
-                                    for (let i = 0; i < numVAE; i++) {
-                                        const varVAE = getWidgetValue(modelNode, `vae_variation_${i}`, "");
-                                        if (varVAE) config.vae_variations.push({ name: varVAE });
-                                    }
-
-                                    // LoRA config
-                                    const numLoras = getWidgetValue(modelNode, "num_loras", 0);
-                                    for (let i = 0; i < numLoras; i++) {
-                                        const loraName = getWidgetValue(modelNode, `lora_${i}`, "");
-                                        const loraStrengths = getWidgetValue(modelNode, `lora_${i}_strengths`, "1.0");
-                                        if (loraName) {
-                                            config.lora_config.push({
-                                                name: loraName,
-                                                strengths: loraStrengths.split(',').map(s => parseFloat(s.trim())).filter(v => !isNaN(v))
-                                            });
-                                        }
-                                    }
-                                }
-
-                                // Find PromptCompare upstream
-                                const promptNode = findUpstreamNode(sourceNode, "prompt_config") ||
-                                                   findUpstreamNode(sourceNode, "prompts");
-                                if (promptNode && promptNode.type === "PromptCompare") {
-                                    const numPos = getWidgetValue(promptNode, "num_positive_prompts", 1);
-                                    const numNeg = getWidgetValue(promptNode, "num_negative_prompts", 1);
-                                    
-                                    for (let i = 1; i <= numPos; i++) {
-                                        const posPrompt = getWidgetValue(promptNode, `positive_prompt_${i}`, "");
-                                        for (let j = 1; j <= numNeg; j++) {
-                                            const negPrompt = getWidgetValue(promptNode, `negative_prompt_${j}`, "");
-                                            config.prompt_variations.push({
-                                                positive: posPrompt,
-                                                negative: negPrompt
-                                            });
+                                    else if (node.type === "SamplerCompareAdvanced") {
+                                        // Extract global overrides that create variations
+                                        const numGlobalFields = parseInt(getWidgetValue(node, "num_global_fields", 0));
+                                        
+                                        for (let i = 0; i < numGlobalFields; i++) {
+                                            const paramType = getWidgetValue(node, `global_param_type_${i}`, "NONE");
+                                            if (paramType === "NONE") continue;
+                                            
+                                            let valueWidget = null;
+                                            if (paramType === "seed") valueWidget = `global_value_seed_${i}`;
+                                            else if (paramType === "steps") valueWidget = `global_value_steps_${i}`;
+                                            else if (paramType === "cfg") valueWidget = `global_value_cfg_${i}`;
+                                            else if (paramType === "denoise") valueWidget = `global_value_denoise_${i}`;
+                                            else if (paramType === "sampler_name") valueWidget = `global_value_sampler_${i}`;
+                                            else if (paramType === "scheduler") valueWidget = `global_value_scheduler_${i}`;
+                                            
+                                            if (valueWidget) {
+                                                const value = getWidgetValue(node, valueWidget, "");
+                                                if (value) {
+                                                    // Create/update sampling params with this override
+                                                    if (config.sampling_params.length === 0) {
+                                                        config.sampling_params.push({});
+                                                    }
+                                                    const params = config.sampling_params[0];
+                                                    const values = value.toString().split(',').map(s => s.trim());
+                                                    params[paramType] = values;
+                                                }
+                                            }
                                         }
                                     }
                                 }
 
-                                // Find SamplingConfigChain or sampling parameters
-                                const samplingNode = findUpstreamNode(sourceNode, "sampling") ||
-                                                     findUpstreamNode(sourceNode, "sampling_config");
-                                if (samplingNode) {
-                                    // Build sampling params from connected chain or simple node
-                                    const samplers = getWidgetValue(samplingNode, "sampler_name", "euler");
-                                    const schedulers = getWidgetValue(samplingNode, "scheduler", "normal");
-                                    const steps = getWidgetValue(samplingNode, "steps", "20");
-                                    const cfg = getWidgetValue(samplingNode, "cfg", "7.0");
-                                    
-                                    config.sampling_params.push({
-                                        sampler_name: samplers.includes(',') ? samplers.split(',').map(s => s.trim()) : [samplers],
-                                        scheduler: schedulers.includes(',') ? schedulers.split(',').map(s => s.trim()) : [schedulers],
-                                        steps: steps.toString().includes(',') ? steps.split(',').map(s => parseInt(s.trim())).filter(v => !isNaN(v)) : [parseInt(steps)],
-                                        cfg: cfg.toString().includes(',') ? cfg.split(',').map(s => parseFloat(s.trim())).filter(v => !isNaN(v)) : [parseFloat(cfg)]
-                                    });
+                                // Calculate estimated combinations
+                                let totalCombinations = 1;
+                                if (config.model_variations.length > 0) totalCombinations *= config.model_variations.length;
+                                if (config.vae_variations.length > 1) totalCombinations *= config.vae_variations.length;
+                                if (config.prompt_variations.length > 0) totalCombinations *= config.prompt_variations.length;
+                                
+                                // LoRA variations
+                                for (const lora of config.lora_config) {
+                                    if (lora.strengths && lora.strengths.length > 1) {
+                                        totalCombinations *= lora.strengths.length;
+                                    }
                                 }
-
+                                
+                                // Sampling variations
+                                for (const sampling of config.sampling_params) {
+                                    for (const [key, values] of Object.entries(sampling)) {
+                                        if (Array.isArray(values) && values.length > 1) {
+                                            totalCombinations *= values.length;
+                                        }
+                                    }
+                                }
+                                
+                                // Store estimated count
+                                config._estimated_combinations = totalCombinations;
+                                
+                                console.log("[GridCompare] Built config:", config);
                                 return config;
                             };
 
                             try {
                                 const mockConfig = await buildMockConfig();
+                                console.log("[GridCompare] Sending config to API:", JSON.stringify(mockConfig, null, 2));
                                 
                                 // Call the analysis API
                                 const response = await fetch('/model_compare/analyze_config', {
@@ -1194,11 +1328,20 @@ function registerExtension(app) {
 
                                 if (!response.ok) {
                                     const error = await response.json();
-                                    alert(`Analysis failed: ${error.error || 'Unknown error'}`);
+                                    showAnalysisResult(self, {
+                                        success: false,
+                                        error: error.error || 'Unknown error'
+                                    });
                                     return;
                                 }
 
                                 const result = await response.json();
+                                console.log("[GridCompare] API response:", result);
+                                
+                                // Override total_combinations with our client-side estimate if API returned 0/1
+                                if (result.analysis && (!result.analysis.total_combinations || result.analysis.total_combinations <= 1)) {
+                                    result.analysis.total_combinations = mockConfig._estimated_combinations || 1;
+                                }
                                 
                                 // Apply the layout recommendation to widgets
                                 if (result.layout) {
@@ -1230,24 +1373,73 @@ function registerExtension(app) {
                                             }
                                         }
                                     }
-                                    
-                                    // Show success message
-                                    let msg = `Layout optimized!\n`;
-                                    msg += `• Row axis: ${layout.y_axis || 'auto'}\n`;
-                                    msg += `• Col axis: ${layout.x_axis || 'auto'}\n`;
-                                    if (layout.nest_levels?.length > 0) {
-                                        msg += `• Nest levels: ${layout.nest_levels.join(' → ')}\n`;
-                                    }
-                                    msg += `• Total combinations: ${result.analysis?.total_combinations || 'unknown'}`;
-                                    
-                                    alert(msg);
-                                } else {
-                                    alert("No layout recommendation available. Config may be too simple.");
                                 }
+                                
+                                // Show result in tracker (not alert)
+                                showAnalysisResult(self, result);
 
                                 // Refresh canvas
                                 if (appRef && appRef.graph) {
                                     appRef.graph.setDirtyCanvas(true, true);
+                                }
+
+                            } catch (e) {
+                                console.error("[GridCompare] Analyze error:", e);
+                                showAnalysisResult(self, {
+                                    success: false,
+                                    error: e.message
+                                });
+                            }
+                        };
+
+                        // Helper to show analysis results (find tracker or show inline)
+                        const showAnalysisResult = (gridNode, result) => {
+                            // Find CompareTracker node if it exists
+                            const trackerNode = appRef.graph._nodes?.find(n => n.type === "CompareTracker");
+                            
+                            if (trackerNode && trackerNode._trackerData) {
+                                // Update tracker with analysis info
+                                if (result.success === false) {
+                                    trackerNode._trackerData = {
+                                        ...trackerNode._trackerData,
+                                        status: "error",
+                                        analysisError: result.error
+                                    };
+                                } else {
+                                    const layout = result.layout || {};
+                                    trackerNode._trackerData = {
+                                        ...trackerNode._trackerData,
+                                        status: "analyzed",
+                                        total: result.analysis?.total_combinations || 0,
+                                        analysisResult: {
+                                            rowAxis: layout.y_axis || 'auto',
+                                            colAxis: layout.x_axis || 'auto',
+                                            nestLevels: layout.nest_levels || [],
+                                            warnings: result.warnings || []
+                                        }
+                                    };
+                                }
+                                
+                                // Refresh canvas to update tracker display
+                                if (appRef && appRef.graph) {
+                                    appRef.graph.setDirtyCanvas(true, true);
+                                }
+                            } else {
+                                // No tracker - show console message
+                                if (result.success === false) {
+                                    console.error("[GridCompare] Analysis failed:", result.error);
+                                } else {
+                                    const layout = result.layout || {};
+                                    console.log("[GridCompare] Layout optimized!");
+                                    console.log(`  Row axis: ${layout.y_axis || 'auto'}`);
+                                    console.log(`  Col axis: ${layout.x_axis || 'auto'}`);
+                                    if (layout.nest_levels?.length > 0) {
+                                        console.log(`  Nest levels: ${layout.nest_levels.join(' → ')}`);
+                                    }
+                                    console.log(`  Total combinations: ${result.analysis?.total_combinations || 'unknown'}`);
+                                }
+                            }
+                        };
                                 }
 
                             } catch (e) {
@@ -1874,10 +2066,63 @@ function registerExtension(app) {
                             
                             ctx.textAlign = "left";
                             
-                            if (data.status === "idle" || !data.total) {
+                            if (data.status === "idle" || (!data.total && data.status !== "analyzed" && data.status !== "error")) {
                                 // Idle state
                                 ctx.fillStyle = "#888888";
                                 ctx.fillText("⏸ Waiting for workflow...", x, y);
+                            } else if (data.status === "analyzed") {
+                                // Analysis result display
+                                ctx.fillStyle = "#88ccff";
+                                ctx.fillText("🔍 Layout Analyzed", x, y);
+                                y += lineHeight;
+                                
+                                if (data.analysisResult) {
+                                    const ar = data.analysisResult;
+                                    ctx.fillStyle = "#aaaaaa";
+                                    ctx.fillText(`  Row axis: ${ar.rowAxis || 'auto'}`, x, y);
+                                    y += lineHeight;
+                                    ctx.fillText(`  Col axis: ${ar.colAxis || 'auto'}`, x, y);
+                                    y += lineHeight;
+                                    
+                                    if (ar.nestLevels && ar.nestLevels.length > 0) {
+                                        ctx.fillText(`  Nest: ${ar.nestLevels.join(' → ')}`, x, y);
+                                        y += lineHeight;
+                                    }
+                                    
+                                    ctx.fillStyle = "#88ff88";
+                                    ctx.fillText(`  Combinations: ${data.total || '?'}`, x, y);
+                                    y += lineHeight;
+                                    
+                                    // Show warnings if any
+                                    if (ar.warnings && ar.warnings.length > 0) {
+                                        y += 5;
+                                        ctx.fillStyle = "#ffaa44";
+                                        ctx.fillText("⚠ Warnings:", x, y);
+                                        y += lineHeight;
+                                        
+                                        ctx.fillStyle = "#ff8844";
+                                        ctx.font = "11px monospace";
+                                        ar.warnings.slice(0, 3).forEach(w => {
+                                            const warnText = w.length > 32 ? w.substring(0, 29) + "..." : w;
+                                            ctx.fillText(`  ${warnText}`, x, y);
+                                            y += lineHeight - 2;
+                                        });
+                                        ctx.font = "12px monospace";
+                                    }
+                                }
+                            } else if (data.status === "error") {
+                                // Error state
+                                ctx.fillStyle = "#ff6666";
+                                ctx.fillText("✗ Analysis Error", x, y);
+                                y += lineHeight;
+                                
+                                if (data.analysisError) {
+                                    ctx.fillStyle = "#ff8888";
+                                    ctx.font = "11px monospace";
+                                    const errText = data.analysisError.length > 35 ? data.analysisError.substring(0, 32) + "..." : data.analysisError;
+                                    ctx.fillText(`  ${errText}`, x, y);
+                                    ctx.font = "12px monospace";
+                                }
                             } else if (data.status === "complete") {
                                 // Complete state
                                 ctx.fillStyle = "#88ff88";
