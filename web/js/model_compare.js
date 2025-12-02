@@ -1724,8 +1724,12 @@ function registerExtension(app) {
                                 if (local_pos[0] >= btn.x && local_pos[0] <= btn.x + btn.width &&
                                     local_pos[1] >= btn.y && local_pos[1] <= btn.y + btn.height) {
                                     // Open the HTML grid in a new tab
-                                    // URL is already a complete file:// URL, don't prepend origin
-                                    window.open(this._trackerData.htmlGridUrl, '_blank');
+                                    // URL is relative (starts with /), prepend origin
+                                    let url = this._trackerData.htmlGridUrl;
+                                    if (url.startsWith('/')) {
+                                        url = window.location.origin + url;
+                                    }
+                                    window.open(url, '_blank');
                                     return true;
                                 }
                             }

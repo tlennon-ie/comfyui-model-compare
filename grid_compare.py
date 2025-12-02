@@ -1695,10 +1695,23 @@ class GridCompare:
                 # Notify tracker that HTML grid is available
                 try:
                     from .compare_tracker import set_html_grid_available
-                    # Create a file:// URL for direct access to the HTML file
-                    # Convert Windows path to file URL format
-                    file_url = "file:///" + html_path.replace("\\", "/")
-                    set_html_grid_available(html_path, file_url)
+                    import folder_paths
+                    import urllib.parse
+                    
+                    # Get the output directory to calculate relative path
+                    output_dir = folder_paths.get_output_directory()
+                    
+                    # Calculate subfolder relative to output directory
+                    rel_path = os.path.relpath(html_path, output_dir)
+                    subfolder = os.path.dirname(rel_path).replace("\\", "/")
+                    filename = os.path.basename(html_path)
+                    
+                    # Build /view URL with proper encoding
+                    encoded_filename = urllib.parse.quote(filename)
+                    encoded_subfolder = urllib.parse.quote(subfolder)
+                    view_url = f"/view?filename={encoded_filename}&type=output&subfolder={encoded_subfolder}"
+                    
+                    set_html_grid_available(html_path, view_url)
                 except Exception as e:
                     print(f"[GridCompare] Could not notify tracker: {e}")
                 
