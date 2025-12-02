@@ -721,12 +721,6 @@ function registerExtension(app) {
                             const isManualMode = promptSource === "manual";
                             const isFileMode = promptSource === "file";
                             const isRangeMode = fileLoadMode === "range";
-                            
-                            // Debug logging
-                            console.log("[PromptCompare] Updating visibility:", {
-                                promptSource, isManualMode, isFileMode, numPos, numNeg,
-                                widgetCount: self.widgets.length
-                            });
 
                             // Widgets that are always visible
                             const alwaysVisible = ["prompt_source", "prompt_mode"];

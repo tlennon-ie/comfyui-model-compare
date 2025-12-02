@@ -367,13 +367,14 @@ class CompareTracker:
         
         # Return UI data for the node to display
         # The actual display is handled by JavaScript
+        # NOTE: UI values must be lists for ComfyUI to merge them correctly
         return {
             "ui": {
-                "total": total_combinations,
-                "models": total_models,
-                "chains": total_chains,
-                "warnings": warnings,
-                "status": "preparing" if config else "idle",
+                "total": [total_combinations],
+                "models": [total_models],
+                "chains": [total_chains],
+                "warnings": [warnings],
+                "status": ["preparing" if config else "idle"],
             }
         }
 
