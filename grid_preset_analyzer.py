@@ -14,27 +14,32 @@ import math
 
 
 # Priority weights for different fields (higher = more important to vary visually)
+# Field names MUST match GridCompare dropdown options exactly:
+# ["model", "vae", "clip", "lora_name", "lora_strength", "sampler_name", "scheduler", 
+#  "lumina_shift", "qwen_shift", "wan_shift", "wan22_shift", "hunyuan_shift", "flux_guidance",
+#  "cfg", "steps", "seed", "width", "height", "prompt_positive", "prompt_negative"]
 FIELD_PRIORITY = {
-    'prompt': 100,       # Most important - people want to see prompt differences
-    'model': 90,         # Second most important - comparing models is primary use case
-    'vae': 85,           # VAE differences are significant
-    'sampler': 60,       # Sampling differences are interesting
-    'scheduler': 55,     # Related to sampler
-    'steps': 40,         # Technical parameter
-    'cfg': 35,           # Technical parameter
-    'lora': 30,          # LoRA selection
-    'lora_strength': 15, # LoRA strength variations
-    'seed': 5,           # Usually least important for visual comparison
+    'prompt_positive': 100,  # Most important - people want to see prompt differences
+    'prompt_negative': 95,   # Negative prompt variations
+    'model': 90,             # Second most important - comparing models is primary use case
+    'vae': 85,               # VAE differences are significant
+    'sampler_name': 60,      # Sampling differences are interesting
+    'scheduler': 55,         # Related to sampler
+    'steps': 40,             # Technical parameter
+    'cfg': 35,               # Technical parameter
+    'lora_name': 30,         # LoRA selection
+    'lora_strength': 15,     # LoRA strength variations
+    'seed': 5,               # Usually least important for visual comparison
 }
 
 # Fields that work well as row axes (typically fewer values, important differences)
-ROW_AXIS_CANDIDATES = {'prompt', 'model', 'vae', 'sampler'}
+ROW_AXIS_CANDIDATES = {'prompt_positive', 'prompt_negative', 'model', 'vae', 'sampler_name'}
 
 # Fields that work well as column axes (can have more values)
-COL_AXIS_CANDIDATES = {'model', 'sampler', 'scheduler', 'steps', 'cfg', 'lora', 'lora_strength'}
+COL_AXIS_CANDIDATES = {'model', 'sampler_name', 'scheduler', 'steps', 'cfg', 'lora_name', 'lora_strength'}
 
 # Fields that work well as nest levels (grouping outer dimensions)
-NEST_CANDIDATES = {'prompt', 'model', 'vae', 'sampler', 'scheduler'}
+NEST_CANDIDATES = {'prompt_positive', 'model', 'vae', 'sampler_name', 'scheduler'}
 
 
 @dataclass
@@ -154,18 +159,18 @@ def analyze_from_variation_lists(config: Dict[str, Any]) -> Dict[str, FieldAnaly
     # Analyze sampling params
     sampling_params = config.get('sampling_params', [])
     if sampling_params:
-        # Samplers
+        # Samplers - use 'sampler_name' to match GridCompare dropdown
         samplers = _get_list_variations(sampling_params, 'sampler_name')
         if len(samplers) > 1:
-            analysis['sampler'] = FieldAnalysis(
-                name='sampler',
+            analysis['sampler_name'] = FieldAnalysis(
+                name='sampler_name',
                 display_name='Sampler',
                 values=samplers,
                 value_count=len(samplers),
-                priority=FIELD_PRIORITY.get('sampler', 50),
-                is_row_candidate='sampler' in ROW_AXIS_CANDIDATES,
-                is_col_candidate='sampler' in COL_AXIS_CANDIDATES,
-                is_nest_candidate='sampler' in NEST_CANDIDATES,
+                priority=FIELD_PRIORITY.get('sampler_name', 50),
+                is_row_candidate='sampler_name' in ROW_AXIS_CANDIDATES,
+                is_col_candidate='sampler_name' in COL_AXIS_CANDIDATES,
+                is_nest_candidate='sampler_name' in NEST_CANDIDATES,
             )
         
         # Schedulers
@@ -213,26 +218,26 @@ def analyze_from_variation_lists(config: Dict[str, Any]) -> Dict[str, FieldAnaly
     # Analyze LoRA config
     lora_config = config.get('lora_config', [])
     if lora_config:
-        # LoRA names
+        # LoRA names - use 'lora_name' to match GridCompare dropdown
         lora_names = _extract_unique_values(lora_config, 'name')
         lora_names = [n for n in lora_names if n and n != 'None']
         if len(lora_names) > 1:
-            analysis['lora'] = FieldAnalysis(
-                name='lora',
+            analysis['lora_name'] = FieldAnalysis(
+                name='lora_name',
                 display_name='LoRA',
                 values=lora_names,
                 value_count=len(lora_names),
-                priority=FIELD_PRIORITY.get('lora', 50),
-                is_row_candidate='lora' in ROW_AXIS_CANDIDATES,
-                is_col_candidate='lora' in COL_AXIS_CANDIDATES,
-                is_nest_candidate='lora' in NEST_CANDIDATES,
+                priority=FIELD_PRIORITY.get('lora_name', 50),
+                is_row_candidate='lora_name' in ROW_AXIS_CANDIDATES,
+                is_col_candidate='lora_name' in COL_AXIS_CANDIDATES,
+                is_nest_candidate='lora_name' in NEST_CANDIDATES,
             )
         
         # LoRA strengths (collect all unique strengths across all LoRAs)
         all_strengths = set()
         for lora in lora_config:
             if isinstance(lora, dict):
-                for key in ['strength_model', 'strength_clip', 'strength']:
+                for key in ['strength_model', 'strength_clip', 'strength', 'strengths']:
                     strengths = lora.get(key, [])
                     if isinstance(strengths, list):
                         all_strengths.update(strengths)
@@ -252,20 +257,20 @@ def analyze_from_variation_lists(config: Dict[str, Any]) -> Dict[str, FieldAnaly
                 is_nest_candidate='lora_strength' in NEST_CANDIDATES,
             )
     
-    # Analyze prompt variations
+    # Analyze prompt variations - use 'prompt_positive' to match GridCompare dropdown
     prompt_variations = config.get('prompt_variations', [])
     if prompt_variations and len(prompt_variations) > 1:
         # Use index as identifier since prompts can be long
         prompt_labels = [f"Prompt {i+1}" for i in range(len(prompt_variations))]
-        analysis['prompt'] = FieldAnalysis(
-            name='prompt',
+        analysis['prompt_positive'] = FieldAnalysis(
+            name='prompt_positive',
             display_name='Prompt',
             values=prompt_labels,
             value_count=len(prompt_variations),
-            priority=FIELD_PRIORITY.get('prompt', 100),
-            is_row_candidate='prompt' in ROW_AXIS_CANDIDATES,
-            is_col_candidate='prompt' in COL_AXIS_CANDIDATES,
-            is_nest_candidate='prompt' in NEST_CANDIDATES,
+            priority=FIELD_PRIORITY.get('prompt_positive', 100),
+            is_row_candidate='prompt_positive' in ROW_AXIS_CANDIDATES,
+            is_col_candidate='prompt_positive' in COL_AXIS_CANDIDATES,
+            is_nest_candidate='prompt_positive' in NEST_CANDIDATES,
         )
     
     return analysis
@@ -621,19 +626,24 @@ def analyze_from_combinations(combinations: List[Dict[str, Any]]) -> Dict[str, F
 
 
 def _canonicalize_field_name(name: str) -> str:
-    """Convert field name to canonical form."""
+    """Convert field name to canonical form that matches GridCompare dropdown options."""
     name_lower = name.lower()
     
+    # Map various input field names to GridCompare dropdown values
     mappings = {
         'model_name': 'model',
         'checkpoint': 'model',
         'vae_name': 'vae',
-        'sampler_name': 'sampler',
-        'positive': 'prompt',
-        'positive_prompt': 'prompt',
+        # sampler_name stays as sampler_name (matches dropdown)
+        'sampler': 'sampler_name',
+        'positive': 'prompt_positive',
+        'positive_prompt': 'prompt_positive',
+        'negative': 'prompt_negative',
+        'negative_prompt': 'prompt_negative',
+        'prompt': 'prompt_positive',
         'strength_model': 'lora_strength',
         'strength_clip': 'lora_strength',
-        'lora_name': 'lora',
+        'lora': 'lora_name',
     }
     
     return mappings.get(name_lower, name_lower)
@@ -644,12 +654,13 @@ def _get_display_name(canonical: str) -> str:
     display_names = {
         'model': 'Model',
         'vae': 'VAE',
-        'sampler': 'Sampler',
+        'sampler_name': 'Sampler',
         'scheduler': 'Scheduler',
         'steps': 'Steps',
         'cfg': 'CFG Scale',
-        'prompt': 'Prompt',
-        'lora': 'LoRA',
+        'prompt_positive': 'Pos Prompt',
+        'prompt_negative': 'Neg Prompt',
+        'lora_name': 'LoRA',
         'lora_strength': 'LoRA Strength',
         'seed': 'Seed',
     }
