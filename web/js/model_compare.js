@@ -669,7 +669,7 @@ function registerExtension(app) {
                 chainCallback(nodeType.prototype, "configure", function (info) {
                     setTimeout(() => {
                         if (this.size) {
-                            this.size[0] = 400;
+                            this.size[0] = 450;
                         }
                         // Trigger visibility update after configure
                         if (this._updatePromptVisibility) {
@@ -699,8 +699,34 @@ function registerExtension(app) {
                         const updatePromptVisibility = () => {
                             ensureOrigComputeSize();
                             
-                            const numWidget = self.widgets.find((x) => x.name === "num_prompt_variations");
-                            const num_prompt_variations = numWidget ? parseInt(numWidget.value, 10) : 1;
+                            // Get mode widgets (names must match Python INPUT_TYPES exactly)
+                            const promptSourceWidget = self.widgets.find((x) => x.name === "prompt_source");
+                            const fileLoadModeWidget = self.widgets.find((x) => x.name === "file_load_mode");
+                            const numPosWidget = self.widgets.find((x) => x.name === "num_positive_prompts");
+                            const numNegWidget = self.widgets.find((x) => x.name === "num_negative_prompts");
+                            
+                            const promptSource = promptSourceWidget ? promptSourceWidget.value : "manual";
+                            const fileLoadMode = fileLoadModeWidget ? fileLoadModeWidget.value : "all";
+                            const numPos = numPosWidget ? parseInt(numPosWidget.value, 10) : 1;
+                            const numNeg = numNegWidget ? parseInt(numNegWidget.value, 10) : 1;
+                            
+                            const isManualMode = promptSource === "manual";
+                            const isFileMode = promptSource === "file";
+                            const isRangeMode = fileLoadMode === "range";
+
+                            // Widgets that are always visible
+                            const alwaysVisible = ["prompt_source", "prompt_mode"];
+                            
+                            // Widgets visible only in manual mode
+                            const manualModeWidgets = [
+                                "num_positive_prompts", "num_negative_prompts"
+                            ];
+                            
+                            // Widgets visible only in file mode  
+                            const fileModeWidgets = ["prompt_file_path", "file_load_mode"];
+                            
+                            // Widgets visible only in file mode with range
+                            const fileRangeWidgets = ["file_start_index", "file_end_index", "file_max_prompts"];
 
                             self.widgets.forEach((widget) => {
                                 if (!widget.name || widget.type === "button") {
@@ -710,21 +736,43 @@ function registerExtension(app) {
                                     return;
                                 }
 
-                                // Always show prompt 1 and the slider
-                                if (widget.name === "num_prompt_variations" || 
-                                    widget.name === "positive_prompt_1" || 
-                                    widget.name === "negative_prompt_1") {
-                                    widget.computeSize = widget.origComputeSize;
-                                    return;
-                                }
-
                                 let shouldShow = false;
 
-                                // Check for positive_prompt_N or negative_prompt_N
-                                if (widget.name.startsWith("positive_prompt_") || widget.name.startsWith("negative_prompt_")) {
-                                    const parts = widget.name.split("_");
-                                    const num = parseInt(parts[parts.length - 1], 10);
-                                    shouldShow = num <= num_prompt_variations;
+                                // Always visible widgets
+                                if (alwaysVisible.includes(widget.name)) {
+                                    shouldShow = true;
+                                }
+                                // Manual mode widgets
+                                else if (manualModeWidgets.includes(widget.name)) {
+                                    shouldShow = isManualMode;
+                                }
+                                // File mode widgets
+                                else if (fileModeWidgets.includes(widget.name)) {
+                                    shouldShow = isFileMode;
+                                }
+                                // File range widgets
+                                else if (fileRangeWidgets.includes(widget.name)) {
+                                    shouldShow = isFileMode && isRangeMode;
+                                }
+                                // Positive prompts (manual mode only)
+                                else if (widget.name.startsWith("positive_prompt_")) {
+                                    if (isManualMode) {
+                                        const parts = widget.name.split("_");
+                                        const num = parseInt(parts[parts.length - 1], 10);
+                                        shouldShow = num <= numPos;
+                                    } else {
+                                        shouldShow = false;
+                                    }
+                                }
+                                // Negative prompts (manual mode only)
+                                else if (widget.name.startsWith("negative_prompt_")) {
+                                    if (isManualMode) {
+                                        const parts = widget.name.split("_");
+                                        const num = parseInt(parts[parts.length - 1], 10);
+                                        shouldShow = num <= numNeg;
+                                    } else {
+                                        shouldShow = false;
+                                    }
                                 }
 
                                 if (shouldShow) {
@@ -738,7 +786,7 @@ function registerExtension(app) {
                             if (self.size) {
                                 self.setSize(self.computeSize());
                             }
-                            self.size[0] = 400;
+                            self.size[0] = 450;
 
                             if (appRef && appRef.graph) {
                                 appRef.graph.setDirtyCanvas(true, true);
@@ -748,15 +796,22 @@ function registerExtension(app) {
                         // Store the function on the node for later access
                         self._updatePromptVisibility = updatePromptVisibility;
 
-                        // Add callback to num_prompt_variations widget
-                        const numWidget = self.widgets.find(w => w.name === "num_prompt_variations");
-                        if (numWidget) {
-                            const originalCallback = numWidget.callback;
-                            numWidget.callback = function (value) {
-                                if (originalCallback) originalCallback.call(this, value);
-                                updatePromptVisibility();
-                            };
-                        }
+                        // Add callbacks to control widgets
+                        const controlWidgets = [
+                            "prompt_source", "file_load_mode", 
+                            "num_positive_prompts", "num_negative_prompts"
+                        ];
+                        
+                        controlWidgets.forEach(widgetName => {
+                            const widget = self.widgets.find(w => w.name === widgetName);
+                            if (widget) {
+                                const originalCallback = widget.callback;
+                                widget.callback = function (value) {
+                                    if (originalCallback) originalCallback.call(this, value);
+                                    updatePromptVisibility();
+                                };
+                            }
+                        });
 
                         // Add Update Inputs button
                         const updateBtn = this.addWidget("button", "Update Inputs", null, () => {
@@ -772,7 +827,7 @@ function registerExtension(app) {
                         }, 100);
 
                     } catch (e) {
-                        // Silent fail
+                        console.error("[PromptCompare] Error in onNodeCreated:", e);
                     }
                 });
             }
