@@ -18,6 +18,16 @@ import math
 # ["model", "vae", "clip", "lora_name", "lora_strength", "sampler_name", "scheduler", 
 #  "lumina_shift", "qwen_shift", "wan_shift", "wan22_shift", "hunyuan_shift", "flux_guidance",
 #  "cfg", "steps", "seed", "width", "height", "prompt_positive", "prompt_negative"]
+
+# Valid field names that match GridCompare dropdown options
+VALID_GRID_FIELDS = {
+    'model', 'vae', 'clip', 'lora_name', 'lora_strength', 
+    'sampler_name', 'scheduler', 'steps', 'cfg', 'seed',
+    'width', 'height', 'prompt_positive', 'prompt_negative',
+    'lumina_shift', 'qwen_shift', 'wan_shift', 'wan22_shift', 
+    'hunyuan_shift', 'flux_guidance'
+}
+
 FIELD_PRIORITY = {
     'prompt_positive': 100,  # Most important - people want to see prompt differences
     'prompt_negative': 95,   # Negative prompt variations
@@ -601,6 +611,7 @@ def analyze_from_combinations(combinations: List[Dict[str, Any]]) -> Dict[str, F
     """
     Analyze from pre-computed combinations array.
     Each combination is a dict with field values.
+    Only considers fields that are valid GridCompare dropdown options.
     """
     if not combinations:
         return {}
@@ -614,17 +625,25 @@ def analyze_from_combinations(combinations: List[Dict[str, Any]]) -> Dict[str, F
         if not isinstance(combo, dict):
             continue
         for key, value in combo.items():
+            # Skip internal/private fields (start with _)
+            if key.startswith('_'):
+                continue
+            # Skip complex dict/list values that aren't hashable
+            if isinstance(value, (dict, list)):
+                continue
             if key not in field_values:
                 field_values[key] = set()
-            # Convert to hashable
-            hashable = str(value) if isinstance(value, (dict, list)) else value
-            field_values[key].add(hashable)
+            field_values[key].add(value)
     
     # Create FieldAnalysis for fields with multiple values
     for field_name, values in field_values.items():
         if len(values) > 1:
             # Map field name to canonical form
             canonical = _canonicalize_field_name(field_name)
+            
+            # Only include fields that are valid GridCompare dropdown options
+            if canonical not in VALID_GRID_FIELDS:
+                continue
             
             analysis[canonical] = FieldAnalysis(
                 name=canonical,
