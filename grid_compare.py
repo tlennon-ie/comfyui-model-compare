@@ -16,6 +16,14 @@ import json
 import comfy.cli_args
 args = comfy.cli_args.args
 
+# Import smart preset analyzer
+try:
+    from .grid_preset_analyzer import analyze_variations, generate_optimal_layout
+except ImportError:
+    # Fallback if not available
+    analyze_variations = None
+    generate_optimal_layout = None
+
 
 def sanitize_filename(name: str) -> str:
     """
@@ -224,6 +232,18 @@ class GridCompare:
                     "max": 20000,
                     "step": 1000,
                     "tooltip": "Maximum grid dimension in pixels before auto-splitting"
+                }),
+                # Smart preset analysis
+                "preset_mode": (["manual", "smart_auto", "smart_custom"], {
+                    "default": "manual",
+                    "tooltip": "Grid layout mode: manual (use row/col/nest settings), smart_auto (auto-detect optimal layout), smart_custom (analyze then customize)"
+                }),
+                "max_images_per_grid": ("INT", {
+                    "default": 500,
+                    "min": 10,
+                    "max": 2000,
+                    "step": 10,
+                    "tooltip": "Maximum images per grid page (splits into multiple grids if exceeded)"
                 }),
             },
             "optional": {
@@ -1691,6 +1711,9 @@ class GridCompare:
         html_image_format: str = "JPEG",
         html_image_quality: int = 85,
         max_grid_pixels: int = 8000,
+        # Smart preset analysis
+        preset_mode: str = "manual",
+        max_images_per_grid: int = 500,
         video_config: Dict[str, Any] = None,
         prompt=None,
         extra_pnginfo=None,
@@ -1719,6 +1742,36 @@ class GridCompare:
         nest_axes = [ax for ax in [nest_axis_1, nest_axis_2, nest_axis_3, nest_axis_4,
                                    nest_axis_5, nest_axis_6, nest_axis_7, nest_axis_8] 
                      if ax and ax != "none"]
+        
+        # Smart preset mode: override manual axis settings with optimal layout
+        if preset_mode in ("smart_auto", "smart_custom") and generate_optimal_layout is not None:
+            try:
+                # Analyze variations and get optimal layout
+                analysis = analyze_variations(config)
+                layout = generate_optimal_layout(analysis)
+                
+                if layout:
+                    # Override row/col/nest axes with smart layout
+                    row_axis = layout.row_axis or "auto"
+                    col_axis = layout.col_axis or "auto"
+                    
+                    # Apply nest levels from layout
+                    if layout.nest_levels:
+                        nest_axes = layout.nest_levels
+                        # Update individual nest_axis variables for downstream use
+                        for i, ax in enumerate(layout.nest_levels[:8]):
+                            if i == 0: nest_axis_1 = ax
+                            elif i == 1: nest_axis_2 = ax
+                            elif i == 2: nest_axis_3 = ax
+                            elif i == 3: nest_axis_4 = ax
+                            elif i == 4: nest_axis_5 = ax
+                            elif i == 5: nest_axis_6 = ax
+                            elif i == 6: nest_axis_7 = ax
+                            elif i == 7: nest_axis_8 = ax
+                    
+                    print(f"[GridCompare] Smart preset mode: row={row_axis}, col={col_axis}, nest={nest_axes}")
+            except Exception as e:
+                print(f"[GridCompare] Smart preset analysis failed, using manual settings: {e}")
         
         # Collect subtitle config for label generation
         subtitle_config = {

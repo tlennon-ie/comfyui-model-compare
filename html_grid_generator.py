@@ -509,6 +509,12 @@ body {
     margin-bottom: 8px;
     font-weight: 500;
     line-height: 1.4;
+    /* Allow multi-line wrapping instead of truncating */
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+    white-space: normal;
+    max-height: 3.5em;
+    overflow: hidden;
 }
 
 .grid-item-meta {
@@ -1305,20 +1311,24 @@ JS_TEMPLATE = """
             details.appendChild(modelSection);
         }
         
-        // LoRA section
-        if (data.params.lora_name || data.params.lora_names) {
+        // LoRA section - show if any LoRA-related fields exist
+        if (data.params.lora_name || data.params.lora_names || data.params.lora_display || data.params.lora_strength !== undefined) {
             const loraSection = createDetailSection('LoRA');
+            // Show display string first (combined info)
+            if (data.params.lora_display) {
+                addDetailRow(loraSection, 'Config', data.params.lora_display);
+            }
             if (data.params.lora_name) {
                 addDetailRow(loraSection, 'Name', formatValue(data.params.lora_name));
             }
-            if (data.params.lora_strength) {
+            if (data.params.lora_strength !== undefined) {
                 addDetailRow(loraSection, 'Strength', formatValue(data.params.lora_strength));
             }
             if (data.params.lora_names) {
-                addDetailRow(loraSection, 'Names', formatValue(data.params.lora_names));
+                addDetailRow(loraSection, 'Names', data.params.lora_names);
             }
             if (data.params.lora_strengths) {
-                addDetailRow(loraSection, 'Strengths', formatValue(data.params.lora_strengths));
+                addDetailRow(loraSection, 'Strengths', data.params.lora_strengths);
             }
             details.appendChild(loraSection);
         }

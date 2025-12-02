@@ -961,6 +961,318 @@ function registerExtension(app) {
                         }
                     }, 10);
                 });
+
+                chainCallback(nodeType.prototype, "onNodeCreated", function () {
+                    try {
+                        const self = this;
+                        const appRef = app;
+
+                        // Store original computeSize for all widgets
+                        self.widgets.forEach((w) => {
+                            if (!w.origComputeSize) {
+                                if (typeof w.computeSize === 'function') {
+                                    w.origComputeSize = w.computeSize;
+                                } else {
+                                    w.origComputeSize = () => [200, 20];
+                                }
+                            }
+                        });
+
+                        const updateGridVisibility = () => {
+                            const presetModeWidget = self.widgets.find(w => w.name === "preset_mode");
+                            const presetMode = presetModeWidget ? presetModeWidget.value : "manual";
+
+                            const isSmartMode = presetMode === "smart_auto" || presetMode === "smart_custom";
+                            const isManualMode = presetMode === "manual";
+
+                            // Widgets shown only in manual mode (user configures axes)
+                            const manualOnlyWidgets = [
+                                "row_axis", "col_axis", 
+                                "nest_axis_1", "nest_axis_2", "nest_axis_3", "nest_axis_4",
+                                "nest_axis_5", "nest_axis_6", "nest_axis_7", "nest_axis_8"
+                            ];
+
+                            self.widgets.forEach((widget) => {
+                                if (!widget.name) return;
+
+                                let shouldShow = true;
+
+                                // In smart_auto mode, hide manual axis controls
+                                if (presetMode === "smart_auto") {
+                                    if (manualOnlyWidgets.includes(widget.name)) {
+                                        shouldShow = false;
+                                    }
+                                }
+                                // In smart_custom mode, show axis controls but grayed out for customization
+                                // (they get populated by analyze results)
+
+                                // Apply visibility
+                                if (shouldShow) {
+                                    if (widget.origComputeSize) {
+                                        widget.computeSize = widget.origComputeSize;
+                                    } else {
+                                        widget.computeSize = () => [200, 20];
+                                    }
+                                } else {
+                                    widget.computeSize = () => [0, -4];
+                                }
+                            });
+
+                            // Resize node
+                            if (self.size) {
+                                self.setSize(self.computeSize());
+                            }
+                            self.size[0] = 400;
+
+                            if (appRef && appRef.graph) {
+                                appRef.graph.setDirtyCanvas(true, true);
+                            }
+                        };
+
+                        // Hook preset_mode widget change
+                        const presetModeWidget = self.widgets.find(w => w.name === "preset_mode");
+                        if (presetModeWidget) {
+                            const originalCallback = presetModeWidget.callback;
+                            presetModeWidget.callback = function (value) {
+                                if (originalCallback) originalCallback.call(this, value);
+                                updateGridVisibility();
+                            };
+                        }
+
+                        // Analyze connected config and suggest optimal layout
+                        const analyzeConnectedConfig = async () => {
+                            // Find connected config input
+                            const configInput = self.inputs?.find(i => i.name === "config");
+                            if (!configInput || !configInput.link) {
+                                alert("Connect a config input first (from SamplerCompare node)");
+                                return;
+                            }
+
+                            // Find the source node providing the config
+                            const graph = appRef.graph;
+                            const link = graph.links[configInput.link];
+                            if (!link) {
+                                alert("Could not find connected config link");
+                                return;
+                            }
+
+                            const sourceNode = graph.getNodeById(link.origin_id);
+                            if (!sourceNode) {
+                                alert("Could not find source config node");
+                                return;
+                            }
+
+                            // Build a mock config from the source node's values
+                            // This traverses upstream to gather model/prompt/sampling variations
+                            const buildMockConfig = async () => {
+                                const config = {
+                                    model_variations: [],
+                                    vae_variations: [],
+                                    clip_variations: [],
+                                    lora_config: [],
+                                    prompt_variations: [],
+                                    sampling_params: [],
+                                    combinations: []
+                                };
+
+                                // Find connected upstream nodes
+                                const findUpstreamNode = (node, inputName) => {
+                                    const input = node.inputs?.find(i => i.name === inputName);
+                                    if (input && input.link) {
+                                        const upLink = graph.links[input.link];
+                                        if (upLink) {
+                                            return graph.getNodeById(upLink.origin_id);
+                                        }
+                                    }
+                                    return null;
+                                };
+
+                                // Extract values from widget by name
+                                const getWidgetValue = (node, name, defaultVal = null) => {
+                                    const widget = node.widgets?.find(w => w.name === name);
+                                    return widget ? widget.value : defaultVal;
+                                };
+
+                                // Find ModelCompareLoaders upstream
+                                const modelNode = findUpstreamNode(sourceNode, "model") || 
+                                                  findUpstreamNode(sourceNode, "loaders");
+                                if (modelNode && modelNode.type === "ModelCompareLoaders") {
+                                    const numModels = getWidgetValue(modelNode, "num_diffusion_models", 1);
+                                    const baseModel = getWidgetValue(modelNode, "diffusion_model", "");
+                                    
+                                    // Add base model
+                                    if (baseModel) {
+                                        config.model_variations.push({ 
+                                            name: baseModel.split('/').pop(),
+                                            display_name: baseModel.split('/').pop() 
+                                        });
+                                    }
+                                    
+                                    // Add model variations
+                                    for (let i = 1; i < numModels; i++) {
+                                        const varModel = getWidgetValue(modelNode, `diffusion_model_variation_${i}`, "");
+                                        if (varModel) {
+                                            config.model_variations.push({ 
+                                                name: varModel.split('/').pop(),
+                                                display_name: varModel.split('/').pop() 
+                                            });
+                                        }
+                                    }
+
+                                    // VAE variations
+                                    const numVAE = getWidgetValue(modelNode, "num_vae_variations", 1);
+                                    const baseVAE = getWidgetValue(modelNode, "vae", "");
+                                    if (baseVAE) config.vae_variations.push({ name: baseVAE });
+                                    for (let i = 0; i < numVAE; i++) {
+                                        const varVAE = getWidgetValue(modelNode, `vae_variation_${i}`, "");
+                                        if (varVAE) config.vae_variations.push({ name: varVAE });
+                                    }
+
+                                    // LoRA config
+                                    const numLoras = getWidgetValue(modelNode, "num_loras", 0);
+                                    for (let i = 0; i < numLoras; i++) {
+                                        const loraName = getWidgetValue(modelNode, `lora_${i}`, "");
+                                        const loraStrengths = getWidgetValue(modelNode, `lora_${i}_strengths`, "1.0");
+                                        if (loraName) {
+                                            config.lora_config.push({
+                                                name: loraName,
+                                                strengths: loraStrengths.split(',').map(s => parseFloat(s.trim())).filter(v => !isNaN(v))
+                                            });
+                                        }
+                                    }
+                                }
+
+                                // Find PromptCompare upstream
+                                const promptNode = findUpstreamNode(sourceNode, "prompt_config") ||
+                                                   findUpstreamNode(sourceNode, "prompts");
+                                if (promptNode && promptNode.type === "PromptCompare") {
+                                    const numPos = getWidgetValue(promptNode, "num_positive_prompts", 1);
+                                    const numNeg = getWidgetValue(promptNode, "num_negative_prompts", 1);
+                                    
+                                    for (let i = 1; i <= numPos; i++) {
+                                        const posPrompt = getWidgetValue(promptNode, `positive_prompt_${i}`, "");
+                                        for (let j = 1; j <= numNeg; j++) {
+                                            const negPrompt = getWidgetValue(promptNode, `negative_prompt_${j}`, "");
+                                            config.prompt_variations.push({
+                                                positive: posPrompt,
+                                                negative: negPrompt
+                                            });
+                                        }
+                                    }
+                                }
+
+                                // Find SamplingConfigChain or sampling parameters
+                                const samplingNode = findUpstreamNode(sourceNode, "sampling") ||
+                                                     findUpstreamNode(sourceNode, "sampling_config");
+                                if (samplingNode) {
+                                    // Build sampling params from connected chain or simple node
+                                    const samplers = getWidgetValue(samplingNode, "sampler_name", "euler");
+                                    const schedulers = getWidgetValue(samplingNode, "scheduler", "normal");
+                                    const steps = getWidgetValue(samplingNode, "steps", "20");
+                                    const cfg = getWidgetValue(samplingNode, "cfg", "7.0");
+                                    
+                                    config.sampling_params.push({
+                                        sampler_name: samplers.includes(',') ? samplers.split(',').map(s => s.trim()) : [samplers],
+                                        scheduler: schedulers.includes(',') ? schedulers.split(',').map(s => s.trim()) : [schedulers],
+                                        steps: steps.toString().includes(',') ? steps.split(',').map(s => parseInt(s.trim())).filter(v => !isNaN(v)) : [parseInt(steps)],
+                                        cfg: cfg.toString().includes(',') ? cfg.split(',').map(s => parseFloat(s.trim())).filter(v => !isNaN(v)) : [parseFloat(cfg)]
+                                    });
+                                }
+
+                                return config;
+                            };
+
+                            try {
+                                const mockConfig = await buildMockConfig();
+                                
+                                // Call the analysis API
+                                const response = await fetch('/model_compare/analyze_config', {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify(mockConfig)
+                                });
+
+                                if (!response.ok) {
+                                    const error = await response.json();
+                                    alert(`Analysis failed: ${error.error || 'Unknown error'}`);
+                                    return;
+                                }
+
+                                const result = await response.json();
+                                
+                                // Apply the layout recommendation to widgets
+                                if (result.layout) {
+                                    const layout = result.layout;
+                                    
+                                    // Update row/col axis widgets
+                                    const rowAxisWidget = self.widgets.find(w => w.name === "row_axis");
+                                    const colAxisWidget = self.widgets.find(w => w.name === "col_axis");
+                                    
+                                    if (rowAxisWidget && layout.row_axis) {
+                                        rowAxisWidget.value = layout.row_axis;
+                                        if (rowAxisWidget.callback) rowAxisWidget.callback(layout.row_axis);
+                                    }
+                                    if (colAxisWidget && layout.col_axis) {
+                                        colAxisWidget.value = layout.col_axis;
+                                        if (colAxisWidget.callback) colAxisWidget.callback(layout.col_axis);
+                                    }
+                                    
+                                    // Update nest axes
+                                    if (layout.nest_levels) {
+                                        for (let i = 0; i < 8; i++) {
+                                            const nestWidget = self.widgets.find(w => w.name === `nest_axis_${i + 1}`);
+                                            if (nestWidget) {
+                                                const value = layout.nest_levels[i] || "none";
+                                                nestWidget.value = value;
+                                                if (nestWidget.callback) nestWidget.callback(value);
+                                            }
+                                        }
+                                    }
+                                    
+                                    // Show success message
+                                    let msg = `Layout optimized!\n`;
+                                    msg += `• Row axis: ${layout.row_axis || 'auto'}\n`;
+                                    msg += `• Col axis: ${layout.col_axis || 'auto'}\n`;
+                                    if (layout.nest_levels?.length > 0) {
+                                        msg += `• Nest levels: ${layout.nest_levels.join(' → ')}\n`;
+                                    }
+                                    msg += `• Total combinations: ${result.analysis?.total_combinations || 'unknown'}`;
+                                    
+                                    alert(msg);
+                                } else {
+                                    alert("No layout recommendation available. Config may be too simple.");
+                                }
+
+                                // Refresh canvas
+                                if (appRef && appRef.graph) {
+                                    appRef.graph.setDirtyCanvas(true, true);
+                                }
+
+                            } catch (e) {
+                                console.error("[GridCompare] Analyze error:", e);
+                                alert(`Analysis error: ${e.message}`);
+                            }
+                        };
+
+                        // Add analyze button
+                        this.addWidget("button", "🔍 Analyze & Optimize Layout", null, () => {
+                            analyzeConnectedConfig();
+                        });
+
+                        // Add update button
+                        this.addWidget("button", "Update Inputs", null, () => {
+                            updateGridVisibility();
+                        });
+
+                        // Initial visibility update
+                        setTimeout(() => {
+                            updateGridVisibility();
+                        }, 100);
+
+                    } catch (e) {
+                        console.error("[GridCompare] Error in onNodeCreated:", e);
+                    }
+                });
             }
 
             // --- SamplingConfigChain Logic ---
