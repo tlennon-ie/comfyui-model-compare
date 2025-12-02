@@ -326,20 +326,35 @@ class CompareTracker:
         This method is called when the workflow runs. It initializes tracking
         state and returns UI data for display.
         
-        Behavior:
-        - If config provided: Force reset and start new tracking session
-        - If no config: Return current state (preserving completed state)
+        IMPORTANT: This method should NOT reset the tracker state. The sampler
+        is responsible for calling _force_reset_tracker_state() when a new job
+        actually starts. This prevents the tracker from resetting when ComfyUI
+        re-executes nodes after workflow completion.
         """
         warnings = []
         total_combinations = 0
         total_models = 0
         total_chains = 1
         
-        # If config provided, this is a NEW workflow run - force reset and initialize
+        # Get current state to check if we should update
+        current_state = get_tracker_state()
+        current_status = current_state.get("status", "idle")
+        
+        # If we're complete, preserve that state - don't reset anything
+        # The sampler will call _force_reset_tracker_state() when a new job actually starts
+        if current_status == "complete":
+            return {
+                "ui": {
+                    "total": [current_state.get("total_combinations", 0)],
+                    "models": [current_state.get("total_models", 0)],
+                    "chains": [current_state.get("total_chains", 1)],
+                    "warnings": [current_state.get("warnings", [])],
+                    "status": ["complete"],
+                }
+            }
+        
+        # If config provided and we're not in a completed state, analyze it
         if config:
-            # Force reset for new job
-            _force_reset_tracker_state()
-            
             combinations = config.get("combinations", [])
             model_variations = config.get("model_variations", [])
             sampling_configs = config.get("sampling_configs", {})
@@ -377,34 +392,35 @@ class CompareTracker:
             if total_models > 1:
                 warnings.append(f"{total_models} models to load sequentially")
             
-            # Initialize global tracker state (already force reset above)
-            update_tracker_state(
-                total_combinations=total_combinations,
-                completed_combinations=0,
-                total_models=total_models,
-                total_chains=total_chains,
-                warnings=warnings,
-                start_time=time.time(),
-                status="preparing",
-            )
+            # Only update state if we're idle - sampler handles reset for new jobs
+            # This prevents overwriting in-progress or completed states
+            if current_status == "idle":
+                update_tracker_state(
+                    total_combinations=total_combinations,
+                    completed_combinations=0,
+                    total_models=total_models,
+                    total_chains=total_chains,
+                    warnings=warnings,
+                    start_time=time.time(),
+                    status="preparing",
+                )
+                return_status = "preparing"
+            else:
+                # Use current status if we're already running
+                return_status = current_status
+                total_combinations = current_state.get("total_combinations", total_combinations)
+                total_models = current_state.get("total_models", total_models)
+                total_chains = current_state.get("total_chains", total_chains)
+                warnings = current_state.get("warnings", warnings)
         else:
-            # No config - just get current state (preserves completed state)
-            state = get_tracker_state()
-            total_combinations = state.get("total_combinations", 0)
-            total_models = state.get("total_models", 0)
-            total_chains = state.get("total_chains", 1)
-            warnings = state.get("warnings", [])
-        
-        # Determine status to return
-        # If config provided, we're starting fresh -> "preparing"
-        # If no config, use current state status (could be "complete", "idle", etc.)
-        if config:
-            return_status = "preparing"
-        else:
-            return_status = get_tracker_state().get("status", "idle")
+            # No config - just get current state
+            total_combinations = current_state.get("total_combinations", 0)
+            total_models = current_state.get("total_models", 0)
+            total_chains = current_state.get("total_chains", 1)
+            warnings = current_state.get("warnings", [])
+            return_status = current_status
         
         # Return UI data for the node to display
-        # The actual display is handled by JavaScript
         # NOTE: UI values must be lists for ComfyUI to merge them correctly
         return {
             "ui": {

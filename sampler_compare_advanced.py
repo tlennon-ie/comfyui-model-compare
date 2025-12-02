@@ -39,7 +39,7 @@ except ImportError:
 # Import tracker for progress updates
 try:
     from .compare_tracker import (
-        update_tracker_state, add_tracker_warning, reset_tracker_state,
+        update_tracker_state, add_tracker_warning, _force_reset_tracker_state,
         start_iteration, record_step_complete, complete_iteration
     )
     TRACKER_SUPPORT = True
@@ -47,7 +47,7 @@ except ImportError:
     TRACKER_SUPPORT = False
     def update_tracker_state(**kwargs): pass
     def add_tracker_warning(warning): pass
-    def reset_tracker_state(): pass
+    def _force_reset_tracker_state(): pass
     def start_iteration(combo_idx, total_steps): pass
     def record_step_complete(step): pass
     def complete_iteration(combo_idx): pass
@@ -1297,8 +1297,8 @@ class SamplerCompareAdvanced:
             chain_indices.add(chain_cfg.get("variation_index", 1))
         total_chains = len(chain_indices) if chain_indices else 1
         
-        # Reset and initialize tracker state
-        reset_tracker_state()
+        # Reset and initialize tracker state - force reset since this is a NEW job
+        _force_reset_tracker_state()
         update_tracker_state(
             total_combinations=len(combinations),
             completed_combinations=0,
