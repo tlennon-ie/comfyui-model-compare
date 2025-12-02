@@ -290,7 +290,8 @@ def calculate_total_combinations(analysis: Dict[str, FieldAnalysis]) -> int:
 
 def generate_optimal_layout(
     analysis: Dict[str, FieldAnalysis],
-    max_per_grid: int = 500
+    max_per_grid: int = 500,
+    client_estimated_combinations: Optional[int] = None
 ) -> LayoutRecommendation:
     """
     Generate optimal grid layout based on field analysis.
@@ -300,13 +301,23 @@ def generate_optimal_layout(
     - 26-100: 1 nest level (outer group)
     - 101-300: 2 nest levels
     - 300+: Paginate by outermost dimension
+    
+    Args:
+        analysis: Dict of field analyses
+        max_per_grid: Maximum images per grid page
+        client_estimated_combinations: Client-side calculated combination count (more accurate)
     """
     if not analysis:
         return LayoutRecommendation(
             explanation="No varying fields detected. Using default layout."
         )
     
-    total_combos = calculate_total_combinations(analysis)
+    # Use client estimate if provided (JS calculates this more accurately for complex workflows)
+    # Otherwise fall back to multiplying all field counts (may overcount)
+    if client_estimated_combinations and client_estimated_combinations > 0:
+        total_combos = client_estimated_combinations
+    else:
+        total_combos = calculate_total_combinations(analysis)
     
     # Sort fields by priority (highest first)
     sorted_fields = sorted(
@@ -568,6 +579,7 @@ def analyze_config(config: Dict[str, Any], max_per_grid: int = 500) -> LayoutRec
     Main entry point: analyze a configuration and return layout recommendation.
     
     Works with both pre-computed combinations and raw variation lists.
+    Uses client-side _estimated_combinations when available (more accurate for complex workflows).
     """
     # First try to analyze from combinations array (if populated)
     combinations = config.get('combinations', [])
@@ -579,7 +591,10 @@ def analyze_config(config: Dict[str, Any], max_per_grid: int = 500) -> LayoutRec
         # Fall back to raw variation lists
         analysis = analyze_from_variation_lists(config)
     
-    return generate_optimal_layout(analysis, max_per_grid)
+    # Get client-side estimated combinations if available (JS calculates this more accurately)
+    client_estimate = config.get('_estimated_combinations')
+    
+    return generate_optimal_layout(analysis, max_per_grid, client_estimate)
 
 
 def analyze_from_combinations(combinations: List[Dict[str, Any]]) -> Dict[str, FieldAnalysis]:
