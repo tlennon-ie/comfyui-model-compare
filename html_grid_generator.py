@@ -478,6 +478,48 @@ body {
     box-shadow: 0 4px 6px var(--shadow);
     transition: transform 0.2s, box-shadow 0.2s;
     cursor: pointer;
+    position: relative;
+}
+
+/* Compare checkbox in corner of each grid item */
+.compare-checkbox {
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    width: 24px;
+    height: 24px;
+    background: rgba(0, 0, 0, 0.6);
+    border: 2px solid #fff;
+    border-radius: 4px;
+    cursor: pointer;
+    z-index: 10;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+}
+
+.compare-checkbox:hover {
+    background: rgba(0, 0, 0, 0.8);
+    transform: scale(1.1);
+}
+
+.compare-checkbox.checked {
+    background: var(--accent);
+    border-color: var(--accent);
+}
+
+.compare-checkbox.checked::after {
+    content: '✓';
+    color: white;
+    font-size: 14px;
+    font-weight: bold;
+}
+
+.compare-checkbox .check-number {
+    color: white;
+    font-size: 12px;
+    font-weight: bold;
 }
 
 .grid-item:hover {
@@ -811,30 +853,9 @@ body {
 }
 
 /* Image Comparison Selection Mode */
-.grid-item.selectable {
-    cursor: crosshair;
-}
-
 .grid-item.selected-for-compare {
     outline: 3px solid var(--accent);
     outline-offset: 2px;
-}
-
-.grid-item.selected-for-compare::after {
-    content: attr(data-select-order);
-    position: absolute;
-    top: 8px;
-    left: 8px;
-    background: var(--accent);
-    color: white;
-    width: 24px;
-    height: 24px;
-    border-radius: 50%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-weight: bold;
-    font-size: 0.9rem;
 }
 
 .compare-toolbar {
@@ -852,12 +873,17 @@ body {
     z-index: 100;
     opacity: 0;
     visibility: hidden;
-    transition: opacity 0.3s, visibility 0.3s;
+    transition: opacity 0.3s, visibility 0.3s, transform 0.3s;
 }
 
 .compare-toolbar.visible {
     opacity: 1;
     visibility: visible;
+}
+
+.compare-toolbar .selection-count {
+    color: var(--text-secondary);
+    font-size: 0.9rem;
 }
 
 .compare-toolbar .btn {
@@ -1115,6 +1141,15 @@ JS_TEMPLATE = """
                 div.dataset[key] = String(value);
             });
             
+            // Compare checkbox (always visible in corner)
+            const checkbox = document.createElement('div');
+            checkbox.className = 'compare-checkbox';
+            checkbox.title = 'Select for comparison';
+            checkbox.addEventListener('click', (e) => {
+                e.stopPropagation();
+                toggleCompareSelection(index, checkbox, div);
+            });
+            
             // Image
             const img = document.createElement('img');
             img.src = item.image;
@@ -1151,6 +1186,7 @@ JS_TEMPLATE = """
             
             info.appendChild(label);
             info.appendChild(meta);
+            div.appendChild(checkbox);  // Add checkbox first (will be positioned absolute)
             div.appendChild(img);
             div.appendChild(info);
             
@@ -1518,32 +1554,23 @@ JS_TEMPLATE = """
         return div.innerHTML;
     }
     
-    // ============ Image Comparison Mode ============
-    let compareMode = false;
+    // ============ Image Comparison Selection ============
     let selectedForCompare = [];
     
-    // Add compare button to header controls
+    // Add compare toolbar (hidden initially, shown when selections made)
     document.addEventListener('DOMContentLoaded', function() {
-        const headerControls = document.querySelector('.header-controls');
-        const compareBtn = document.createElement('button');
-        compareBtn.id = 'compareToggle';
-        compareBtn.className = 'theme-toggle';
-        compareBtn.textContent = '🔀 Compare';
-        compareBtn.addEventListener('click', toggleCompareMode);
-        headerControls.insertBefore(compareBtn, headerControls.firstChild);
-        
-        // Add compare toolbar (hidden initially)
         const toolbar = document.createElement('div');
         toolbar.id = 'compareToolbar';
         toolbar.className = 'compare-toolbar';
         toolbar.innerHTML = `
-            <span>Select 2 images to compare</span>
-            <button class="btn btn-compare" id="startCompare" disabled>Compare</button>
-            <button class="btn btn-cancel" onclick="toggleCompareMode()">Cancel</button>
+            <span class="selection-count">0 of 2 selected</span>
+            <button class="btn btn-compare" id="startCompare" disabled>Compare Selected</button>
+            <button class="btn btn-cancel" id="clearCompare">Clear Selection</button>
         `;
         document.body.appendChild(toolbar);
         
         document.getElementById('startCompare').addEventListener('click', openCompareModal);
+        document.getElementById('clearCompare').addEventListener('click', clearCompareSelection);
         
         // Add compare modal
         const modal = document.createElement('div');
@@ -1575,68 +1602,78 @@ JS_TEMPLATE = """
         initCompareSlider();
     });
     
-    function toggleCompareMode() {
-        compareMode = !compareMode;
-        const toggleBtn = document.getElementById('compareToggle');
-        const toolbar = document.getElementById('compareToolbar');
+    // Toggle selection when checkbox is clicked
+    function toggleCompareSelection(index, checkbox, gridItem) {
+        const isSelected = selectedForCompare.includes(index);
         
-        if (compareMode) {
-            toggleBtn.textContent = '✓ Selecting...';
-            toggleBtn.style.background = 'var(--accent)';
-            toolbar.classList.add('visible');
-            document.querySelectorAll('.grid-item').forEach(item => {
-                item.classList.add('selectable');
-                item.removeEventListener('click', openLightboxHandler);
-                item.addEventListener('click', selectForCompare);
-            });
-        } else {
-            toggleBtn.textContent = '🔀 Compare';
-            toggleBtn.style.background = '';
-            toolbar.classList.remove('visible');
-            selectedForCompare = [];
-            document.querySelectorAll('.grid-item').forEach(item => {
-                item.classList.remove('selectable', 'selected-for-compare');
-                item.removeAttribute('data-select-order');
-                item.removeEventListener('click', selectForCompare);
-                item.addEventListener('click', function() { openLightbox(parseInt(this.dataset.index)); });
-            });
-            updateCompareButton();
-        }
-    }
-    
-    function openLightboxHandler(e) {
-        const index = parseInt(e.currentTarget.dataset.index);
-        openLightbox(index);
-    }
-    
-    function selectForCompare(e) {
-        e.stopPropagation();
-        const item = e.currentTarget;
-        const index = parseInt(item.dataset.index);
-        
-        if (item.classList.contains('selected-for-compare')) {
+        if (isSelected) {
             // Deselect
-            item.classList.remove('selected-for-compare');
-            item.removeAttribute('data-select-order');
             selectedForCompare = selectedForCompare.filter(i => i !== index);
-            // Renumber remaining
-            selectedForCompare.forEach((idx, i) => {
-                const el = document.querySelector(`.grid-item[data-index="${idx}"]`);
-                if (el) el.setAttribute('data-select-order', i + 1);
-            });
+            checkbox.classList.remove('checked');
+            checkbox.innerHTML = '';
+            gridItem.classList.remove('selected-for-compare');
         } else if (selectedForCompare.length < 2) {
-            // Select
+            // Select (max 2)
             selectedForCompare.push(index);
-            item.classList.add('selected-for-compare');
-            item.setAttribute('data-select-order', selectedForCompare.length);
+            checkbox.classList.add('checked');
+            gridItem.classList.add('selected-for-compare');
         }
         
-        updateCompareButton();
+        // Update all checkbox numbers
+        updateCheckboxNumbers();
+        updateCompareToolbar();
     }
     
-    function updateCompareButton() {
+    function updateCheckboxNumbers() {
+        // Clear all numbers first
+        document.querySelectorAll('.compare-checkbox').forEach(cb => {
+            if (!cb.classList.contains('checked')) {
+                cb.innerHTML = '';
+            }
+        });
+        
+        // Add numbers to selected checkboxes
+        selectedForCompare.forEach((idx, i) => {
+            const item = document.querySelector(`.grid-item[data-index="${idx}"]`);
+            if (item) {
+                const cb = item.querySelector('.compare-checkbox');
+                if (cb) {
+                    cb.innerHTML = `<span class="check-number">${i + 1}</span>`;
+                }
+            }
+        });
+    }
+    
+    function updateCompareToolbar() {
+        const toolbar = document.getElementById('compareToolbar');
         const btn = document.getElementById('startCompare');
+        const countSpan = toolbar.querySelector('.selection-count');
+        
+        countSpan.textContent = `${selectedForCompare.length} of 2 selected`;
         btn.disabled = selectedForCompare.length !== 2;
+        
+        // Show/hide toolbar based on selection
+        if (selectedForCompare.length > 0) {
+            toolbar.classList.add('visible');
+        } else {
+            toolbar.classList.remove('visible');
+        }
+    }
+    
+    function clearCompareSelection() {
+        selectedForCompare.forEach(idx => {
+            const item = document.querySelector(`.grid-item[data-index="${idx}"]`);
+            if (item) {
+                item.classList.remove('selected-for-compare');
+                const cb = item.querySelector('.compare-checkbox');
+                if (cb) {
+                    cb.classList.remove('checked');
+                    cb.innerHTML = '';
+                }
+            }
+        });
+        selectedForCompare = [];
+        updateCompareToolbar();
     }
     
     function openCompareModal() {
