@@ -1794,7 +1794,10 @@ class GridCompare:
         if preset_mode == "smart" and smart_analyze_config is not None:
             try:
                 # Analyze config and get optimal layout
+                print(f"[GridCompare] Analyzing config with {len(config.get('combinations', []))} combinations")
                 layout = smart_analyze_config(config, max_images_per_grid)
+                
+                print(f"[GridCompare] Layout result: x_axis={layout.x_axis if layout else None}, y_axis={layout.y_axis if layout else None}, nest={layout.nest_levels if layout else None}")
                 
                 if layout:
                     # Override row/col/nest axes with smart layout
@@ -1802,23 +1805,23 @@ class GridCompare:
                     row_axis = layout.y_axis or "auto"
                     col_axis = layout.x_axis or "auto"
                     
-                    # Apply nest levels from layout
-                    if layout.nest_levels:
-                        nest_axes = layout.nest_levels
-                        # Update individual nest_axis variables for downstream use
-                        for i, ax in enumerate(layout.nest_levels[:8]):
-                            if i == 0: nest_axis_1 = ax
-                            elif i == 1: nest_axis_2 = ax
-                            elif i == 2: nest_axis_3 = ax
-                            elif i == 3: nest_axis_4 = ax
-                            elif i == 4: nest_axis_5 = ax
-                            elif i == 5: nest_axis_6 = ax
-                            elif i == 6: nest_axis_7 = ax
-                            elif i == 7: nest_axis_8 = ax
+                    # ALWAYS apply nest levels from layout (even if empty - clears manual nesting)
+                    nest_axes = layout.nest_levels or []
+                    # Update individual nest_axis variables for downstream use
+                    nest_axis_1 = nest_axes[0] if len(nest_axes) > 0 else "none"
+                    nest_axis_2 = nest_axes[1] if len(nest_axes) > 1 else "none"
+                    nest_axis_3 = nest_axes[2] if len(nest_axes) > 2 else "none"
+                    nest_axis_4 = nest_axes[3] if len(nest_axes) > 3 else "none"
+                    nest_axis_5 = nest_axes[4] if len(nest_axes) > 4 else "none"
+                    nest_axis_6 = nest_axes[5] if len(nest_axes) > 5 else "none"
+                    nest_axis_7 = nest_axes[6] if len(nest_axes) > 6 else "none"
+                    nest_axis_8 = nest_axes[7] if len(nest_axes) > 7 else "none"
                     
                     print(f"[GridCompare] Smart preset mode: row={row_axis}, col={col_axis}, nest={nest_axes}, strategy={layout.strategy}")
             except Exception as e:
                 print(f"[GridCompare] Smart preset analysis failed, using manual settings: {e}")
+                import traceback
+                traceback.print_exc()
         
         # Collect subtitle config for label generation
         subtitle_config = {
@@ -2286,7 +2289,25 @@ class GridCompare:
 
         # Convert PIL back to tensor for output (all grids stacked)
         if len(all_grid_images) > 1:
-            output_tensors = [self._pil_to_tensor(g) for g in all_grid_images]
+            # Find max dimensions across all grids
+            max_width = max(g.width for g in all_grid_images)
+            max_height = max(g.height for g in all_grid_images)
+            
+            # Pad all grids to the same size (white background)
+            padded_grids = []
+            for g in all_grid_images:
+                if g.width != max_width or g.height != max_height:
+                    # Create new image with max dimensions
+                    padded = Image.new('RGB', (max_width, max_height), (255, 255, 255))
+                    # Paste original centered
+                    x_offset = (max_width - g.width) // 2
+                    y_offset = (max_height - g.height) // 2
+                    padded.paste(g, (x_offset, y_offset))
+                    padded_grids.append(padded)
+                else:
+                    padded_grids.append(g)
+            
+            output_tensors = [self._pil_to_tensor(g) for g in padded_grids]
             output_tensor = torch.cat(output_tensors, dim=0)
         else:
             output_tensor = self._pil_to_tensor(all_grid_images[0])
