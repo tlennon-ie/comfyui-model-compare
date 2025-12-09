@@ -18,6 +18,8 @@ from typing import List, Dict, Any, Optional
 from aiohttp import web
 import folder_paths
 
+from .grid_builder_routes import add_grid_builder_routes
+
 # Signature to identify our HTML grids
 GRID_SIGNATURE = "comfyui-model-compare-grid"
 GRID_META_ID = "model-compare-metadata"
@@ -513,12 +515,20 @@ body {
     border: 1px solid var(--border);
     cursor: pointer;
     transition: all 0.2s;
+    position: relative;
+    display: flex;
+    flex-direction: column;
 }
 
 .grid-card:hover {
     transform: translateY(-4px);
     box-shadow: 0 8px 24px var(--shadow);
     border-color: var(--accent);
+}
+
+.grid-card:hover .grid-card-actions {
+    opacity: 1;
+    visibility: visible;
 }
 
 .grid-card-thumbnail {
@@ -538,6 +548,7 @@ body {
 
 .grid-card-info {
     padding: 16px;
+    flex: 1;
 }
 
 .grid-card-title {
@@ -555,6 +566,37 @@ body {
     gap: 8px;
     font-size: 0.8rem;
     color: var(--text-secondary);
+}
+
+.grid-card-actions {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    display: flex;
+    gap: 4px;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.2s, visibility 0.2s;
+}
+
+.btn-card-action {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    background: rgba(0, 0, 0, 0.6);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 6px;
+    color: white;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.btn-card-action:hover {
+    background: var(--accent);
+    border-color: var(--accent);
 }
 
 .grid-card-meta span {
@@ -1064,17 +1106,36 @@ GALLERY_JS = '''
                         <span>📅 ${formatDate(grid.created)}</span>
                     </div>
                 </div>
+                <div class="grid-card-actions">
+                    <button class="btn-card-action" title="Edit hierarchy" onclick="editGrid('${escapeAttr(grid.rel_path)}', '${escapeAttr(grid.encoded_path)}')">
+                        <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
+                            <path d="M3,17.25V21h3.75L17.81,9.94l-3.75,-3.75L3,17.25Z M20.71,7.04c.39,-.39.39,-1.02 0,-1.41l-2.34,-2.34c-.39,-.39 -1.02,-.39 -1.41,0l-1.83,1.83 3.75,3.75 1.83,-1.83Z"/>
+                        </svg>
+                    </button>
+                </div>
             </div>
         `}).join('');
         
-        // Add click handlers
+        // Add click handlers for viewing grid
         document.querySelectorAll('.grid-card').forEach(card => {
-            card.addEventListener('click', () => {
-                const path = card.dataset.path;
-                viewGrid(path);
-            });
+            // Don't navigate when clicking the edit button, that's handled by onclick attribute
+            const titleEl = card.querySelector('.grid-card-title');
+            const metaEl = card.querySelector('.grid-card-meta');
+            const thumbEl = card.querySelector('.grid-card-thumbnail');
+            
+            if (titleEl) titleEl.addEventListener('click', (e) => { e.stopPropagation(); viewGrid(card.dataset.path); });
+            if (metaEl) metaEl.addEventListener('click', (e) => { e.stopPropagation(); viewGrid(card.dataset.path); });
+            if (thumbEl) thumbEl.addEventListener('click', (e) => { e.stopPropagation(); viewGrid(card.dataset.path); });
         });
     }
+    
+    function editGrid(relPath, encodedPath) {
+        // Open grid editor with the grid path
+        window.location.href = '/grid-editor?path=' + encodeURIComponent(encodedPath);
+    }
+    
+    // Expose editGrid to global scope for onclick handlers
+    window.editGrid = editGrid;
     
     // View grid
     function viewGrid(relPath) {
@@ -1693,6 +1754,26 @@ async def handle_static(request):
         return web.Response(text=f"Error reading file: {e}", status=500)
 
 
+async def handle_grid_editor(request):
+    """Serve the grid editor HTML page."""
+    try:
+        # Get grid path from query params
+        grid_path = request.rel_url.query.get('path', '')
+        
+        if not grid_path:
+            return web.Response(text="No grid path specified", status=400)
+        
+        # Serve the grid-editor.html
+        editor_path = os.path.join(os.path.dirname(__file__), "web", "grid-editor.html")
+        
+        with open(editor_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+        
+        return web.Response(text=content, content_type='text/html')
+    except Exception as e:
+        return web.Response(text=f"Error: {e}", status=500)
+
+
 def setup_gallery_routes():
     """Register gallery routes with ComfyUI server."""
     try:
@@ -1723,6 +1804,13 @@ def setup_gallery_routes():
         app.router.add_post('/model-compare/gallery/api/rename', handle_api_rename_grid)
         app.router.add_delete('/model-compare/gallery/api/delete', handle_api_delete_grid)
         app.router.add_post('/model-compare/gallery/api/bulk-delete', handle_api_bulk_delete_grids)
+        
+        # Grid editor page
+        app.router.add_get('/grid-editor', handle_grid_editor)
+        
+        # Grid builder API routes
+        output_dir = folder_paths.get_output_directory()
+        add_grid_builder_routes(app, output_dir)
         
         # View grid with proper content-type (supports base64 encoded paths)
         app.router.add_get('/model-compare/view/{path:.*}', handle_view_grid)

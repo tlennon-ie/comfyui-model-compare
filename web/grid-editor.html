@@ -1,0 +1,869 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Grid Hierarchy Editor</title>
+    <script>
+        // Load theme IMMEDIATELY before any rendering to prevent flash
+        (function() {
+            const theme = localStorage.getItem('theme') || 'dark';
+            document.documentElement.setAttribute('data-theme', theme);
+        })();
+    </script>
+    <style>
+        :root {
+            --bg-primary: #1a1a2e;
+            --bg-secondary: #16213e;
+            --bg-card: #0f3460;
+            --bg-card-hover: #1a4a7a;
+            --text-primary: #eaeaea;
+            --text-secondary: #a0a0a0;
+            --accent: #4a9eff;
+            --accent-hover: #6ab0ff;
+            --border: #2a2a4a;
+            --shadow: rgba(0, 0, 0, 0.3);
+            --success: #4caf50;
+            --warning: #ff9800;
+        }
+
+        [data-theme="light"] {
+            --bg-primary: #f5f5f5;
+            --bg-secondary: #ffffff;
+            --bg-card: #ffffff;
+            --bg-card-hover: #f0f7ff;
+            --text-primary: #333333;
+            --text-secondary: #666666;
+            --accent: #2563eb;
+            --accent-hover: #1d4ed8;
+            --border: #e0e0e0;
+            --shadow: rgba(0, 0, 0, 0.1);
+        }
+        
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+        }
+        
+        /* Gallery Header Styles */
+        .page-header {
+            background: var(--bg-secondary);
+            border-bottom: 1px solid var(--border);
+            padding: 1rem 2rem;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .header-left {
+            display: flex;
+            align-items: center;
+            gap: 2rem;
+        }
+        
+        .header-branding h1 {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: var(--accent);
+            margin-bottom: 0.25rem;
+        }
+        
+        .header-tagline {
+            font-size: 0.875rem;
+            color: var(--text-secondary);
+        }
+        
+        .header-tagline a {
+            color: var(--accent);
+            text-decoration: none;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.25rem;
+        }
+        
+        .header-tagline a:hover {
+            text-decoration: underline;
+        }
+        
+        .github-icon {
+            width: 1rem;
+            height: 1rem;
+            fill: var(--accent);
+        }
+        
+        .header-right {
+            display: flex;
+            gap: 0.5rem;
+        }
+        
+        .btn {
+            padding: 0.5rem 1rem;
+            background: var(--bg-card);
+            color: var(--text-primary);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.875rem;
+            transition: all 0.2s;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        
+        .btn:hover {
+            background: var(--bg-card-hover);
+            border-color: var(--accent);
+        }
+        
+        .btn-icon {
+            padding: 0.5rem;
+            background: transparent;
+            border: none;
+        }
+        
+        .btn-icon svg {
+            display: block;
+        }
+        
+        .btn-primary {
+            background: var(--accent);
+            border-color: var(--accent);
+        }
+        
+        .btn-primary:hover {
+            background: var(--accent-hover);
+            border-color: var(--accent-hover);
+        }
+        
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        
+        .tabs {
+            display: flex;
+            gap: 4px;
+            margin-bottom: 20px;
+            border-bottom: 2px solid var(--border);
+        }
+        
+        .tab {
+            padding: 12px 24px;
+            background: transparent;
+            border: none;
+            border-bottom: 3px solid transparent;
+            font-size: 15px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        
+        .tab:hover {
+            color: var(--text-primary);
+        }
+        
+        .tab.active {
+            color: var(--accent);
+            border-bottom-color: var(--accent);
+        }
+        
+        .tab-content {
+            display: none;
+        }
+        
+        .tab-content.active {
+            display: block;
+        }
+        
+        #editor-root, #label-editor-root, #subtitle-editor-root, #style-editor-root {
+            background: var(--bg-card);
+            border-radius: 8px;
+            box-shadow: 0 2px 8px var(--shadow);
+            padding: 30px;
+        }
+        
+        .loading {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 300px;
+            color: var(--text-secondary);
+        }
+        
+        .spinner {
+            display: inline-block;
+            width: 30px;
+            height: 30px;
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #0066cc;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-right: 10px;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .error-container {
+            background: #fff3cd;
+            border: 1px solid #ffc107;
+            color: #856404;
+            padding: 20px;
+            border-radius: 8px;
+            margin: 20px 0;
+        }
+        
+        .error-container h3 {
+            margin-bottom: 10px;
+        }
+        
+        .back-button {
+            display: inline-block;
+            margin-bottom: 20px;
+            padding: 8px 16px;
+            background: #f0f0f0;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            color: #333;
+            text-decoration: none;
+            font-size: 14px;
+            transition: all 0.2s;
+        }
+        
+        .back-button:hover {
+            background: #e0e0e0;
+            border-color: #999;
+        }
+        
+        /* Export Dropdown */
+        .export-dropdown {
+            position: relative;
+            display: inline-block;
+            margin-right: 10px;
+        }
+        
+        .export-menu {
+            position: absolute;
+            top: 100%;
+            right: 0;
+            margin-top: 4px;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            box-shadow: 0 4px 12px var(--shadow);
+            min-width: 180px;
+            z-index: 1000;
+            overflow: hidden;
+        }
+        
+        .export-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            width: 100%;
+            padding: 12px 16px;
+            background: none;
+            border: none;
+            color: var(--text-primary);
+            font-size: 14px;
+            text-align: left;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        
+        .export-item:hover {
+            background: var(--bg-card-hover);
+        }
+        
+        .export-item svg {
+            flex-shrink: 0;
+        }
+        
+        /* Theme-aware overrides for configurators */
+        .label-configurator,
+        .subtitle-configurator,
+        .style-configurator {
+            background: var(--bg-card) !important;
+            color: var(--text-primary) !important;
+        }
+        
+        .config-header {
+            border-bottom-color: var(--border) !important;
+        }
+        
+        .config-header h3,
+        .section-label,
+        .input-label {
+            color: var(--text-primary) !important;
+        }
+        
+        .help-text,
+        .field-hint,
+        .empty-list {
+            color: var(--text-secondary) !important;
+        }
+        
+        .config-section {
+            background: var(--bg-secondary) !important;
+            border-color: var(--border) !important;
+        }
+        
+        .input-text,
+        .header-input,
+        textarea {
+            background: var(--bg-card) !important;
+            color: var(--text-primary) !important;
+            border-color: var(--border) !important;
+        }
+        
+        .input-text:focus,
+        .header-input:focus,
+        textarea:focus {
+            border-color: var(--accent) !important;
+        }
+        
+        .badge {
+            background: var(--accent) !important;
+            color: white !important;
+        }
+        
+        .header-item,
+        .field-item,
+        .selected-field {
+            background: var(--bg-card) !important;
+            border-color: var(--border) !important;
+            color: var(--text-primary) !important;
+        }
+        
+        .header-item:hover,
+        .field-item:hover {
+            background: var(--bg-card-hover) !important;
+        }
+        
+        .btn-icon-small {
+            background: var(--bg-secondary) !important;
+            border-color: var(--border) !important;
+            color: var(--text-primary) !important;
+        }
+        
+        .btn-icon-small:hover {
+            background: var(--bg-card-hover) !important;
+        }
+        
+        .section-toggle {
+            background: var(--bg-secondary) !important;
+            border-color: var(--border) !important;
+            color: var(--text-primary) !important;
+        }
+        
+        .section-toggle:hover {
+            background: var(--bg-card-hover) !important;
+        }
+        
+        .collapsible.expanded .section-content {
+            background: var(--bg-secondary) !important;
+            border-color: var(--border) !important;
+        }
+        
+        .variable-chip {
+            background: var(--bg-card) !important;
+            border-color: var(--border) !important;
+            color: var(--accent) !important;
+        }
+        
+        .variable-chip:hover {
+            background: var(--bg-card-hover) !important;
+            border-color: var(--accent) !important;
+        }
+        
+        .config-actions {
+            border-top-color: var(--border) !important;
+        }
+        
+        .btn-primary {
+            background: var(--accent) !important;
+        }
+        
+        .btn-primary:hover {
+            background: var(--accent-hover) !important;
+        }
+        
+        .btn-secondary {
+            background: var(--bg-secondary) !important;
+            color: var(--text-primary) !important;
+            border-color: var(--border) !important;
+        }
+        
+        .btn-secondary:hover {
+            background: var(--bg-card-hover) !important;
+        }
+        
+        /* Style configurator specific */
+        .color-input-group,
+        .typography-section,
+        .spacing-section {
+            background: var(--bg-secondary) !important;
+            border-color: var(--border) !important;
+        }
+        
+        .color-preview {
+            border-color: var(--border) !important;
+        }
+        
+        .preset-button {
+            background: var(--bg-card) !important;
+            border-color: var(--border) !important;
+            color: var(--text-primary) !important;
+        }
+        
+        .preset-button:hover,
+        .preset-button.active {
+            background: var(--accent) !important;
+            border-color: var(--accent) !important;
+            color: white !important;
+        }
+        
+        /* Subtitle configurator specific */
+        .selected-fields,
+        .available-fields {
+            background: var(--bg-secondary) !important;
+            border-color: var(--border) !important;
+        }
+        
+        .field-chip {
+            background: var(--bg-card) !important;
+            border-color: var(--border) !important;
+            color: var(--text-primary) !important;
+        }
+        
+        .field-chip:hover {
+            background: var(--bg-card-hover) !important;
+        }
+        
+        .preview-box {
+            background: var(--bg-secondary) !important;
+            border-color: var(--border) !important;
+            color: var(--text-primary) !important;
+        }
+        
+        .checkbox-label {
+            color: var(--text-primary) !important;
+        }
+        
+        select,
+        input[type="number"],
+        input[type="range"] {
+            background: var(--bg-card) !important;
+            color: var(--text-primary) !important;
+            border-color: var(--border) !important;
+        }
+    </style>
+</head>
+<body>
+    <!-- Header Navigation -->
+    <header class="page-header">
+        <div class="header-left">
+            <div class="header-branding">
+                <h1>🎨 Model Compare</h1>
+                <div class="header-tagline">
+                    Grid Editor •
+                    <a href="/model-compare/gallery">
+                        <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor">
+                            <path d="M20,11V13H8L13.5,18.5L12.08,19.92L4.16,12L12.08,4.08L13.5,5.5L8,11H20Z"/>
+                        </svg>
+                        Back to Gallery
+                    </a>
+                </div>
+            </div>
+        </div>
+        <div class="header-right">
+            <div class="export-dropdown">
+                <button id="exportButton" class="btn btn-primary" title="Export Grid">
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+                        <path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20M12,19L8,15H10.5V12H13.5V15H16L12,19Z"/>
+                    </svg>
+                    Export
+                    <svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor" style="margin-left: 4px;">
+                        <path d="M7,10L12,15L17,10H7Z"/>
+                    </svg>
+                </button>
+                <div id="exportMenu" class="export-menu" style="display: none;">
+                    <button class="export-item" data-format="html">
+                        <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+                            <path d="M12,17.56L16.07,16.43L16.62,10.33H9.38L9.2,8.3H16.8L17,6.31H7L7.56,12.32H14.45L14.22,14.9L12,15.5L9.78,14.9L9.64,13.24H7.64L7.93,16.43L12,17.56M4.07,3H19.93L18.5,19.2L12,21L5.5,19.2L4.07,3Z"/>
+                        </svg>
+                        HTML Grid
+                    </button>
+                    <button class="export-item" data-format="csv">
+                        <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+                            <path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20M10,19H12V18H10V19M10,15H12V14H10V15M10,11H12V10H10V11Z"/>
+                        </svg>
+                        CSV Data
+                    </button>
+                    <button class="export-item" data-format="json">
+                        <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+                            <path d="M5,3H7V5H5V10A2,2 0 0,1 3,12A2,2 0 0,1 5,14V19H7V21H5C3.93,20.73 3,20.1 3,19V15A2,2 0 0,0 1,13H0V11H1A2,2 0 0,0 3,9V5A2,2 0 0,1 5,3M19,3A2,2 0 0,1 21,5V9A2,2 0 0,0 23,11H24V13H23A2,2 0 0,0 21,15V19A2,2 0 0,1 19,21H17V19H19V14A2,2 0 0,1 21,12A2,2 0 0,1 19,10V5H17V3H19M12,15A1,1 0 0,1 13,16A1,1 0 0,1 12,17A1,1 0 0,1 11,16A1,1 0 0,1 12,15M8,15A1,1 0 0,1 9,16A1,1 0 0,1 8,17A1,1 0 0,1 7,16A1,1 0 0,1 8,15M16,15A1,1 0 0,1 17,16A1,1 0 0,1 16,17A1,1 0 0,1 15,16A1,1 0 0,1 16,15Z"/>
+                        </svg>
+                        JSON Config
+                    </button>
+                </div>
+            </div>
+            <button id="themeToggle" class="btn btn-icon" title="Toggle theme">
+                <svg id="themeIcon" viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+                    <path d="M12,7A5,5 0 0,1 17,12A5,5 0 0,1 12,17A5,5 0 0,1 7,12A5,5 0 0,1 12,7M12,9A3,3 0 0,0 9,12A3,3 0 0,0 12,15A3,3 0 0,0 15,12A3,3 0 0,0 12,9M12,2L14.39,5.42C13.65,5.15 12.84,5 12,5C11.16,5 10.35,5.15 9.61,5.42L12,2M3.34,7L7.5,6.65C6.9,7.16 6.36,7.78 5.94,8.5C5.5,9.24 5.25,10 5.11,10.79L3.34,7M3.36,17L5.12,13.23C5.26,14 5.53,14.78 5.95,15.5C6.37,16.24 6.91,16.86 7.5,17.37L3.36,17M20.65,7L18.88,10.79C18.74,10 18.47,9.23 18.05,8.5C17.63,7.78 17.1,7.15 16.5,6.64L20.65,7M20.64,17L16.5,17.36C17.09,16.85 17.62,16.22 18.04,15.5C18.46,14.77 18.73,14 18.87,13.21L20.64,17M12,22L9.59,18.56C10.33,18.83 11.14,19 12,19C12.82,19 13.63,18.83 14.37,18.56L12,22Z"/>
+                </svg>
+            </button>
+        </div>
+    </header>
+    
+    <div class="container">
+        
+        <div class="tabs">
+            <button class="tab active" onclick="switchTab('hierarchy')">
+                📊 Hierarchy
+            </button>
+            <button class="tab" onclick="switchTab('labels')">
+                📝 Labels
+            </button>
+            <button class="tab" onclick="switchTab('subtitles')">
+                🔤 Subtitles
+            </button>
+            <button class="tab" onclick="switchTab('styles')">
+                🎨 Styles
+            </button>
+        </div>
+        
+        <div id="hierarchy-tab" class="tab-content active">
+            <div id="editor-root">
+                <div class="loading">
+                    <span class="spinner"></span>
+                    <span>Loading hierarchy editor...</span>
+                </div>
+            </div>
+        </div>
+        
+        <div id="labels-tab" class="tab-content">
+            <div id="label-editor-root">
+                <div class="loading">
+                    <span class="spinner"></span>
+                    <span>Loading label editor...</span>
+                </div>
+            </div>
+        </div>
+        
+        <div id="subtitles-tab" class="tab-content">
+            <div id="subtitle-editor-root">
+                <div class="loading">
+                    <span class="spinner"></span>
+                    <span>Loading subtitle editor...</span>
+                </div>
+            </div>
+        </div>
+        
+        <div id="styles-tab" class="tab-content">
+            <div id="style-editor-root">
+                <div class="loading">
+                    <span class="spinner"></span>
+                    <span>Loading style editor...</span>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Include editor JavaScript files -->
+    <script src="/model-compare/static/hierarchy-editor.js"></script>
+    <script src="/model-compare/static/label-configurator.js"></script>
+    <script src="/model-compare/static/subtitle-configurator.js"></script>
+    <script src="/model-compare/static/style-configurator.js"></script>
+    <script>
+        // Tab switching
+        function switchTab(tabName) {
+            // Update tab buttons
+            document.querySelectorAll('.tab').forEach(tab => {
+                tab.classList.remove('active');
+            });
+            event.target.classList.add('active');
+            
+            // Update tab content
+            document.querySelectorAll('.tab-content').forEach(content => {
+                content.classList.remove('active');
+            });
+            document.getElementById(tabName + '-tab').classList.add('active');
+        }
+        
+        // Global references
+        let hierarchyEditor = null;
+        let currentGridConfig = null;
+        
+        // Initialize grid editor
+        document.addEventListener('DOMContentLoaded', () => {
+            // Get grid path from URL query parameter
+            const params = new URLSearchParams(window.location.search);
+            const gridPath = params.get('path');
+            
+            if (!gridPath) {
+                document.getElementById('editor-root').innerHTML = `
+                    <div class="error-container">
+                        <h3>Error</h3>
+                        <p>No grid path provided. 
+                           <a href="/model-compare/gallery">Return to gallery</a> to select a grid.</p>
+                    </div>
+                `;
+                return;
+            }
+            
+            // Initialize the hierarchy editor
+            try {
+                // Decode the base64-encoded path
+                const decodedPath = atob(decodeURIComponent(gridPath).replace(/-/g, '+').replace(/_/g, '/'));
+                
+                hierarchyEditor = new HierarchyEditor('editor-root', decodedPath);
+                
+                // Inject CSS styles for hierarchy editor
+                const hierarchyStyle = document.createElement('style');
+                hierarchyStyle.textContent = HIERARCHY_EDITOR_CSS;
+                document.head.appendChild(hierarchyStyle);
+                
+                // Load grid configuration for label editor
+                loadGridConfig(decodedPath);
+                
+                // Automatically generate preview after loading
+                setTimeout(() => {
+                    const previewBtn = document.getElementById('previewButton');
+                    if (previewBtn) previewBtn.click();
+                }, 500);
+                
+            } catch (error) {
+                console.error('Failed to initialize editor:', error);
+                document.getElementById('editor-root').innerHTML = `
+                    <div class="error-container">
+                        <h3>Error Loading Editor</h3>
+                        <p>${error.message}</p>
+                        <p><a href="/model-compare/gallery">Return to gallery</a></p>
+                    </div>
+                `;
+            }
+        });
+        
+        // Load grid configuration for label editor
+        async function loadGridConfig(gridPath) {
+            try {
+                const response = await fetch('/api/grid/load', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ grid_path: gridPath })
+                });
+                
+                if (!response.ok) {
+                    throw new Error('Failed to load grid configuration');
+                }
+                
+                currentGridConfig = await response.json();
+                
+                // Initialize label configurator
+                labelConfigurator = new LabelConfigurator(
+                    'label-editor-root',
+                    currentGridConfig,
+                    handleLabelUpdate
+                );
+                
+                // Inject CSS styles for label configurator
+                const labelStyle = document.createElement('style');
+                labelStyle.textContent = LABEL_CONFIGURATOR_CSS;
+                document.head.appendChild(labelStyle);
+                
+                // Initialize subtitle configurator
+                subtitleConfigurator = new SubtitleConfigurator(
+                    'subtitle-editor-root',
+                    currentGridConfig,
+                    handleSubtitleUpdate
+                );
+                
+                // Inject CSS styles for subtitle configurator
+                const subtitleStyle = document.createElement('style');
+                subtitleStyle.textContent = SUBTITLE_CONFIGURATOR_CSS;
+                document.head.appendChild(subtitleStyle);
+                
+                // Initialize style configurator
+                styleConfigurator = new StyleConfigurator(
+                    'style-editor-root',
+                    currentGridConfig,
+                    handleStyleUpdate
+                );
+                
+                // Inject CSS styles for style configurator
+                const styleStyle = document.createElement('style');
+                styleStyle.textContent = STYLE_CONFIGURATOR_CSS;
+                document.head.appendChild(styleStyle);
+                
+            } catch (error) {
+                console.error('Failed to load grid config:', error);
+                document.getElementById('label-editor-root').innerHTML = `
+                    <div class="error-container">
+                        <h3>Error Loading Configuration</h3>
+                        <p>${error.message}</p>
+                    </div>
+                `;
+            }
+        }
+        
+        // Handle label configuration updates
+        function handleLabelUpdate(labelConfig) {
+            console.log('Label configuration updated:', labelConfig);
+            
+            // Merge label config with current grid config
+            currentGridConfig = {
+                ...currentGridConfig,
+                ...labelConfig
+            };
+            
+            // Update hierarchy editor with new config if needed
+            // (This would trigger a re-render with updated labels)
+            
+            alert('Label configuration saved! Click "Apply Changes" in the Hierarchy tab to regenerate the grid.');
+        }
+        
+        // Handle subtitle configuration updates
+        function handleSubtitleUpdate(subtitleConfig) {
+            console.log('Subtitle configuration updated:', subtitleConfig);
+            
+            // Merge subtitle config with current grid config
+            currentGridConfig = {
+                ...currentGridConfig,
+                ...subtitleConfig
+            };
+            
+            alert('Subtitle configuration saved! Click "Apply Changes" in the Hierarchy tab to regenerate the grid.');
+        }
+        
+        // Handle style configuration updates
+        function handleStyleUpdate(styleConfig) {
+            console.log('Style configuration updated:', styleConfig);
+            
+            // Merge style config with current grid config
+            currentGridConfig = {
+                ...currentGridConfig,
+                ...styleConfig
+            };
+            
+            alert('Style configuration saved! Click "Apply Changes" in the Hierarchy tab to regenerate the grid.');
+        }
+        
+        // Export Dropdown Toggle
+        const exportButton = document.getElementById('exportButton');
+        const exportMenu = document.getElementById('exportMenu');
+        
+        exportButton.addEventListener('click', (e) => {
+            e.stopPropagation();
+            exportMenu.style.display = exportMenu.style.display === 'none' ? 'block' : 'none';
+        });
+        
+        // Close dropdown when clicking outside
+        document.addEventListener('click', () => {
+            exportMenu.style.display = 'none';
+        });
+        
+        // Handle export format selection
+        document.querySelectorAll('.export-item').forEach(item => {
+            item.addEventListener('click', async (e) => {
+                e.stopPropagation();
+                const format = e.currentTarget.dataset.format;
+                exportMenu.style.display = 'none';
+                await handleExport(format);
+            });
+        });
+        
+        // Export function
+        async function handleExport(format) {
+            try {
+                if (!hierarchyEditor || !hierarchyEditor.gridPath) {
+                    alert('Please wait for the grid to load before exporting.');
+                    return;
+                }
+                
+                const outputName = prompt('Enter name for export:', `grid_export_${Date.now()}`);
+                if (!outputName) return;
+                
+                // Show loading indicator
+                exportButton.disabled = true;
+                exportButton.textContent = 'Exporting...';
+                
+                const response = await fetch('/api/grid/export', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        grid_path: hierarchyEditor.gridPath,
+                        row_hierarchy: hierarchyEditor.rowHierarchy,
+                        col_hierarchy: hierarchyEditor.colHierarchy,
+                        title: currentGridConfig?.grid?.metadata?.title || 'Grid Export',
+                        format: format,
+                        output_name: outputName,
+                        ...currentGridConfig  // Include label/subtitle/style configs
+                    })
+                });
+                
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.error || 'Export failed');
+                }
+                
+                const result = await response.json();
+                
+                // Show success message
+                alert(`Grid exported successfully as ${format.toUpperCase()}!\\nLocation: ${result.export.path}`);
+                
+            } catch (error) {
+                console.error('Export error:', error);
+                alert('Export failed: ' + error.message);
+            } finally {
+                exportButton.disabled = false;
+                exportButton.innerHTML = `
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+                        <path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20M12,19L8,15H10.5V12H13.5V15H16L12,19Z"/>
+                    </svg>
+                    Export
+                    <svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor" style="margin-left: 4px;">
+                        <path d="M7,10L12,15L17,10H7Z"/>
+                    </svg>
+                `;
+            }
+        }
+        
+        // Theme Toggle
+        const themeToggle = document.getElementById('themeToggle');
+        const htmlEl = document.documentElement;
+        
+        // Load saved theme IMMEDIATELY before page renders (prevent flash)
+        const savedTheme = localStorage.getItem('theme') || 'dark';
+        htmlEl.setAttribute('data-theme', savedTheme);
+        
+        themeToggle.addEventListener('click', () => {
+            const currentTheme = htmlEl.getAttribute('data-theme');
+            const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
+            htmlEl.setAttribute('data-theme', newTheme);
+            localStorage.setItem('theme', newTheme);
+        });
+        
+        // Also load theme immediately on DOMContentLoaded (redundant but ensures sync)
+        document.addEventListener('DOMContentLoaded', () => {
+            const theme = localStorage.getItem('theme') || 'dark';
+            document.documentElement.setAttribute('data-theme', theme);
+        });
+    </script>
+</body>
+</html>

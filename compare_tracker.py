@@ -44,6 +44,11 @@ _tracker_state = {
     "avg_speed": None,  # Average speed across all combinations
     "elapsed_seconds": 0,  # Total elapsed time
     "eta_seconds": None,  # Estimated time remaining
+    # Memory tracking
+    "vram_used_mb": 0,  # Current VRAM usage in MB
+    "vram_peak_mb": 0,  # Peak VRAM usage in MB
+    "ram_used_mb": 0,   # Current RAM usage in MB
+    "model_load_times": {},  # model_name -> load_time_seconds
 }
 
 
@@ -91,6 +96,11 @@ def _force_reset_tracker_state():
         "avg_speed": None,
         "elapsed_seconds": 0,
         "eta_seconds": None,
+        # Memory tracking
+        "vram_used_mb": 0,
+        "vram_peak_mb": 0,
+        "ram_used_mb": 0,
+        "model_load_times": {},
     }
 
 
@@ -143,6 +153,37 @@ def set_html_grid_available(html_path: str, relative_url: str = None):
 def get_tracker_state() -> Dict[str, Any]:
     """Get current tracker state."""
     return dict(_tracker_state)
+
+
+def update_memory_stats():
+    """Update VRAM and RAM usage statistics."""
+    global _tracker_state
+    try:
+        import torch
+        if torch.cuda.is_available():
+            _tracker_state["vram_used_mb"] = torch.cuda.memory_allocated() / (1024 * 1024)
+            _tracker_state["vram_peak_mb"] = torch.cuda.max_memory_allocated() / (1024 * 1024)
+    except Exception:
+        pass
+    
+    try:
+        import psutil
+        process = psutil.Process()
+        _tracker_state["ram_used_mb"] = process.memory_info().rss / (1024 * 1024)
+    except Exception:
+        pass
+
+
+def record_model_load_time(model_name: str, load_time: float):
+    """Record how long a model took to load.
+    
+    Args:
+        model_name: Name/identifier of the model
+        load_time: Time in seconds to load the model
+    """
+    global _tracker_state
+    _tracker_state["model_load_times"][model_name] = load_time
+    update_memory_stats()
 
 
 def add_tracker_warning(warning: str):

@@ -541,6 +541,46 @@ body {
     box-sizing: border-box;
 }
 
+/* Image loading container */
+.grid-item-image-container {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 1;
+    background: var(--bg-secondary);
+}
+
+.grid-item-image-container.loading .image-loading-spinner {
+    display: flex;
+}
+
+.grid-item-image-container:not(.loading) .image-loading-spinner {
+    display: none;
+}
+
+.image-loading-spinner {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    color: var(--text-secondary);
+    display: none;
+    align-items: center;
+    justify-content: center;
+}
+
+.grid-item-image-container.error {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(255, 0, 0, 0.1);
+}
+
+.grid-item-image-container.error .image-loading-spinner {
+    display: flex;
+    font-size: 32px;
+    color: #ff4444;
+}
+
 .grid-item-info {
     padding: 12px;
 }
@@ -551,11 +591,11 @@ body {
     margin-bottom: 8px;
     font-weight: 500;
     line-height: 1.4;
-    /* Allow multi-line wrapping instead of truncating */
+    /* Allow multi-line wrapping with more generous height */
     word-wrap: break-word;
     overflow-wrap: break-word;
     white-space: normal;
-    max-height: 3.5em;
+    max-height: 6em;
     overflow: hidden;
 }
 
@@ -1150,11 +1190,41 @@ JS_TEMPLATE = """
                 toggleCompareSelection(index, checkbox, div);
             });
             
-            // Image
+            // Image with loading animation
+            const imgContainer = document.createElement('div');
+            imgContainer.className = 'grid-item-image-container loading';
+            
+            const loadingSpinner = document.createElement('div');
+            loadingSpinner.className = 'image-loading-spinner';
+            loadingSpinner.innerHTML = `
+                <svg width="40" height="40" viewBox="0 0 40 40">
+                    <circle cx="20" cy="20" r="18" stroke="currentColor" stroke-width="3" fill="none" opacity="0.25"/>
+                    <circle cx="20" cy="20" r="18" stroke="currentColor" stroke-width="3" fill="none" stroke-dasharray="90" stroke-dashoffset="0" opacity="0.75">
+                        <animateTransform attributeName="transform" type="rotate" from="0 20 20" to="360 20 20" dur="1s" repeatCount="indefinite"/>
+                    </circle>
+                </svg>
+            `;
+            
             const img = document.createElement('img');
             img.src = item.image;
             img.alt = item.label || 'Image ' + (index + 1);
             img.loading = 'lazy';
+            img.style.opacity = '0';
+            img.style.transition = 'opacity 0.3s ease-in-out';
+            
+            img.addEventListener('load', () => {
+                imgContainer.classList.remove('loading');
+                img.style.opacity = '1';
+            });
+            
+            img.addEventListener('error', () => {
+                imgContainer.classList.remove('loading');
+                imgContainer.classList.add('error');
+                loadingSpinner.innerHTML = '⚠️';
+            });
+            
+            imgContainer.appendChild(loadingSpinner);
+            imgContainer.appendChild(img);
             
             // Info section
             const info = document.createElement('div');
@@ -1187,7 +1257,7 @@ JS_TEMPLATE = """
             info.appendChild(label);
             info.appendChild(meta);
             div.appendChild(checkbox);  // Add checkbox first (will be positioned absolute)
-            div.appendChild(img);
+            div.appendChild(imgContainer);
             div.appendChild(info);
             
             div.addEventListener('click', () => openLightbox(index));
@@ -1824,11 +1894,19 @@ def generate_html_grid(
         model_variations = config.get("model_variations", [])
         if model_idx < len(model_variations):
             model_entry = model_variations[model_idx]
-            params["model"] = model_entry.get("display_name", model_entry.get("name", f"Model {model_idx + 1}"))
+            model_name = model_entry.get("display_name", model_entry.get("name", f"Model {model_idx + 1}"))
+            # Clean up model name (remove .safetensors extension) to match filter options
+            if model_name and model_name.endswith('.safetensors'):
+                model_name = model_name[:-12]
+            params["model"] = model_name
         
         # Add VAE name
         if "vae_name" in combo:
-            params["vae"] = combo["vae_name"]
+            vae_name = combo["vae_name"]
+            # Clean up VAE name (remove .safetensors extension) to match filter options
+            if vae_name and vae_name.endswith('.safetensors'):
+                vae_name = vae_name[:-12]
+            params["vae"] = vae_name
         
         # Add prompts - use per-image prompts from combo, not global first prompt
         # Each combo has its own prompt_positive and prompt_negative from the combination
@@ -1921,6 +1999,39 @@ def generate_html_grid(
     </style>
 </head>
 <body>
+    <!-- Top Navigation Header -->
+    <header class="page-header" style="background: var(--bg-secondary); border-bottom: 1px solid var(--border); padding: 1rem 2rem; position: sticky; top: 0; z-index: 100; display: flex; justify-content: space-between; align-items: center;">
+        <div class="header-left">
+            <div class="header-branding">
+                <h1 style="font-size: 1.5rem; font-weight: 700; color: var(--accent); margin-bottom: 0.25rem;">🎨 Model Compare</h1>
+                <div class="header-tagline" style="font-size: 0.875rem; color: var(--text-secondary);">
+                    Grid View •
+                    <a href="/model-compare/gallery" style="color: var(--accent); text-decoration: none;">
+                        <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" style="vertical-align: middle;">
+                            <path d="M20,11V13H8L13.5,18.5L12.08,19.92L4.16,12L12.08,4.08L13.5,5.5L8,11H20Z"/>
+                        </svg>
+                        Back to Gallery
+                    </a>
+                </div>
+            </div>
+        </div>
+        <div class="header-right" style="display: flex; gap: 10px; align-items: center;">
+            <button id="editGridBtn" class="btn-edit" style="padding: 8px 16px; background: var(--accent); color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 600; display: flex; align-items: center; gap: 6px;">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+                    <path d="M20.71,7.04C21.1,6.65 21.1,6 20.71,5.63L18.37,3.29C18,2.9 17.35,2.9 16.96,3.29L15.12,5.12L18.87,8.87M3,17.25V21H6.75L17.81,9.93L14.06,6.18L3,17.25Z"/>
+                </svg>
+                Edit Grid
+            </button>
+            <button id="exportGridBtn" class="btn-export" style="padding: 8px 16px; background: var(--bg-card); color: var(--text-primary); border: 1px solid var(--border); border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 600; display: flex; align-items: center; gap: 6px;">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+                    <path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20M12,19L8,15H10.5V12H13.5V15H16L12,19Z"/>
+                </svg>
+                Export
+            </button>
+            <button id="themeToggle" class="theme-toggle" style="padding: 8px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 6px; cursor: pointer; font-size: 18px;">☀️</button>
+        </div>
+    </header>
+    
     <div class="container">
         <header class="header">
             <div>
@@ -1941,7 +2052,7 @@ def generate_html_grid(
                 </div>
             </div>
             <div class="header-controls">
-                <button id="themeToggle" class="theme-toggle">☀️ Light</button>
+                <button id="themeToggle2" class="theme-toggle">☀️ Light</button>
             </div>
         </header>
         
@@ -1967,12 +2078,116 @@ def generate_html_grid(
         </div>
     </div>
     
+    <!-- Export Dropdown Menu -->
+    <div id="exportMenu" class="export-menu" style="display: none; position: fixed; top: 60px; right: 100px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 4px 12px var(--shadow); z-index: 1000; min-width: 200px;">
+        <div class="export-item" onclick="exportGrid('html')" style="padding: 12px 16px; cursor: pointer; display: flex; align-items: center; gap: 10px; border-bottom: 1px solid var(--border);">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+                <path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20M10,19L12,15H9V10H15V15L13,19H10Z"/>
+            </svg>
+            <span>Export as HTML</span>
+        </div>
+        <div class="export-item" onclick="exportGrid('csv')" style="padding: 12px 16px; cursor: pointer; display: flex; align-items: center; gap: 10px; border-bottom: 1px solid var(--border);">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+                <path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20Z"/>
+            </svg>
+            <span>Export as CSV</span>
+        </div>
+        <div class="export-item" onclick="exportGrid('json')" style="padding: 12px 16px; cursor: pointer; display: flex; align-items: center; gap: 10px;">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+                <path d="M5,3H7V5H5V10A2,2 0 0,1 3,12A2,2 0 0,1 5,14V19H7V21H5C3.93,20.73 3,20.1 3,19V15A2,2 0 0,0 1,13H0V11H1A2,2 0 0,0 3,9V5A2,2 0 0,1 5,3M19,3A2,2 0 0,1 21,5V9A2,2 0 0,0 23,11H24V13H23A2,2 0 0,0 21,15V19A2,2 0 0,1 19,21H17V19H19V14A2,2 0 0,1 21,12A2,2 0 0,1 19,10V5H17V3H19M12,15A1,1 0 0,1 13,16A1,1 0 0,1 12,17A1,1 0 0,1 11,16A1,1 0 0,1 12,15M8,15A1,1 0 0,1 9,16A1,1 0 0,1 8,17A1,1 0 0,1 7,16A1,1 0 0,1 8,15M16,15A1,1 0 0,1 17,16A1,1 0 0,1 16,17A1,1 0 0,1 15,16A1,1 0 0,1 16,15Z"/>
+            </svg>
+            <span>Export as JSON</span>
+        </div>
+    </div>
+
     <footer class="footer">
         Generated by ComfyUI Model Compare
     </footer>
     
     <script>
 {JS_TEMPLATE.replace('__GRID_DATA__', json.dumps(grid_data, ensure_ascii=False)).replace('__VARYING_DIMS__', json.dumps(varying_dims, ensure_ascii=False))}
+    
+    // Edit Grid Button Handler
+    document.getElementById('editGridBtn').addEventListener('click', function() {{
+        // Get current page path and encode it
+        const currentPath = window.location.pathname;
+        const encodedPath = btoa(currentPath);
+        window.location.href = `/model-compare/grid-editor?grid=${{encodedPath}}`;
+    }});
+    
+    // Export Grid Button Handler
+    document.getElementById('exportGridBtn').addEventListener('click', function(e) {{
+        e.stopPropagation();
+        const menu = document.getElementById('exportMenu');
+        menu.style.display = menu.style.display === 'none' ? 'block' : 'none';
+    }});
+    
+    // Close export menu when clicking outside
+    document.addEventListener('click', function(e) {{
+        const menu = document.getElementById('exportMenu');
+        const btn = document.getElementById('exportGridBtn');
+        if (!menu.contains(e.target) && e.target !== btn) {{
+            menu.style.display = 'none';
+        }}
+    }});
+    
+    // Export Grid Function
+    function exportGrid(format) {{
+        const currentPath = window.location.pathname;
+        const encodedPath = btoa(currentPath);
+        
+        // Hide menu
+        document.getElementById('exportMenu').style.display = 'none';
+        
+        // Trigger export
+        const exportUrl = `/model-compare/grid-builder/export?grid=${{encodedPath}}&format=${{format}}`;
+        
+        // For HTML, redirect to view the generated grid
+        if (format === 'html') {{
+            window.open(exportUrl, '_blank');
+        }} else {{
+            // For CSV/JSON, trigger download
+            const link = document.createElement('a');
+            link.href = exportUrl;
+            link.download = `grid_export.${{format}}`;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }}
+    }}
+    
+    // Sync both theme toggle buttons
+    const toggle1 = document.getElementById('themeToggle');
+    const toggle2 = document.getElementById('themeToggle2');
+    
+    function syncThemeButtons() {{
+        const theme = localStorage.getItem('theme') || 'dark';
+        const icon = theme === 'dark' ? '☀️' : '🌙';
+        if (toggle1) toggle1.textContent = icon;
+        if (toggle2) toggle2.textContent = icon + ' ' + (theme === 'dark' ? 'Light' : 'Dark');
+    }}
+    
+    if (toggle1) {{
+        toggle1.addEventListener('click', function() {{
+            const currentTheme = document.documentElement.getAttribute('data-theme') || 'dark';
+            const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
+            document.documentElement.setAttribute('data-theme', newTheme);
+            localStorage.setItem('theme', newTheme);
+            syncThemeButtons();
+        }});
+    }}
+    
+    if (toggle2) {{
+        toggle2.addEventListener('click', function() {{
+            const currentTheme = document.documentElement.getAttribute('data-theme') || 'dark';
+            const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
+            document.documentElement.setAttribute('data-theme', newTheme);
+            localStorage.setItem('theme', newTheme);
+            syncThemeButtons();
+        }});
+    }}
+    
+    syncThemeButtons();
     </script>
 </body>
 </html>"""
@@ -2022,3 +2237,77 @@ def save_html_grid(
                 img.save(img_path, format="PNG")
     
     return output_path
+
+
+def generate_nested_html_grid(
+    images,  # Can be List[Image.Image] or List[GridImage]
+    row_hierarchy: List[str],
+    col_hierarchy: List[str],
+    title: str = "Grid Comparison",
+    styling: Dict[str, Any] = None,
+) -> str:
+    """
+    Generate HTML grid with nested row/column hierarchies.
+    
+    Handles both PIL Images and GridImage objects from grid_parser.
+    
+    Args:
+        images: List of PIL Images or GridImage objects
+        row_hierarchy: List of field names for row hierarchy
+        col_hierarchy: List of field names for column hierarchy
+        title: Grid title
+        styling: Optional styling configuration
+    
+    Returns:
+        Complete HTML string
+    """
+    # Import here to avoid circular dependency
+    from .grid_parser import GridImage
+    
+    # Check if we have GridImage objects or PIL Images
+    if images and hasattr(images[0], 'image_data'):
+        # We have GridImage objects - convert them
+        pil_images = []
+        labels = []
+        combinations = []
+        
+        for grid_img in images:
+            # Convert base64 image_data to PIL Image
+            if grid_img.image_data:
+                import base64
+                image_bytes = base64.b64decode(grid_img.image_data.split(',')[1] if ',' in grid_img.image_data else grid_img.image_data)
+                pil_img = Image.open(io.BytesIO(image_bytes))
+                pil_images.append(pil_img)
+            else:
+                # Create placeholder image
+                pil_images.append(Image.new('RGB', (256, 256), color='gray'))
+            
+            labels.append(grid_img.label)
+            combinations.append(grid_img.params)
+    else:
+        # We have PIL Images already
+        pil_images = images
+        labels = [f"Image {i+1}" for i in range(len(images))]
+        combinations = [{} for _ in images]
+    
+    # Build config
+    config = {
+        "row_hierarchy": row_hierarchy,
+        "col_hierarchy": col_hierarchy,
+    }
+    
+    # Apply styling if provided
+    if styling:
+        config.update(styling)
+    
+    # Delegate to existing function
+    return generate_html_grid(
+        images=pil_images,
+        labels=labels,
+        combinations=combinations,
+        config=config,
+        title=title,
+        use_base64=True,
+        image_format="JPEG",
+        image_quality=85,
+    )

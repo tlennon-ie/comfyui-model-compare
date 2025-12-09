@@ -70,6 +70,15 @@ class LoraCompare:
                     "tooltip": f"LoRA {i+1}: Custom display label (leave empty to use filename)"
                 },
             )
+            inputs["optional"][f"lora_{i}_ignore_in_grid"] = (
+                "BOOLEAN",
+                {
+                    "default": False,
+                    "label_on": "ignore",
+                    "label_off": "show",
+                    "tooltip": f"LoRA {i+1}: If enabled, this LoRA won't appear in grid row/column labels (useful for static LoRAs like lightning)"
+                },
+            )
             
             # Low Noise LoRA (only visible in HIGH_LOW_PAIR mode)
             inputs["optional"][f"lora_{i}_low"] = (
@@ -159,6 +168,9 @@ class LoraCompare:
             if not label:
                 label = lora_name
             
+            # Get ignore_in_grid flag
+            ignore_in_grid = kwargs.get(f"lora_{i}_ignore_in_grid", False)
+            
             # Create LoRA entry
             lora_entry = {
                 "name": lora_name,
@@ -166,6 +178,7 @@ class LoraCompare:
                 "strengths": strengths,
                 "label": label,
                 "mode": lora_mode,
+                "ignore_in_grid": ignore_in_grid,
             }
             
             # Handle HIGH_LOW_PAIR mode
@@ -230,6 +243,7 @@ class LoraCompare:
             hash_parts.append(kwargs.get(f"lora_{i}", "NONE"))
             hash_parts.append(kwargs.get(f"lora_{i}_strengths", "1.0"))
             hash_parts.append(kwargs.get(f"lora_{i}_label", ""))
+            hash_parts.append(str(kwargs.get(f"lora_{i}_ignore_in_grid", False)))
             if lora_mode == "HIGH_LOW_PAIR":
                 hash_parts.append(kwargs.get(f"lora_{i}_low", "NONE"))
                 hash_parts.append(kwargs.get(f"lora_{i}_low_strengths", "1.0"))

@@ -80,6 +80,17 @@ class SamplingConfigChain:
                 }),
             },
             "optional": {
+                # === Per-Chain Config Inputs (VAE, CLIP, LoRA) ===
+                "vae_config": ("VAE_COMPARE_CONFIG", {
+                    "tooltip": "VAE configuration for this chain (from VAE Config node)"
+                }),
+                "clip_config": ("CLIP_COMPARE_CONFIG", {
+                    "tooltip": "CLIP configuration for this chain (from CLIP Config node)"
+                }),
+                "lora_config": ("LORA_COMPARE_CONFIG", {
+                    "tooltip": "LoRA configuration for this chain (from LoRA Compare node)"
+                }),
+                
                 # === Common Sampling Parameters (all types) - Connectable ===
                 "seed": ("INT", {
                     "default": 0, 
@@ -252,6 +263,10 @@ class SamplingConfigChain:
         config,
         variation_index: int,
         config_type: str,
+        # Per-chain config inputs
+        vae_config=None,
+        clip_config=None,
+        lora_config=None,
         # Optional parameters with defaults (can be connected as inputs)
         # Now STRING types for multi-value support
         seed: int = 0,
@@ -474,6 +489,27 @@ class SamplingConfigChain:
         
         # Store by variation index
         new_config["sampling_configs"][idx] = sampling_config
+        
+        # === Merge VAE/CLIP/LoRA configs into the main config ===
+        # These are per-chain configs that override/extend the base loader config
+        
+        # VAE Config: Store VAE variations for this chain
+        if vae_config is not None and "vaes" in vae_config:
+            if "chain_vae_configs" not in new_config:
+                new_config["chain_vae_configs"] = {}
+            new_config["chain_vae_configs"][idx] = vae_config
+        
+        # CLIP Config: Store CLIP variations for this chain
+        if clip_config is not None and "clips" in clip_config:
+            if "chain_clip_configs" not in new_config:
+                new_config["chain_clip_configs"] = {}
+            new_config["chain_clip_configs"][idx] = clip_config
+        
+        # LoRA Config: Store LoRA config for this chain (replaces per-model LoRA from loader)
+        if lora_config is not None and "loras" in lora_config:
+            if "chain_lora_configs" not in new_config:
+                new_config["chain_lora_configs"] = {}
+            new_config["chain_lora_configs"][idx] = lora_config
         
         # Also update the model variation's FPS if it exists
         model_variations = new_config.get("model_variations", [])

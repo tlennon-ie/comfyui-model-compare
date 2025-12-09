@@ -978,19 +978,25 @@ function registerExtension(app) {
                             }
                         });
 
+                        // Valid subtitle fields for multi-select popup
+                        const SUBTITLE_FIELDS = [
+                            "model", "vae", "clip", "lora", "lora_strength",
+                            "sampler", "scheduler", "cfg", "steps", "seed",
+                            "dimensions", "prompt", "negative_prompt"
+                        ];
+
                         const updateGridVisibility = () => {
                             const presetModeWidget = self.widgets.find(w => w.name === "preset_mode");
+                            const numNestLevelsWidget = self.widgets.find(w => w.name === "num_nest_levels");
+                            
                             const presetMode = presetModeWidget ? presetModeWidget.value : "smart";
+                            const numNestLevels = numNestLevelsWidget ? parseInt(numNestLevelsWidget.value, 10) : 0;
 
                             const isSmartMode = presetMode === "smart";
                             const isManualMode = presetMode === "manual";
 
                             // Widgets shown only in manual mode (user configures axes)
-                            const manualOnlyWidgets = [
-                                "row_axis", "col_axis", 
-                                "nest_axis_1", "nest_axis_2", "nest_axis_3", "nest_axis_4",
-                                "nest_axis_5", "nest_axis_6", "nest_axis_7", "nest_axis_8"
-                            ];
+                            const manualOnlyWidgets = ["row_axis", "col_axis", "num_nest_levels"];
 
                             self.widgets.forEach((widget) => {
                                 if (!widget.name) return;
@@ -1001,6 +1007,21 @@ function registerExtension(app) {
                                 if (isSmartMode) {
                                     if (manualOnlyWidgets.includes(widget.name)) {
                                         shouldShow = false;
+                                    }
+                                    // Also hide nest_axis fields in smart mode
+                                    if (widget.name.startsWith("nest_axis_")) {
+                                        shouldShow = false;
+                                    }
+                                }
+                                
+                                // In manual mode, nest_axis fields are controlled by num_nest_levels slider
+                                if (isManualMode && widget.name.startsWith("nest_axis_")) {
+                                    // Extract the number from nest_axis_N
+                                    const match = widget.name.match(/^nest_axis_(\d+)$/);
+                                    if (match) {
+                                        const axisNum = parseInt(match[1], 10);
+                                        // Show only if axisNum <= numNestLevels
+                                        shouldShow = axisNum <= numNestLevels;
                                     }
                                 }
 
@@ -1032,6 +1053,16 @@ function registerExtension(app) {
                         if (presetModeWidget) {
                             const originalCallback = presetModeWidget.callback;
                             presetModeWidget.callback = function (value) {
+                                if (originalCallback) originalCallback.call(this, value);
+                                updateGridVisibility();
+                            };
+                        }
+                        
+                        // Hook num_nest_levels slider change
+                        const numNestLevelsWidget = self.widgets.find(w => w.name === "num_nest_levels");
+                        if (numNestLevelsWidget) {
+                            const originalCallback = numNestLevelsWidget.callback;
+                            numNestLevelsWidget.callback = function (value) {
                                 if (originalCallback) originalCallback.call(this, value);
                                 updateGridVisibility();
                             };
@@ -1360,9 +1391,16 @@ function registerExtension(app) {
                                         if (colAxisWidget.callback) colAxisWidget.callback(layout.x_axis);
                                     }
                                     
-                                    // Update nest axes
+                                    // Update nest axes (up to 10)
                                     if (layout.nest_levels) {
-                                        for (let i = 0; i < 8; i++) {
+                                        // Also update num_nest_levels slider to match
+                                        const numNestWidget = self.widgets.find(w => w.name === "num_nest_levels");
+                                        if (numNestWidget) {
+                                            numNestWidget.value = layout.nest_levels.length;
+                                            if (numNestWidget.callback) numNestWidget.callback(layout.nest_levels.length);
+                                        }
+                                        
+                                        for (let i = 0; i < 10; i++) {
                                             const nestWidget = self.widgets.find(w => w.name === `nest_axis_${i + 1}`);
                                             if (nestWidget) {
                                                 const value = layout.nest_levels[i] || "none";
@@ -1448,6 +1486,15 @@ function registerExtension(app) {
                         // Add analyze button
                         this.addWidget("button", "🔍 Analyze & Optimize Layout", null, () => {
                             analyzeConnectedConfig();
+                        });
+                        
+                        // Add subtitle fields selection button
+                        this.addWidget("button", "📝 Add Subtitle Fields", null, () => {
+                            const subtitleWidget = self.widgets.find(w => w.name === "subtitle_fields");
+                            if (subtitleWidget) {
+                                const fakeEvent = { clientX: 300, clientY: 300 };
+                                showMultiSelectPopup(subtitleWidget, SUBTITLE_FIELDS, "Subtitle Field", fakeEvent);
+                            }
                         });
 
                         // Add update button
@@ -1956,6 +2003,254 @@ function registerExtension(app) {
 
                     } catch (e) {
                         console.error("[SamplerCompareAdvanced] Error:", e);
+                    }
+                });
+            }
+
+            // --- VaeConfigCompare Logic ---
+            if (nodeData.name === "VaeConfigCompare") {
+                chainCallback(nodeType.prototype, "configure", function (info) {
+                    setTimeout(() => {
+                        if (this.size) {
+                            this.size[0] = 310;
+                        }
+                    }, 10);
+                });
+
+                chainCallback(nodeType.prototype, "onNodeCreated", function () {
+                    try {
+                        const self = this;
+                        const appRef = app;
+
+                        // Store original computeSize for all widgets
+                        self.widgets.forEach((w) => {
+                            if (!w.origComputeSize) {
+                                if (typeof w.computeSize === 'function') {
+                                    w.origComputeSize = w.computeSize;
+                                } else {
+                                    w.origComputeSize = () => [200, 20];
+                                }
+                            }
+                        });
+
+                        const updateVaeVisibility = () => {
+                            const numVaesWidget = self.widgets.find(w => w.name === "num_vaes");
+                            const numVaes = numVaesWidget ? parseInt(numVaesWidget.value, 10) : 1;
+
+                            // Always show these
+                            const alwaysShow = ["num_vaes"];
+
+                            self.widgets.forEach((widget) => {
+                                if (!widget.name) return;
+
+                                let shouldShow = false;
+
+                                // Always show control fields
+                                if (alwaysShow.includes(widget.name) || widget.type === "button") {
+                                    shouldShow = true;
+                                }
+                                // VAE slot fields: vae_N and vae_N_label
+                                else if (widget.name.startsWith("vae_")) {
+                                    // Parse vae_N or vae_N_label
+                                    const match = widget.name.match(/^vae_(\d+)(_label)?$/);
+                                    if (match) {
+                                        const vaeNum = parseInt(match[1], 10);
+                                        // Show if within num_vaes
+                                        shouldShow = vaeNum < numVaes;
+                                    }
+                                }
+
+                                // Apply visibility
+                                if (shouldShow) {
+                                    if (widget.origComputeSize) {
+                                        widget.computeSize = widget.origComputeSize;
+                                    } else {
+                                        widget.computeSize = () => [200, 20];
+                                    }
+                                } else {
+                                    widget.computeSize = () => [0, -4];
+                                }
+                            });
+
+                            // Resize node
+                            if (self.size) {
+                                self.setSize(self.computeSize());
+                            }
+                            self.size[0] = 310;
+
+                            if (appRef && appRef.graph) {
+                                appRef.graph.setDirtyCanvas(true, true);
+                            }
+                        };
+
+                        // Hook num_vaes widget change
+                        const numVaesWidget = self.widgets.find(w => w.name === "num_vaes");
+                        if (numVaesWidget) {
+                            const originalCallback = numVaesWidget.callback;
+                            numVaesWidget.callback = function (value) {
+                                if (originalCallback) originalCallback.call(this, value);
+                                updateVaeVisibility();
+                            };
+                        }
+
+                        // Add update button
+                        this.addWidget("button", "Update Inputs", null, () => {
+                            updateVaeVisibility();
+                        });
+
+                        // Initial visibility update
+                        setTimeout(() => {
+                            updateVaeVisibility();
+                        }, 100);
+
+                    } catch (e) {
+                        console.error("[VaeConfigCompare] Error:", e);
+                    }
+                });
+            }
+
+            // --- ClipConfigCompare Logic ---
+            if (nodeData.name === "ClipConfigCompare") {
+                chainCallback(nodeType.prototype, "configure", function (info) {
+                    setTimeout(() => {
+                        if (this.size) {
+                            this.size[0] = 315;
+                        }
+                    }, 10);
+                });
+
+                chainCallback(nodeType.prototype, "onNodeCreated", function () {
+                    try {
+                        const self = this;
+                        const appRef = app;
+
+                        // CLIP types that require dual CLIP models (must match Python's DUAL_CLIP_TYPES)
+                        const DUAL_CLIP_TYPES = ["flux", "hunyuan_video", "hunyuan_video_15"];
+
+                        // Store original computeSize for all widgets
+                        self.widgets.forEach((w) => {
+                            if (!w.origComputeSize) {
+                                if (typeof w.computeSize === 'function') {
+                                    w.origComputeSize = w.computeSize;
+                                } else {
+                                    w.origComputeSize = () => [200, 20];
+                                }
+                            }
+                        });
+
+                        const updateClipVisibility = () => {
+                            const numClipsWidget = self.widgets.find(w => w.name === "num_clips");
+                            const numClips = numClipsWidget ? parseInt(numClipsWidget.value, 10) : 1;
+
+                            // Always show these
+                            const alwaysShow = ["num_clips"];
+
+                            self.widgets.forEach((widget) => {
+                                if (!widget.name) return;
+
+                                let shouldShow = false;
+
+                                // Always show control fields
+                                if (alwaysShow.includes(widget.name) || widget.type === "button") {
+                                    shouldShow = true;
+                                }
+                                // CLIP slot fields
+                                else if (widget.name.startsWith("clip_type_") || 
+                                         widget.name.startsWith("clip_") && !widget.name.startsWith("clip_type_")) {
+                                    
+                                    // Parse clip_type_N, clip_N, clip_N_2, clip_N_device, clip_N_label
+                                    let clipNum = -1;
+                                    let isSecondary = false;
+                                    let isType = false;
+                                    
+                                    // Handle clip_type_N
+                                    const typeMatch = widget.name.match(/^clip_type_(\d+)$/);
+                                    if (typeMatch) {
+                                        clipNum = parseInt(typeMatch[1], 10);
+                                        isType = true;
+                                    }
+                                    
+                                    // Handle clip_N, clip_N_2, clip_N_device, clip_N_label
+                                    const clipMatch = widget.name.match(/^clip_(\d+)(_(.+))?$/);
+                                    if (clipMatch && !isType) {
+                                        clipNum = parseInt(clipMatch[1], 10);
+                                        const suffix = clipMatch[3] || "";
+                                        isSecondary = suffix === "2";
+                                    }
+                                    
+                                    if (clipNum >= 0) {
+                                        // Show if within num_clips
+                                        if (clipNum < numClips) {
+                                            if (isSecondary) {
+                                                // Secondary CLIP (clip_N_2) only shown if clip_type_N needs dual CLIP
+                                                const clipTypeWidget = self.widgets.find(w => w.name === `clip_type_${clipNum}`);
+                                                const clipType = clipTypeWidget ? clipTypeWidget.value : "default";
+                                                shouldShow = DUAL_CLIP_TYPES.includes(clipType);
+                                            } else {
+                                                // Primary fields always shown when slot is active
+                                                shouldShow = true;
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // Apply visibility
+                                if (shouldShow) {
+                                    if (widget.origComputeSize) {
+                                        widget.computeSize = widget.origComputeSize;
+                                    } else {
+                                        widget.computeSize = () => [200, 20];
+                                    }
+                                } else {
+                                    widget.computeSize = () => [0, -4];
+                                }
+                            });
+
+                            // Resize node
+                            if (self.size) {
+                                self.setSize(self.computeSize());
+                            }
+                            self.size[0] = 315;
+
+                            if (appRef && appRef.graph) {
+                                appRef.graph.setDirtyCanvas(true, true);
+                            }
+                        };
+
+                        // Hook num_clips widget change
+                        const numClipsWidget = self.widgets.find(w => w.name === "num_clips");
+                        if (numClipsWidget) {
+                            const originalCallback = numClipsWidget.callback;
+                            numClipsWidget.callback = function (value) {
+                                if (originalCallback) originalCallback.call(this, value);
+                                updateClipVisibility();
+                            };
+                        }
+
+                        // Hook all clip_type_N widgets for dynamic secondary CLIP visibility
+                        for (let i = 0; i < 10; i++) {
+                            const clipTypeWidget = self.widgets.find(w => w.name === `clip_type_${i}`);
+                            if (clipTypeWidget) {
+                                const originalCallback = clipTypeWidget.callback;
+                                clipTypeWidget.callback = function (value) {
+                                    if (originalCallback) originalCallback.call(this, value);
+                                    updateClipVisibility();
+                                };
+                            }
+                        }
+
+                        // Add update button
+                        this.addWidget("button", "Update Inputs", null, () => {
+                            updateClipVisibility();
+                        });
+
+                        // Initial visibility update
+                        setTimeout(() => {
+                            updateClipVisibility();
+                        }, 100);
+
+                    } catch (e) {
+                        console.error("[ClipConfigCompare] Error:", e);
                     }
                 });
             }

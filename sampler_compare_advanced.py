@@ -542,6 +542,124 @@ class SamplerCompareAdvanced:
         
         return None
     
+    def _get_chain_vae_config(self, config: Dict, chain_idx: int, combo: Dict) -> Dict:
+        """
+        Get VAE configuration from chain config or fallback to combo/baked.
+        
+        Priority:
+        1. chain_vae_configs[chain_idx] - VAE Config node connected to chain
+        2. combo.vae_name - Legacy fallback
+        3. Baked VAE from checkpoint
+        """
+        chain_vae_configs = config.get("chain_vae_configs", {})
+        
+        if chain_idx in chain_vae_configs:
+            vae_cfg = chain_vae_configs[chain_idx]
+            vaes = vae_cfg.get("vaes", [])
+            if vaes:
+                # For now, use first VAE (multi-VAE expansion could be added later)
+                return vaes[0]
+        
+        # Fallback to combo's vae_name (legacy)
+        vae_name = combo.get("vae_name", "")
+        if vae_name and vae_name != "NONE":
+            return {"name": vae_name, "is_baked": vae_name == "__baked__"}
+        
+        # Fallback to baked VAE (if checkpoint)
+        model_entry = config.get("model_variations", [{}])[combo.get("model_index", 0)]
+        if model_entry.get("model_type") == "checkpoint":
+            return {"name": "__baked__", "is_baked": True}
+        
+        return {}
+    
+    def _load_vae_from_config(self, vae_config: Dict, config: Dict, model_entry: Dict) -> Any:
+        """
+        Load VAE from a VAE config dict (from chain config node).
+        Returns VAE object.
+        """
+        if not vae_config:
+            return None
+        
+        if vae_config.get("is_baked"):
+            # Use baked VAE from checkpoint
+            baked_vae = model_entry.get("_baked_vae")
+            return baked_vae
+        
+        vae_path = vae_config.get("path")
+        if vae_path:
+            try:
+                vae = comfy.sd.VAE(sd=comfy.utils.load_torch_file(vae_path))
+                return vae
+            except Exception as e:
+                print(f"[SamplerCompareAdvanced] ERROR loading VAE: {e}")
+                return None
+        
+        # Legacy fallback: use vae_paths dict from old config
+        vae_name = vae_config.get("name", "")
+        if vae_name and vae_name != "NONE" and vae_name != "__baked__":
+            vae_paths = config.get("vae_paths", {})
+            vae_path = vae_paths.get(vae_name)
+            if vae_path:
+                try:
+                    vae = comfy.sd.VAE(sd=comfy.utils.load_torch_file(vae_path))
+                    return vae
+                except Exception as e:
+                    print(f"[SamplerCompareAdvanced] ERROR loading VAE {vae_name}: {e}")
+        
+        return None
+    
+    def _get_chain_clip_config(self, config: Dict, chain_idx: int, combo: Dict) -> Dict:
+        """
+        Get CLIP configuration from chain config or fallback to combo/baked.
+        
+        Priority:
+        1. chain_clip_configs[chain_idx] - CLIP Config node connected to chain
+        2. combo.clip_variation - Legacy fallback
+        3. Baked CLIP from checkpoint
+        """
+        chain_clip_configs = config.get("chain_clip_configs", {})
+        
+        if chain_idx in chain_clip_configs:
+            clip_cfg = chain_clip_configs[chain_idx]
+            clips = clip_cfg.get("clips", [])
+            if clips:
+                # For now, use first CLIP (multi-CLIP expansion could be added later)
+                return clips[0]
+        
+        # Fallback to combo's clip_variation (legacy)
+        clip_var = combo.get("clip_variation")
+        if clip_var:
+            return clip_var
+        
+        # Fallback to baked CLIP (if checkpoint)
+        model_entry = config.get("model_variations", [{}])[combo.get("model_index", 0)]
+        if model_entry.get("model_type") == "checkpoint":
+            return {"type": "baked"}
+        
+        return {}
+    
+    def _get_chain_lora_config(self, config: Dict, chain_idx: int, combo: Dict) -> Dict:
+        """
+        Get LoRA configuration from chain config or fallback to combo.
+        
+        Priority:
+        1. combo.lora_config - Expanded LoRA config set by _expand_combinations_with_lora_variations
+        2. chain_lora_configs[chain_idx] - LoRA Config node connected to chain
+        3. combo.lora_config (legacy) - Legacy fallback
+        """
+        # First check if combo has its own expanded lora_config (set by LoRA expansion)
+        if combo.get("lora_config") and combo.get("lora_config").get("loras"):
+            return combo.get("lora_config")
+        
+        # Then check chain configs
+        chain_lora_configs = config.get("chain_lora_configs", {})
+        
+        if chain_idx in chain_lora_configs:
+            return chain_lora_configs[chain_idx]
+        
+        # Fallback to combo's lora_config (legacy)
+        return combo.get("lora_config", {})
+    
     def _encode_qwen_edit_conditioning(self, clip, vae, prompt: str, reference_images: List[torch.Tensor]) -> Tuple[Any, Any]:
         """
         Encode conditioning for QWEN Image Edit models.
@@ -865,19 +983,27 @@ class SamplerCompareAdvanced:
         """
         Generate a unique key for a combination based on model/VAE/CLIP/LoRA.
         Prompt changes don't change the key (so models stay loaded).
+        
+        Now uses chain configs (from VAE/CLIP/LoRA config nodes) when available,
+        with fallback to combo-level values for backward compatibility.
         """
         model_idx = combo.get("model_index", 0)
-        vae_name = combo.get("vae_name", "")
-        clip_var = combo.get("clip_variation", {})
         
-        # CLIP key based on type
+        # Get VAE from chain config or combo
+        vae_config = self._get_chain_vae_config(config, model_idx, combo)
+        vae_key = vae_config.get("name", "") or vae_config.get("path", "")
+        
+        # Get CLIP from chain config or combo
+        clip_var = self._get_chain_clip_config(config, model_idx, combo)
         if clip_var.get("type") == "pair":
             clip_key = f"{clip_var.get('a', '')}+{clip_var.get('b', '')}"
+        elif clip_var.get("type") == "single":
+            clip_key = clip_var.get("model", "") or clip_var.get("model_path", "")
         else:
-            clip_key = clip_var.get("model", "")
+            clip_key = clip_var.get("type", "")
         
-        # LoRA key from new lora_config structure
-        lora_config = combo.get("lora_config", {})
+        # Get LoRA from chain config or combo
+        lora_config = self._get_chain_lora_config(config, model_idx, combo)
         lora_list = lora_config.get("loras", [])
         lora_key_parts = []
         for lora in lora_list:
@@ -886,7 +1012,7 @@ class SamplerCompareAdvanced:
                 lora_key_parts.append(f"{lora.get('low_name', '')}:{lora.get('low_strength', 1.0)}")
         lora_key = "|".join(lora_key_parts)
         
-        return f"{model_idx}|{vae_name}|{clip_key}|{lora_key}"
+        return f"{model_idx}|{vae_key}|{clip_key}|{lora_key}"
     
     def _apply_loras(self, model, clip, lora_config: Dict, model_type: str):
         """
@@ -1199,6 +1325,170 @@ class SamplerCompareAdvanced:
         
         return expanded_combos, len(expanded_combos)
 
+    def _expand_combinations_with_lora_variations(self, combinations: List[Dict], config: Dict) -> Tuple[List[Dict], int]:
+        """
+        Expand combinations to include LoRA strength variations.
+        
+        Handles two modes based on the 'combinator' field:
+        - '+' (AND mode): All LoRAs applied together, cartesian product of strengths
+        - ' ' (OR mode): Each LoRA is a separate branch, not stacked (switch between LoRAs)
+        
+        This expansion happens BEFORE sampling variations, so:
+        - Input: model × prompt combinations
+        - Output: model × prompt × lora_strength combinations
+        
+        Args:
+            combinations: List of model/prompt combos
+            config: Full config dict with chain_lora_configs
+        
+        Returns:
+            Tuple of (expanded_combinations, total_count)
+            Each combo has "lora_config" with single-strength LoRA entries
+        """
+        chain_lora_configs = config.get("chain_lora_configs", {})
+        
+        if not chain_lora_configs:
+            return combinations, len(combinations)
+        
+        expanded_combos = []
+        
+        for combo in combinations:
+            model_idx = combo.get("model_index", 0)
+            
+            # Get LoRA config for this model's chain
+            lora_config = chain_lora_configs.get(model_idx, {})
+            loras = lora_config.get("loras", [])
+            
+            if not loras:
+                # No LoRAs for this chain - keep combo as-is
+                expanded_combos.append(combo)
+                continue
+            
+            # Check combinator mode - ' ' (space) = OR mode, '+' = AND mode
+            has_or_mode = any(lora.get('combinator', '+') == ' ' for lora in loras)
+            
+            if has_or_mode:
+                # OR MODE: Each LoRA is a separate branch (not stacked)
+                # Switch between LoRAs during sampling, don't combine them
+                for lora in loras:
+                    lora_label = lora.get("label", lora.get("name", "LoRA"))
+                    strengths = lora.get("strengths", [1.0])
+                    if not isinstance(strengths, list):
+                        strengths = [strengths]
+                    
+                    # Each LoRA×strength is a separate combo
+                    for strength in strengths:
+                        new_combo = dict(combo)
+                        new_lora = dict(lora)
+                        new_lora["strength"] = strength
+                        
+                        # Handle low_strengths for HIGH_LOW_PAIR mode
+                        low_strengths = lora.get("low_strengths", [1.0])
+                        if isinstance(low_strengths, list) and len(low_strengths) > 0:
+                            strengths_list = lora.get("strengths", [1.0])
+                            try:
+                                idx = strengths_list.index(strength)
+                                new_lora["low_strength"] = low_strengths[idx] if idx < len(low_strengths) else low_strengths[0]
+                            except (ValueError, IndexError):
+                                new_lora["low_strength"] = low_strengths[0]
+                        else:
+                            new_lora["low_strength"] = low_strengths if isinstance(low_strengths, (int, float)) else 1.0
+                        
+                        new_combo["lora_config"] = {
+                            "loras": [new_lora],  # Only one LoRA per combo in OR mode
+                            "display": f"{lora_label}:{strength:.2f}".rstrip('0').rstrip('.'),
+                            "lora_names": [lora_label],
+                            "lora_strengths": [strength],
+                        }
+                        expanded_combos.append(new_combo)
+            else:
+                # AND MODE: All LoRAs applied together
+                # Check if any LoRA has multiple strengths
+                has_multi_strength = any(
+                    isinstance(lora.get("strengths"), list) and len(lora.get("strengths", [])) > 1
+                    for lora in loras
+                )
+                
+                if not has_multi_strength:
+                    # Single strength for all LoRAs - set lora_config with first/only strength
+                    new_combo = dict(combo)
+                    expanded_loras = []
+                    for lora in loras:
+                        new_lora = dict(lora)
+                        strengths = lora.get("strengths", [1.0])
+                        new_lora["strength"] = strengths[0] if strengths else 1.0
+                        # Keep low_strengths handling for HIGH_LOW_PAIR mode
+                        low_strengths = lora.get("low_strengths", [1.0])
+                        new_lora["low_strength"] = low_strengths[0] if low_strengths else 1.0
+                        expanded_loras.append(new_lora)
+                    
+                    # Add lora_names and lora_strengths arrays for grid compatibility
+                    lora_names = [l.get("label", l.get("name", "")) for l in expanded_loras]
+                    lora_strengths = [l.get("strength", 1.0) for l in expanded_loras]
+                    
+                    new_combo["lora_config"] = {
+                        "loras": expanded_loras,
+                        "display": lora_config.get("display", ""),
+                        "lora_names": lora_names,
+                        "lora_strengths": lora_strengths,
+                    }
+                    expanded_combos.append(new_combo)
+                    continue
+                
+                # Multiple strengths - expand into cartesian product
+                import itertools
+                
+                # Build list of strength options for each LoRA
+                strength_lists = []
+                for lora in loras:
+                    strengths = lora.get("strengths", [1.0])
+                    if not isinstance(strengths, list):
+                        strengths = [strengths]
+                    strength_lists.append(strengths)
+                
+                # Generate all combinations of strengths
+                for strength_combo in itertools.product(*strength_lists):
+                    new_combo = dict(combo)
+                    expanded_loras = []
+                    display_parts = []
+                    
+                    for lora, strength in zip(loras, strength_combo):
+                        new_lora = dict(lora)
+                        new_lora["strength"] = strength
+                        
+                        # Handle low_strengths for HIGH_LOW_PAIR mode
+                        low_strengths = lora.get("low_strengths", [1.0])
+                        if isinstance(low_strengths, list) and len(low_strengths) > 0:
+                            # Use matching index or first value
+                            strengths_list = lora.get("strengths", [1.0])
+                            try:
+                                idx = strengths_list.index(strength)
+                                new_lora["low_strength"] = low_strengths[idx] if idx < len(low_strengths) else low_strengths[0]
+                            except (ValueError, IndexError):
+                                new_lora["low_strength"] = low_strengths[0]
+                        else:
+                            new_lora["low_strength"] = low_strengths if isinstance(low_strengths, (int, float)) else 1.0
+                        
+                        expanded_loras.append(new_lora)
+                        
+                        # Build display label
+                        lora_label = lora.get("label", lora.get("name", "LoRA"))
+                        display_parts.append(f"{lora_label}:{strength:.2f}".rstrip('0').rstrip('.'))
+                    
+                    # Add lora_names and lora_strengths arrays for grid compatibility
+                    lora_names = [l.get("label", l.get("name", "")) for l in expanded_loras]
+                    lora_strengths = [l.get("strength", 1.0) for l in expanded_loras]
+                    
+                    new_combo["lora_config"] = {
+                        "loras": expanded_loras,
+                        "display": " + ".join(display_parts),
+                        "lora_names": lora_names,
+                        "lora_strengths": lora_strengths,
+                    }
+                    expanded_combos.append(new_combo)
+        
+        return expanded_combos, len(expanded_combos)
+
     def sample_all_combinations(
         self,
         config: Dict,
@@ -1254,15 +1544,35 @@ class SamplerCompareAdvanced:
             combinations, config, node_defaults, global_config
         )
         
-        # CRITICAL: Sort combinations by model_index to minimize model switching
+        # Expand combinations with LoRA strength variations
+        combinations, lora_expanded_count = self._expand_combinations_with_lora_variations(
+            combinations, config
+        )
+        if lora_expanded_count > 0:
+            print(f"[SamplerCompareAdvanced] Expanded LoRA variations: {len(combinations) - lora_expanded_count} -> {len(combinations)} combinations")
+        
+        # CRITICAL: Sort combinations to minimize model/VAE/LoRA switching
         # This ensures all variations for model 0 are processed before moving to model 1, etc.
-        # Use stable sort to preserve relative order of variations within each model group
+        # Then by VAE to minimize VAE reloading, then by LoRA config
+        # Use stable sort to preserve relative order of variations within each group
         original_indices = {id(c): i for i, c in enumerate(combinations)}
-        combinations = sorted(combinations, key=lambda c: (
-            c.get("model_index", 0),  # Primary: group by model
-            c.get("_sampling_override", {}).get("variation_index", 0),  # Secondary: by chain/variation index
-            original_indices.get(id(c), 0)  # Tertiary: preserve original order within group
-        ))
+        
+        def combo_sort_key(c):
+            # Primary: group by model
+            model_key = c.get("model_index", 0)
+            # Secondary: by VAE name (same VAE avoids reload)
+            vae_key = c.get("vae_name", "")
+            # Tertiary: by LoRA config (same LoRAs avoid re-patching)
+            lora_config = c.get("lora_config", {})
+            lora_key = str(sorted(lora_config.get("lora_names", [])))
+            # Quaternary: by chain/variation index
+            variation_key = c.get("_sampling_override", {}).get("variation_index", 0)
+            # Preserve original order within same group
+            orig_key = original_indices.get(id(c), 0)
+            return (model_key, vae_key, lora_key, variation_key, orig_key)
+        
+        combinations = sorted(combinations, key=combo_sort_key)
+        print(f"[SamplerCompareAdvanced] Sorted {len(combinations)} combinations by (model, vae, lora, chain)")
         
         all_images = []
         
@@ -1351,9 +1661,9 @@ class SamplerCompareAdvanced:
             if running_seed is not None:
                 global_config["seed"] = running_seed
             
-            # Get model type early for cache hash
-            clip_var = combo.get("clip_variation")
-            clip_type_str = clip_var.get("clip_type", "") if clip_var else ""
+            # Get model type early for cache hash (from chain CLIP config or fallback)
+            early_clip_var = self._get_chain_clip_config(config, base_combo_idx, combo)
+            clip_type_str = early_clip_var.get("clip_type", "") if early_clip_var else ""
             clip_type_to_model_type = {
                 "flux": "flux", "flux2": "flux2", "flux_kontext": "flux_kontext",
                 "wan": "wan21", "wan22": "wan22",
@@ -1413,6 +1723,9 @@ class SamplerCompareAdvanced:
             
             cache_misses += 1
             
+            # Get base model index (used for chain config lookup)
+            base_model_idx = combo.get("model_index", 0)
+            
             # Check if we need to reload models (smart unloading)
             new_key = self._get_combo_key(combo, config)
             needs_reload = current_key is None or new_key != current_key
@@ -1444,18 +1757,18 @@ class SamplerCompareAdvanced:
                     print(f"[SamplerCompareAdvanced] ERROR: Failed to load model")
                     continue
                 
-                # LAZY LOAD: VAE
-                vae_name = combo.get("vae_name", "NONE")
-                current_vae = self._load_vae(vae_name, config, current_model_entry)
+                # LAZY LOAD: VAE (from chain config or fallback to combo/baked)
+                vae_config = self._get_chain_vae_config(config, base_model_idx, combo)
+                current_vae = self._load_vae_from_config(vae_config, config, current_model_entry)
                 if current_vae is None:
-                    print(f"[SamplerCompareAdvanced] WARNING: No VAE loaded for '{vae_name}'")
+                    print(f"[SamplerCompareAdvanced] WARNING: No VAE loaded")
                 
-                # LAZY LOAD: CLIP
-                clip_var = combo.get("clip_variation")
+                # LAZY LOAD: CLIP (from chain config or fallback to combo/baked)
+                clip_var = self._get_chain_clip_config(config, base_model_idx, combo)
                 current_clip = self._load_clip(clip_var, config, current_model_entry)
                 
-                # APPLY LoRAs from combo's lora_config
-                lora_config = combo.get("lora_config", {})
+                # APPLY LoRAs from chain config (or fallback to combo)
+                lora_config = self._get_chain_lora_config(config, base_model_idx, combo)
                 if lora_config and lora_config.get("loras"):
                     # Get model type first for LoRA application
                     clip_type_str = clip_var.get("clip_type", "") if clip_var else ""
@@ -1468,8 +1781,8 @@ class SamplerCompareAdvanced:
             else:
                 model_idx = combo.get("model_index", 0)
             
-            # Get model type from clip_variation's clip_type
-            clip_var = combo.get("clip_variation")
+            # Get model type from chain CLIP config (or fallback to combo/detection)
+            clip_var = self._get_chain_clip_config(config, model_idx, combo)
             clip_type_str = clip_var.get("clip_type", "") if clip_var else ""
             
             clip_type_to_model_type = {
@@ -1492,8 +1805,7 @@ class SamplerCompareAdvanced:
             # Get sampling config for this model variation
             # Priority: _sampling_override (from expansion) > global_config (from sampler) > config chain > node_defaults
             # Also get the resolved model_type from config chain (overrides clip_type detection)
-            # Use model_index to match config chain (not loop idx, which could be different after expansion)
-            base_model_idx = combo.get("model_index", 0)
+            # Use model_index (base_model_idx) to match config chain (not loop idx, which could be different after expansion)
             sampling_cfg, resolved_model_type = self._get_sampling_config_for_type(config, model_type, node_defaults, global_config, base_model_idx)
             
             # Apply sampling override from expanded variations (highest priority for expanded fields)
