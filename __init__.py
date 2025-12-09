@@ -1,17 +1,20 @@
 """
-ComfyUI Model Compare - Advanced Edition
-A streamlined custom node for comparing different model configurations side-by-side.
+ComfyUI Model Compare
+A comprehensive custom node package for side-by-side comparison of models, VAEs, CLIPs, LoRAs, and prompts.
 
 Features:
-- Load and configure models with multiple LoRA combinations
-- Support for FLUX, QWEN, WAN, Hunyuan diffusion models
-- Generate comparison grids with multiple configurations
-- Create customizable comparison grids with labels
+- Multi-model comparison with lazy loading for efficient VRAM usage
+- Support for 12 architectures: FLUX, FLUX2, SDXL, WAN 2.1/2.2, Hunyuan 1.0/1.5, QWEN, Lumina2
+- LoRA testing with AND/OR logic and multi-value strength expansion
+- Per-variation VAE/CLIP configuration via config chains
+- Smart grid generation with hierarchical ragged layout support
+- Interactive web gallery and drag-and-drop grid builder
+- Multi-format export: HTML (interactive), PNG, MP4/GIF, JSON, CSV, PDF
+- Real-time progress tracking with VRAM monitoring
 - Histogram analysis for image comparison
-- Gallery viewer for browsing all generated grids
 
-Author: Your Name
-Repository: https://github.com/yourusername/comfyui-model-compare
+Author: tlennon-ie
+Repository: https://github.com/tlennon-ie/comfyui-model-compare
 License: MIT
 """
 
@@ -99,5 +102,5 @@ NODE_DISPLAY_NAME_MAPPINGS = {
 __all__ = ['NODE_CLASS_MAPPINGS', 'NODE_DISPLAY_NAME_MAPPINGS']
 
 # Version and metadata for ComfyUI Manager
-__version__ = "3.0.0"
-WEB_DIRECTORY = "web"  # Web components for dynamic UI updates
+__version__ = "3.2.0"
+WEB_DIRECTORY = "web"  # Web components for gallery, grid builder, and configurators
