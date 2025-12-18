@@ -35,8 +35,12 @@ def _try_import_piflow():
     global PIFLOW_AVAILABLE, piflow_sample, ModelSamplingPiFlow, load_piflow_model
     import sys
     import os
+    import importlib.util
+    
+    print("[SamplerCompareAdvanced] Attempting piFlow import...")
     
     custom_nodes_dir = os.path.dirname(os.path.dirname(__file__))
+    print(f"[SamplerCompareAdvanced] Custom nodes dir: {custom_nodes_dir}")
     
     # Try to find ComfyUI-piFlow folder (with hyphen or underscore)
     piflow_paths = [
@@ -44,35 +48,80 @@ def _try_import_piflow():
         os.path.join(custom_nodes_dir, "ComfyUI_piFlow"),
     ]
     
+    def load_module_from_file(name, filepath):
+        """Load a module from a specific file path."""
+        spec = importlib.util.spec_from_file_location(name, filepath)
+        if spec is None:
+            return None
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[name] = module
+        spec.loader.exec_module(module)
+        return module
+    
     for piflow_path in piflow_paths:
+        print(f"[SamplerCompareAdvanced] Checking: {piflow_path}")
         if not os.path.exists(piflow_path):
+            print(f"[SamplerCompareAdvanced]   -> Not found")
             continue
+        
+        print(f"[SamplerCompareAdvanced]   -> Found! Attempting import...")
             
         try:
-            # Add piFlow to path for imports
+            # Add piFlow to path for its own internal imports
             if piflow_path not in sys.path:
                 sys.path.insert(0, piflow_path)
             
-            # Now try regular imports - piFlow's internal imports should work
-            # because comfy is already in sys.path when ComfyUI runs
-            from piflow_loader import load_piflow_model as _load_piflow_model
-            from modules.sampler import sample as _piflow_sample
-            from modules.model_base import ModelSamplingPiFlow as _ModelSamplingPiFlow
+            # First, we need to load piFlow's modules package properly
+            modules_init = os.path.join(piflow_path, "modules", "__init__.py")
+            if os.path.exists(modules_init):
+                # Load the modules package with a unique name to avoid conflicts
+                piflow_modules = load_module_from_file("piflow_modules", modules_init)
+                print(f"[SamplerCompareAdvanced]   -> Loaded piflow_modules")
             
-            # Assign to globals
-            load_piflow_model = _load_piflow_model
-            piflow_sample = _piflow_sample
-            ModelSamplingPiFlow = _ModelSamplingPiFlow
-            PIFLOW_AVAILABLE = True
-            print(f"[SamplerCompareAdvanced] ✓ piFlow support enabled from: {piflow_path}")
-            return True
+            # Load piflow_loader
+            loader_file = os.path.join(piflow_path, "piflow_loader.py")
+            if not os.path.exists(loader_file):
+                print(f"[SamplerCompareAdvanced]   -> piflow_loader.py not found")
+                continue
+            loader_module = load_module_from_file("piflow_loader_module", loader_file)
+            print(f"[SamplerCompareAdvanced]   -> Loaded piflow_loader")
             
-        except ImportError as e:
-            print(f"[SamplerCompareAdvanced] piFlow import from {piflow_path} failed: {e}")
-            # Remove from path if import failed to avoid conflicts
-            if piflow_path in sys.path:
-                sys.path.remove(piflow_path)
-            continue
+            # Load modules/sampler.py
+            sampler_file = os.path.join(piflow_path, "modules", "sampler.py")
+            if not os.path.exists(sampler_file):
+                print(f"[SamplerCompareAdvanced]   -> modules/sampler.py not found")
+                continue
+            sampler_module = load_module_from_file("piflow_sampler_module", sampler_file)
+            print(f"[SamplerCompareAdvanced]   -> Loaded modules/sampler")
+            
+            # Load modules/model_base.py
+            model_base_file = os.path.join(piflow_path, "modules", "model_base.py")
+            if not os.path.exists(model_base_file):
+                print(f"[SamplerCompareAdvanced]   -> modules/model_base.py not found")
+                continue
+            model_base_module = load_module_from_file("piflow_model_base_module", model_base_file)
+            print(f"[SamplerCompareAdvanced]   -> Loaded modules/model_base")
+            
+            # Extract what we need
+            _load_piflow_model = getattr(loader_module, 'load_piflow_model', None)
+            _piflow_sample = getattr(sampler_module, 'sample', None)
+            _ModelSamplingPiFlow = getattr(model_base_module, 'ModelSamplingPiFlow', None)
+            
+            print(f"[SamplerCompareAdvanced]   -> load_piflow_model: {_load_piflow_model is not None}")
+            print(f"[SamplerCompareAdvanced]   -> piflow_sample: {_piflow_sample is not None}")
+            print(f"[SamplerCompareAdvanced]   -> ModelSamplingPiFlow: {_ModelSamplingPiFlow is not None}")
+            
+            if _load_piflow_model and _piflow_sample and _ModelSamplingPiFlow:
+                # Assign to globals
+                load_piflow_model = _load_piflow_model
+                piflow_sample = _piflow_sample
+                ModelSamplingPiFlow = _ModelSamplingPiFlow
+                PIFLOW_AVAILABLE = True
+                print(f"[SamplerCompareAdvanced] ✓ piFlow support enabled from: {piflow_path}")
+                return True
+            else:
+                print(f"[SamplerCompareAdvanced]   -> Missing required functions")
+            
         except Exception as e:
             print(f"[SamplerCompareAdvanced] piFlow import error from {piflow_path}: {e}")
             import traceback
@@ -81,7 +130,7 @@ def _try_import_piflow():
                 sys.path.remove(piflow_path)
             continue
     
-    print("[SamplerCompareAdvanced] INFO: ComfyUI-piFlow not found. PIFLOW sampling mode unavailable.")
+    print("[SamplerCompareAdvanced] INFO: ComfyUI-piFlow not found or import failed. PIFLOW sampling mode unavailable.")
     return False
 
 _try_import_piflow()
