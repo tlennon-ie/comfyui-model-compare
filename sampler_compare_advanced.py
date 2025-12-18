@@ -1918,7 +1918,8 @@ class SamplerCompareAdvanced:
                 # Update running seed even on cache hit (to stay consistent with control mode)
                 # Get seed_control from early_sampling_cfg which was already computed
                 cache_seed_control = early_sampling_cfg.get("seed_control", global_seed_control_mode)
-                cache_base_seed = early_sampling_cfg.get("seed", 0)
+                cache_base_seed_raw = early_sampling_cfg.get("seed", 0)
+                cache_base_seed = int(cache_base_seed_raw) if cache_base_seed_raw is not None else 0
                 
                 # Initialize running_seed if not yet set
                 if running_seed is None:
@@ -2117,7 +2118,9 @@ class SamplerCompareAdvanced:
                 seed_control_mode = "fixed"
             
             # Get base seed from config (chain or global)
-            base_seed = sampling_cfg.get("seed", 0)
+            # Ensure it's an integer (global_config stores strings)
+            base_seed_raw = sampling_cfg.get("seed", 0)
+            base_seed = int(base_seed_raw) if base_seed_raw is not None else 0
             
             # Apply seed_control mode to determine actual seed for this combination
             # running_seed tracks the evolving seed for increment/decrement modes
@@ -2142,6 +2145,9 @@ class SamplerCompareAdvanced:
             else:
                 # Unknown mode, default to fixed
                 use_seed = base_seed
+            
+            # Ensure use_seed is always an integer (defensive check)
+            use_seed = int(use_seed) if isinstance(use_seed, str) else use_seed
             
             use_steps = sampling_cfg.get("steps", 20)
             use_cfg = sampling_cfg.get("cfg", 7.0)
