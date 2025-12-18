@@ -35,6 +35,7 @@ def _try_import_piflow():
     global PIFLOW_AVAILABLE, piflow_sample, ModelSamplingPiFlow, load_piflow_model
     import sys
     import os
+    import importlib
     import importlib.util
     
     print("[SamplerCompareAdvanced] Attempting piFlow import...")
@@ -43,23 +44,12 @@ def _try_import_piflow():
     print(f"[SamplerCompareAdvanced] Custom nodes dir: {custom_nodes_dir}")
     
     # Try to find ComfyUI-piFlow folder (with hyphen or underscore)
-    piflow_paths = [
-        os.path.join(custom_nodes_dir, "ComfyUI-piFlow"),
-        os.path.join(custom_nodes_dir, "ComfyUI_piFlow"),
-    ]
+    piflow_folder_names = ["ComfyUI-piFlow", "ComfyUI_piFlow"]
     
-    def load_module_from_file(name, filepath):
-        """Load a module from a specific file path."""
-        spec = importlib.util.spec_from_file_location(name, filepath)
-        if spec is None:
-            return None
-        module = importlib.util.module_from_spec(spec)
-        sys.modules[name] = module
-        spec.loader.exec_module(module)
-        return module
-    
-    for piflow_path in piflow_paths:
+    for folder_name in piflow_folder_names:
+        piflow_path = os.path.join(custom_nodes_dir, folder_name)
         print(f"[SamplerCompareAdvanced] Checking: {piflow_path}")
+        
         if not os.path.exists(piflow_path):
             print(f"[SamplerCompareAdvanced]   -> Not found")
             continue
@@ -67,40 +57,116 @@ def _try_import_piflow():
         print(f"[SamplerCompareAdvanced]   -> Found! Attempting import...")
             
         try:
-            # Add piFlow to path for its own internal imports
-            if piflow_path not in sys.path:
-                sys.path.insert(0, piflow_path)
+            # The piFlow package uses relative imports, so we need to set up
+            # the package structure properly. We'll register it with a Python-friendly name.
+            module_name = folder_name.replace("-", "_")
             
-            # First, we need to load piFlow's modules package properly
-            modules_init = os.path.join(piflow_path, "modules", "__init__.py")
-            if os.path.exists(modules_init):
-                # Load the modules package with a unique name to avoid conflicts
-                piflow_modules = load_module_from_file("piflow_modules", modules_init)
-                print(f"[SamplerCompareAdvanced]   -> Loaded piflow_modules")
+            # Ensure custom_nodes is in path
+            if custom_nodes_dir not in sys.path:
+                sys.path.insert(0, custom_nodes_dir)
             
-            # Load piflow_loader
+            # First load the modules subpackage (needed for relative imports in piflow_loader)
+            modules_path = os.path.join(piflow_path, "modules")
+            modules_init = os.path.join(modules_path, "__init__.py")
+            
+            # Register the main package first
+            if module_name not in sys.modules:
+                init_file = os.path.join(piflow_path, "__init__.py")
+                if os.path.exists(init_file):
+                    spec = importlib.util.spec_from_file_location(
+                        module_name, 
+                        init_file,
+                        submodule_search_locations=[piflow_path]
+                    )
+                    if spec:
+                        pkg = importlib.util.module_from_spec(spec)
+                        pkg.__path__ = [piflow_path]
+                        sys.modules[module_name] = pkg
+                        spec.loader.exec_module(pkg)
+                        print(f"[SamplerCompareAdvanced]   -> Registered package: {module_name}")
+            
+            # Register the modules subpackage
+            modules_pkg_name = f"{module_name}.modules"
+            if modules_pkg_name not in sys.modules:
+                if os.path.exists(modules_init):
+                    spec = importlib.util.spec_from_file_location(
+                        modules_pkg_name,
+                        modules_init,
+                        submodule_search_locations=[modules_path]
+                    )
+                    if spec:
+                        modules_pkg = importlib.util.module_from_spec(spec)
+                        modules_pkg.__path__ = [modules_path]
+                        modules_pkg.__package__ = modules_pkg_name
+                        sys.modules[modules_pkg_name] = modules_pkg
+                        spec.loader.exec_module(modules_pkg)
+                        print(f"[SamplerCompareAdvanced]   -> Registered subpackage: {modules_pkg_name}")
+            
+            # Now load model_detection (needed by piflow_loader)
+            model_detection_file = os.path.join(modules_path, "model_detection.py")
+            model_detection_name = f"{module_name}.modules.model_detection"
+            if model_detection_name not in sys.modules and os.path.exists(model_detection_file):
+                spec = importlib.util.spec_from_file_location(model_detection_name, model_detection_file)
+                if spec:
+                    mod = importlib.util.module_from_spec(spec)
+                    mod.__package__ = modules_pkg_name
+                    sys.modules[model_detection_name] = mod
+                    spec.loader.exec_module(mod)
+                    print(f"[SamplerCompareAdvanced]   -> Loaded: {model_detection_name}")
+            
+            # Load supported_models (may be needed)
+            supported_models_file = os.path.join(modules_path, "supported_models.py")
+            supported_models_name = f"{module_name}.modules.supported_models"
+            if supported_models_name not in sys.modules and os.path.exists(supported_models_file):
+                spec = importlib.util.spec_from_file_location(supported_models_name, supported_models_file)
+                if spec:
+                    mod = importlib.util.module_from_spec(spec)
+                    mod.__package__ = modules_pkg_name
+                    sys.modules[supported_models_name] = mod
+                    spec.loader.exec_module(mod)
+                    print(f"[SamplerCompareAdvanced]   -> Loaded: {supported_models_name}")
+            
+            # Now load piflow_loader
             loader_file = os.path.join(piflow_path, "piflow_loader.py")
-            if not os.path.exists(loader_file):
-                print(f"[SamplerCompareAdvanced]   -> piflow_loader.py not found")
-                continue
-            loader_module = load_module_from_file("piflow_loader_module", loader_file)
-            print(f"[SamplerCompareAdvanced]   -> Loaded piflow_loader")
+            loader_name = f"{module_name}.piflow_loader"
+            if loader_name not in sys.modules:
+                spec = importlib.util.spec_from_file_location(loader_name, loader_file)
+                if spec:
+                    loader_module = importlib.util.module_from_spec(spec)
+                    loader_module.__package__ = module_name
+                    sys.modules[loader_name] = loader_module
+                    spec.loader.exec_module(loader_module)
+                    print(f"[SamplerCompareAdvanced]   -> Loaded: {loader_name}")
+            else:
+                loader_module = sys.modules[loader_name]
             
-            # Load modules/sampler.py
-            sampler_file = os.path.join(piflow_path, "modules", "sampler.py")
-            if not os.path.exists(sampler_file):
-                print(f"[SamplerCompareAdvanced]   -> modules/sampler.py not found")
-                continue
-            sampler_module = load_module_from_file("piflow_sampler_module", sampler_file)
-            print(f"[SamplerCompareAdvanced]   -> Loaded modules/sampler")
+            # Load model_base
+            model_base_file = os.path.join(modules_path, "model_base.py")
+            model_base_name = f"{module_name}.modules.model_base"
+            if model_base_name not in sys.modules:
+                spec = importlib.util.spec_from_file_location(model_base_name, model_base_file)
+                if spec:
+                    model_base_module = importlib.util.module_from_spec(spec)
+                    model_base_module.__package__ = modules_pkg_name
+                    sys.modules[model_base_name] = model_base_module
+                    spec.loader.exec_module(model_base_module)
+                    print(f"[SamplerCompareAdvanced]   -> Loaded: {model_base_name}")
+            else:
+                model_base_module = sys.modules[model_base_name]
             
-            # Load modules/model_base.py
-            model_base_file = os.path.join(piflow_path, "modules", "model_base.py")
-            if not os.path.exists(model_base_file):
-                print(f"[SamplerCompareAdvanced]   -> modules/model_base.py not found")
-                continue
-            model_base_module = load_module_from_file("piflow_model_base_module", model_base_file)
-            print(f"[SamplerCompareAdvanced]   -> Loaded modules/model_base")
+            # Load sampler
+            sampler_file = os.path.join(modules_path, "sampler.py")
+            sampler_name = f"{module_name}.modules.sampler"
+            if sampler_name not in sys.modules:
+                spec = importlib.util.spec_from_file_location(sampler_name, sampler_file)
+                if spec:
+                    sampler_module = importlib.util.module_from_spec(spec)
+                    sampler_module.__package__ = modules_pkg_name
+                    sys.modules[sampler_name] = sampler_module
+                    spec.loader.exec_module(sampler_module)
+                    print(f"[SamplerCompareAdvanced]   -> Loaded: {sampler_name}")
+            else:
+                sampler_module = sys.modules[sampler_name]
             
             # Extract what we need
             _load_piflow_model = getattr(loader_module, 'load_piflow_model', None)
@@ -126,8 +192,6 @@ def _try_import_piflow():
             print(f"[SamplerCompareAdvanced] piFlow import error from {piflow_path}: {e}")
             import traceback
             traceback.print_exc()
-            if piflow_path in sys.path:
-                sys.path.remove(piflow_path)
             continue
     
     print("[SamplerCompareAdvanced] INFO: ComfyUI-piFlow not found or import failed. PIFLOW sampling mode unavailable.")
