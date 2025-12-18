@@ -5,6 +5,7 @@ Provides web routes for:
 - /model-compare/gallery - Main gallery page
 - /model-compare/gallery/api/grids - List all grids
 - /model-compare/gallery/api/settings - User settings for scan paths
+- /model-compare/gallery/api/community-grids - List community grids from GitHub
 - /model-compare/view/<path> - Serve HTML grids with correct content-type
 - /model-compare/static/<path> - Serve static assets (CSS, JS, images)
 """
@@ -13,6 +14,8 @@ import os
 import json
 import glob
 import re
+import time
+import aiohttp
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 from aiohttp import web
@@ -27,6 +30,11 @@ GRID_META_ID = "model-compare-metadata"
 # Settings file location
 SETTINGS_FILE = os.path.join(os.path.dirname(__file__), "gallery_settings.json")
 
+# Community grids cache
+_community_grids_cache = {
+    "data": None,
+    "last_fetch": 0
+}
 
 def normalize_path(path: str) -> str:
     """Convert path to absolute, handling relative paths and forward/backslashes"""
@@ -76,6 +84,14 @@ def get_default_settings() -> Dict:
     return {
         "scan_paths": [default_scan_path],
         "thumbnail_size": 300,
+        "nsfw_filter": "blur",  # Options: "show", "blur", "hide"
+        "community_grids": {
+            "enabled": True,
+            "repo_owner": "tlennon-ie",
+            "repo_name": "comfyui-model-compare-community-grids",
+            "cache_ttl_seconds": 3600,
+            "index_url": "https://raw.githubusercontent.com/tlennon-ie/comfyui-model-compare-community-grids/main/index.json"
+        }
     }
 
 
@@ -217,6 +233,7 @@ def extract_grid_metadata(html_path: str) -> Optional[Dict]:
             "thumbnail": metadata.get("thumbnail", ""),
             "image_count": metadata.get("image_count", 0),
             "varying_dims": metadata.get("varying_dims", []),
+            "nsfw": metadata.get("nsfw", False),  # Per-grid NSFW flag
         }
         
     except Exception as e:
@@ -292,16 +309,45 @@ def get_gallery_html() -> str:
         <main class="main-content">
             <!-- Gallery View -->
             <div id="galleryView" class="view active">
+                <!-- Tab Navigation -->
+                <div class="tab-nav">
+                    <button class="tab-btn active" data-tab="local">
+                        <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+                            <path d="M10,4H4C2.89,4 2,4.89 2,6V18A2,2 0 0,0 4,20H20A2,2 0 0,0 22,18V8C22,6.89 21.1,6 20,6H12L10,4Z"/>
+                        </svg>
+                        Local Grids
+                    </button>
+                    <button class="tab-btn" data-tab="community">
+                        <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+                            <path d="M12,5.5A3.5,3.5 0 0,1 15.5,9A3.5,3.5 0 0,1 12,12.5A3.5,3.5 0 0,1 8.5,9A3.5,3.5 0 0,1 12,5.5M5,8C5.56,8 6.08,8.15 6.53,8.42C6.38,9.85 6.8,11.27 7.66,12.38C7.16,13.34 6.16,14 5,14A3,3 0 0,1 2,11A3,3 0 0,1 5,8M19,8A3,3 0 0,1 22,11A3,3 0 0,1 19,14C17.84,14 16.84,13.34 16.34,12.38C17.2,11.27 17.62,9.85 17.47,8.42C17.92,8.15 18.44,8 19,8M5.5,18.25C5.5,16.18 8.41,14.5 12,14.5C15.59,14.5 18.5,16.18 18.5,18.25V20H5.5V18.25M0,20V18.5C0,17.11 1.89,15.94 4.45,15.6C3.86,16.28 3.5,17.22 3.5,18.25V20H0M24,20H20.5V18.25C20.5,17.22 20.14,16.28 19.55,15.6C22.11,15.94 24,17.11 24,18.5V20Z"/>
+                        </svg>
+                        Community Grids
+                    </button>
+                </div>
+                
                 <div class="stats-bar">
                     <span id="gridCount">0 grids found</span>
                     <span class="separator">•</span>
                     <span id="scanPathsInfo">Scanning default path</span>
                 </div>
                 
-                <div id="gridGallery" class="grid-gallery">
-                    <div class="loading">
-                        <div class="spinner"></div>
-                        <p>Scanning for grids...</p>
+                <!-- Local Grids Tab -->
+                <div id="localGridsTab" class="tab-content active">
+                    <div id="gridGallery" class="grid-gallery">
+                        <div class="loading">
+                            <div class="spinner"></div>
+                            <p>Scanning for grids...</p>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Community Grids Tab -->
+                <div id="communityGridsTab" class="tab-content">
+                    <div id="communityGallery" class="grid-gallery">
+                        <div class="loading">
+                            <div class="spinner"></div>
+                            <p>Loading community grids...</p>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -340,6 +386,26 @@ def get_gallery_html() -> str:
                         <p class="setting-desc">Directories to scan for HTML grids (one per line)</p>
                         <textarea id="scanPathsInput" rows="4" placeholder="Enter paths to scan..."></textarea>
                         <button id="addDefaultPath" class="btn btn-small">Add Default Path</button>
+                    </div>
+                    
+                    <div class="setting-group">
+                        <label>NSFW Content Filter</label>
+                        <p class="setting-desc">How to handle grids marked as NSFW</p>
+                        <select id="nsfwFilterSelect" class="setting-select">
+                            <option value="blur">Blur thumbnails (click to reveal)</option>
+                            <option value="show">Show all content</option>
+                            <option value="hide">Hide NSFW grids completely</option>
+                        </select>
+                    </div>
+                    
+                    <div class="setting-group">
+                        <label>Community Grids</label>
+                        <p class="setting-desc">Enable browsing shared grids from the community</p>
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="communityEnabled" checked>
+                            <span class="toggle-slider"></span>
+                            <span class="toggle-label">Enable Community Grids</span>
+                        </label>
                     </div>
                 </div>
                 <div class="modal-footer">
@@ -560,6 +626,163 @@ body {
 
 .separator {
     opacity: 0.5;
+}
+
+/* Tab Navigation */
+.tab-nav {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 16px;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 8px;
+}
+
+.tab-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 20px;
+    background: transparent;
+    border: none;
+    border-radius: 8px 8px 0 0;
+    color: var(--text-secondary);
+    font-size: 0.95rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.tab-btn:hover {
+    background: var(--bg-card);
+    color: var(--text-primary);
+}
+
+.tab-btn.active {
+    background: var(--accent);
+    color: white;
+}
+
+.tab-btn svg {
+    opacity: 0.7;
+}
+
+.tab-btn.active svg {
+    opacity: 1;
+}
+
+.tab-content {
+    display: none;
+}
+
+.tab-content.active {
+    display: block;
+}
+
+/* NSFW Blur Effect */
+.grid-card.nsfw-blur .grid-thumbnail {
+    filter: blur(20px);
+    transition: filter 0.3s;
+}
+
+.grid-card.nsfw-blur:hover .grid-thumbnail {
+    filter: blur(10px);
+}
+
+.grid-card.nsfw-blur .nsfw-overlay {
+    display: flex;
+}
+
+.nsfw-overlay {
+    display: none;
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 50%;
+    background: rgba(0, 0, 0, 0.5);
+    align-items: center;
+    justify-content: center;
+    color: #ff6b6b;
+    font-weight: 600;
+    font-size: 0.9rem;
+    gap: 6px;
+    z-index: 5;
+}
+
+.nsfw-badge {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    background: #ff6b6b;
+    color: white;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    z-index: 10;
+}
+
+/* Toggle Switch */
+.toggle-switch {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    cursor: pointer;
+}
+
+.toggle-switch input {
+    display: none;
+}
+
+.toggle-slider {
+    position: relative;
+    width: 48px;
+    height: 26px;
+    background: var(--border);
+    border-radius: 13px;
+    transition: 0.3s;
+}
+
+.toggle-slider::before {
+    content: '';
+    position: absolute;
+    width: 20px;
+    height: 20px;
+    left: 3px;
+    top: 3px;
+    background: white;
+    border-radius: 50%;
+    transition: 0.3s;
+}
+
+.toggle-switch input:checked + .toggle-slider {
+    background: var(--accent);
+}
+
+.toggle-switch input:checked + .toggle-slider::before {
+    transform: translateX(22px);
+}
+
+.toggle-label {
+    color: var(--text-primary);
+    font-size: 0.9rem;
+}
+
+/* Settings Select */
+.setting-select {
+    width: 100%;
+    padding: 10px 12px;
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text-primary);
+    font-size: 0.9rem;
+    cursor: pointer;
+}
+
+.setting-select:focus {
+    outline: none;
+    border-color: var(--accent);
 }
 
 /* Grid Gallery */
@@ -983,25 +1206,31 @@ GALLERY_JS = '''
 (function() {
     // State
     let grids = [];
+    let communityGrids = [];
     let settings = {};
     let currentGridPath = null;
+    let currentTab = 'local';
     
     // DOM elements
     const galleryView = document.getElementById('galleryView');
     const viewerView = document.getElementById('viewerView');
     const gridGallery = document.getElementById('gridGallery');
+    const communityGallery = document.getElementById('communityGallery');
     const gridViewer = document.getElementById('gridViewer');
     const viewerTitle = document.getElementById('viewerTitle');
     const gridCount = document.getElementById('gridCount');
     const scanPathsInfo = document.getElementById('scanPathsInfo');
     const settingsModal = document.getElementById('settingsModal');
     const scanPathsInput = document.getElementById('scanPathsInput');
+    const nsfwFilterSelect = document.getElementById('nsfwFilterSelect');
+    const communityEnabled = document.getElementById('communityEnabled');
     
     // Initialize
     document.addEventListener('DOMContentLoaded', init);
     
     async function init() {
         setupEventListeners();
+        setupTabListeners();
         loadTheme();
         await loadSettings();
         await loadGrids();
@@ -1012,7 +1241,10 @@ GALLERY_JS = '''
         document.getElementById('themeToggle').addEventListener('click', toggleTheme);
         
         // Refresh
-        document.getElementById('refreshBtn').addEventListener('click', loadGrids);
+        document.getElementById('refreshBtn').addEventListener('click', () => {
+            if (currentTab === 'local') loadGrids();
+            else loadCommunityGrids();
+        });
         
         // Settings
         document.getElementById('settingsBtn').addEventListener('click', openSettings);
@@ -1024,6 +1256,47 @@ GALLERY_JS = '''
         // Viewer
         document.getElementById('backToGallery').addEventListener('click', showGallery);
         document.getElementById('openInNewTab').addEventListener('click', openCurrentInNewTab);
+    }
+    
+    function setupTabListeners() {
+        document.querySelectorAll('.tab-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const tab = btn.dataset.tab;
+                switchTab(tab);
+            });
+        });
+    }
+    
+    function switchTab(tab) {
+        currentTab = tab;
+        
+        // Update tab buttons
+        document.querySelectorAll('.tab-btn').forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.tab === tab);
+        });
+        
+        // Update tab content
+        document.getElementById('localGridsTab').classList.toggle('active', tab === 'local');
+        document.getElementById('communityGridsTab').classList.toggle('active', tab === 'community');
+        
+        // Load appropriate grids
+        if (tab === 'community' && communityGrids.length === 0) {
+            loadCommunityGrids();
+        }
+        
+        // Update stats bar
+        updateStatsBar();
+    }
+    
+    function updateStatsBar() {
+        if (currentTab === 'local') {
+            gridCount.textContent = grids.length === 1 ? '1 grid found' : `${grids.length} grids found`;
+            const pathCount = settings.scan_paths?.length || 0;
+            scanPathsInfo.textContent = pathCount === 1 ? 'Scanning 1 path' : `Scanning ${pathCount} paths`;
+        } else {
+            gridCount.textContent = communityGrids.length === 1 ? '1 community grid' : `${communityGrids.length} community grids`;
+            scanPathsInfo.textContent = 'Shared by the community';
+        }
     }
     
     // Theme
@@ -1058,12 +1331,14 @@ GALLERY_JS = '''
             updateSettingsUI();
         } catch (e) {
             console.error('Error loading settings:', e);
-            settings = { scan_paths: [] };
+            settings = { scan_paths: [], nsfw_filter: 'blur', community_grids: { enabled: true } };
         }
     }
     
     function updateSettingsUI() {
         scanPathsInput.value = (settings.scan_paths || []).join('\\n');
+        if (nsfwFilterSelect) nsfwFilterSelect.value = settings.nsfw_filter || 'blur';
+        if (communityEnabled) communityEnabled.checked = settings.community_grids?.enabled !== false;
         const pathCount = settings.scan_paths?.length || 0;
         scanPathsInfo.textContent = pathCount === 1 ? 'Scanning 1 path' : `Scanning ${pathCount} paths`;
     }
@@ -1083,18 +1358,29 @@ GALLERY_JS = '''
             .map(p => p.trim())
             .filter(p => p.length > 0);
         
+        const settingsData = { 
+            scan_paths: paths,
+            nsfw_filter: nsfwFilterSelect?.value || 'blur',
+            community_grids: {
+                enabled: communityEnabled?.checked !== false
+            }
+        };
+        
         try {
             const response = await fetch('/model-compare/gallery/api/settings', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ scan_paths: paths })
+                body: JSON.stringify(settingsData)
             });
             
             if (response.ok) {
-                settings.scan_paths = paths;
+                Object.assign(settings, settingsData);
                 updateSettingsUI();
                 closeSettings();
                 await loadGrids();
+                // Re-render to apply NSFW filter changes
+                renderGrids();
+                if (communityGrids.length > 0) renderCommunityGrids();
             }
         } catch (e) {
             console.error('Error saving settings:', e);
@@ -1132,8 +1418,40 @@ GALLERY_JS = '''
         }
     }
     
+    // Load community grids
+    async function loadCommunityGrids() {
+        communityGallery.innerHTML = '<div class="loading"><div class="spinner"></div><p>Loading community grids...</p></div>';
+        
+        try {
+            const response = await fetch('/model-compare/gallery/api/community-grids');
+            const data = await response.json();
+            
+            if (!data.success) {
+                communityGallery.innerHTML = `<div class="empty-state"><h3>Community grids unavailable</h3><p>${data.error || 'Enable community grids in settings.'}</p></div>`;
+                return;
+            }
+            
+            communityGrids = data.grids || [];
+            renderCommunityGrids();
+        } catch (e) {
+            console.error('Error loading community grids:', e);
+            communityGallery.innerHTML = '<div class="empty-state"><h3>Error loading community grids</h3><p>Please check your connection.</p></div>';
+        }
+    }
+    
+    function getNsfwClass(isNsfw) {
+        if (!isNsfw) return '';
+        const filter = settings.nsfw_filter || 'blur';
+        return filter === 'blur' ? 'nsfw-blur' : '';
+    }
+    
     function renderGrids() {
-        if (!grids || grids.length === 0) {
+        const nsfwFilter = settings.nsfw_filter || 'blur';
+        const filteredGrids = nsfwFilter === 'hide' 
+            ? grids.filter(g => !g.nsfw) 
+            : grids;
+        
+        if (!filteredGrids || filteredGrids.length === 0) {
             gridGallery.innerHTML = `
                 <div class="empty-state">
                     <svg viewBox="0 0 24 24" fill="currentColor">
@@ -1147,19 +1465,23 @@ GALLERY_JS = '''
             return;
         }
         
-        gridCount.textContent = grids.length === 1 ? '1 grid found' : `${grids.length} grids found`;
+        gridCount.textContent = filteredGrids.length === 1 ? '1 grid found' : `${filteredGrids.length} grids found`;
         
-        gridGallery.innerHTML = grids.map(grid => {
-            // Check if thumbnail is a valid data URL (base64 image)
+        gridGallery.innerHTML = filteredGrids.map(grid => {
             const hasValidThumbnail = grid.thumbnail && 
                                       grid.thumbnail.startsWith('data:image/') && 
                                       grid.thumbnail.length > 100;
+            const nsfwClass = getNsfwClass(grid.nsfw);
             return `
-            <div class="grid-card" data-path="${escapeAttr(grid.rel_path)}">
-                ${hasValidThumbnail 
-                    ? `<img class="grid-card-thumbnail" src="${grid.thumbnail}" alt="${escapeAttr(grid.title)}" onerror="this.outerHTML='<div class=grid-card-thumbnail placeholder>🖼️</div>'">`
-                    : `<div class="grid-card-thumbnail placeholder">🖼️</div>`
-                }
+            <div class="grid-card ${nsfwClass}" data-path="${escapeAttr(grid.rel_path)}" data-nsfw="${grid.nsfw || false}">
+                ${grid.nsfw ? '<span class="nsfw-badge">NSFW</span>' : ''}
+                <div class="grid-thumbnail">
+                    ${hasValidThumbnail 
+                        ? `<img class="grid-card-thumbnail" src="${grid.thumbnail}" alt="${escapeAttr(grid.title)}" onerror="this.outerHTML='<div class=grid-card-thumbnail placeholder>🖼️</div>'">`
+                        : `<div class="grid-card-thumbnail placeholder">🖼️</div>`
+                    }
+                </div>
+                ${grid.nsfw && nsfwClass ? '<div class="nsfw-overlay"><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M12,9A3,3 0 0,0 9,12A3,3 0 0,0 12,15A3,3 0 0,0 15,12A3,3 0 0,0 12,9M12,17A5,5 0 0,1 7,12A5,5 0 0,1 12,7A5,5 0 0,1 17,12A5,5 0 0,1 12,17M12,4.5C7,4.5 2.73,7.61 1,12C2.73,16.39 7,19.5 12,19.5C17,19.5 21.27,16.39 23,12C21.27,7.61 17,4.5 12,4.5Z"/></svg> Click to reveal</div>' : ''}
                 <div class="grid-card-info">
                     <div class="grid-card-title">${escapeHtml(grid.title)}</div>
                     <div class="grid-card-meta">
@@ -1168,7 +1490,12 @@ GALLERY_JS = '''
                     </div>
                 </div>
                 <div class="grid-card-actions">
-                    <button class="btn-card-action" title="Edit hierarchy" onclick="editGrid('${escapeAttr(grid.rel_path)}', '${escapeAttr(grid.encoded_path)}')">
+                    <button class="btn-card-action" title="Toggle NSFW" onclick="event.stopPropagation(); toggleNsfw('${escapeAttr(grid.encoded_path)}', ${!grid.nsfw})">
+                        <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
+                            <path d="${grid.nsfw ? 'M11.83,9L15,12.16C15,12.11 15,12.05 15,12A3,3 0 0,0 12,9C11.94,9 11.89,9 11.83,9M7.53,9.8L9.08,11.35C9.03,11.56 9,11.77 9,12A3,3 0 0,0 12,15C12.22,15 12.44,14.97 12.65,14.92L14.2,16.47C13.53,16.8 12.79,17 12,17A5,5 0 0,1 7,12C7,11.21 7.2,10.47 7.53,9.8M2,4.27L4.28,6.55L4.73,7C3.08,8.3 1.78,10 1,12C2.73,16.39 7,19.5 12,19.5C13.55,19.5 15.03,19.2 16.38,18.66L16.81,19.08L19.73,22L21,20.73L3.27,3M12,7A5,5 0 0,1 17,12C17,12.64 16.87,13.26 16.64,13.82L19.57,16.75C21.07,15.5 22.27,13.86 23,12C21.27,7.61 17,4.5 12,4.5C10.6,4.5 9.26,4.75 8,5.2L10.17,7.35C10.74,7.13 11.35,7 12,7Z' : 'M12,9A3,3 0 0,1 15,12A3,3 0 0,1 12,15A3,3 0 0,1 9,12A3,3 0 0,1 12,9M12,4.5C17,4.5 21.27,7.61 23,12C21.27,16.39 17,19.5 12,19.5C7,19.5 2.73,16.39 1,12C2.73,7.61 7,4.5 12,4.5M3.18,12C4.83,15.36 8.24,17.5 12,17.5C15.76,17.5 19.17,15.36 20.82,12C19.17,8.64 15.76,6.5 12,6.5C8.24,6.5 4.83,8.64 3.18,12Z'}"/>
+                        </svg>
+                    </button>
+                    <button class="btn-card-action" title="Edit hierarchy" onclick="event.stopPropagation(); editGrid('${escapeAttr(grid.rel_path)}', '${escapeAttr(grid.encoded_path)}')">
                         <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
                             <path d="M3,17.25V21h3.75L17.81,9.94l-3.75,-3.75L3,17.25Z M20.71,7.04c.39,-.39.39,-1.02 0,-1.41l-2.34,-2.34c-.39,-.39 -1.02,-.39 -1.41,0l-1.83,1.83 3.75,3.75 1.83,-1.83Z"/>
                         </svg>
@@ -1178,24 +1505,89 @@ GALLERY_JS = '''
         `}).join('');
         
         // Add click handlers for viewing grid
-        document.querySelectorAll('.grid-card').forEach(card => {
-            // Don't navigate when clicking the edit button, that's handled by onclick attribute
-            const titleEl = card.querySelector('.grid-card-title');
-            const metaEl = card.querySelector('.grid-card-meta');
-            const thumbEl = card.querySelector('.grid-card-thumbnail');
-            
-            if (titleEl) titleEl.addEventListener('click', (e) => { e.stopPropagation(); viewGrid(card.dataset.path); });
-            if (metaEl) metaEl.addEventListener('click', (e) => { e.stopPropagation(); viewGrid(card.dataset.path); });
-            if (thumbEl) thumbEl.addEventListener('click', (e) => { e.stopPropagation(); viewGrid(card.dataset.path); });
+        document.querySelectorAll('#gridGallery .grid-card').forEach(card => {
+            card.addEventListener('click', (e) => {
+                if (e.target.closest('.btn-card-action')) return;
+                viewGrid(card.dataset.path);
+            });
         });
     }
     
+    function renderCommunityGrids() {
+        const nsfwFilter = settings.nsfw_filter || 'blur';
+        const filteredGrids = nsfwFilter === 'hide' 
+            ? communityGrids.filter(g => !g.nsfw) 
+            : communityGrids;
+        
+        if (!filteredGrids || filteredGrids.length === 0) {
+            communityGallery.innerHTML = `
+                <div class="empty-state">
+                    <svg viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M12,5.5A3.5,3.5 0 0,1 15.5,9A3.5,3.5 0 0,1 12,12.5A3.5,3.5 0 0,1 8.5,9A3.5,3.5 0 0,1 12,5.5M5,8C5.56,8 6.08,8.15 6.53,8.42C6.38,9.85 6.8,11.27 7.66,12.38C7.16,13.34 6.16,14 5,14A3,3 0 0,1 2,11A3,3 0 0,1 5,8M19,8A3,3 0 0,1 22,11A3,3 0 0,1 19,14C17.84,14 16.84,13.34 16.34,12.38C17.2,11.27 17.62,9.85 17.47,8.42C17.92,8.15 18.44,8 19,8M5.5,18.25C5.5,16.18 8.41,14.5 12,14.5C15.59,14.5 18.5,16.18 18.5,18.25V20H5.5V18.25M0,20V18.5C0,17.11 1.89,15.94 4.45,15.6C3.86,16.28 3.5,17.22 3.5,18.25V20H0M24,20H20.5V18.25C20.5,17.22 20.14,16.28 19.55,15.6C22.11,15.94 24,17.11 24,18.5V20Z"/>
+                    </svg>
+                    <h3>No community grids yet</h3>
+                    <p>Be the first to share a grid! Click the Share button in any local grid.</p>
+                </div>
+            `;
+            updateStatsBar();
+            return;
+        }
+        
+        updateStatsBar();
+        
+        communityGallery.innerHTML = filteredGrids.map(grid => {
+            const nsfwClass = getNsfwClass(grid.nsfw);
+            return `
+            <div class="grid-card ${nsfwClass}" data-username="${escapeAttr(grid.username)}" data-grid-id="${escapeAttr(grid.id)}" data-nsfw="${grid.nsfw || false}">
+                ${grid.nsfw ? '<span class="nsfw-badge">NSFW</span>' : ''}
+                <div class="grid-thumbnail">
+                    ${grid.thumbnail 
+                        ? `<img class="grid-card-thumbnail" src="${grid.thumbnail}" alt="${escapeAttr(grid.title)}" onerror="this.outerHTML='<div class=grid-card-thumbnail placeholder>🖼️</div>'">`
+                        : `<div class="grid-card-thumbnail placeholder">🖼️</div>`
+                    }
+                </div>
+                ${grid.nsfw && nsfwClass ? '<div class="nsfw-overlay"><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M12,9A3,3 0 0,0 9,12A3,3 0 0,0 12,15A3,3 0 0,0 15,12A3,3 0 0,0 12,9M12,17A5,5 0 0,1 7,12A5,5 0 0,1 12,7A5,5 0 0,1 17,12A5,5 0 0,1 12,17M12,4.5C7,4.5 2.73,7.61 1,12C2.73,16.39 7,19.5 12,19.5C17,19.5 21.27,16.39 23,12C21.27,7.61 17,4.5 12,4.5Z"/></svg> Click to reveal</div>' : ''}
+                <div class="grid-card-info">
+                    <div class="grid-card-title">${escapeHtml(grid.title)}</div>
+                    <div class="grid-card-meta">
+                        <span>👤 ${escapeHtml(grid.username)}</span>
+                        ${grid.created ? `<span>📅 ${formatDate(grid.created)}</span>` : ''}
+                    </div>
+                    ${grid.description ? `<div class="grid-card-desc">${escapeHtml(grid.description)}</div>` : ''}
+                </div>
+            </div>
+        `}).join('');
+        
+        // Add click handlers for viewing community grid
+        document.querySelectorAll('#communityGallery .grid-card').forEach(card => {
+            card.addEventListener('click', () => {
+                viewCommunityGrid(card.dataset.username, card.dataset.gridId);
+            });
+        });
+    }
+    
+    async function toggleNsfw(encodedPath, newValue) {
+        try {
+            const response = await fetch('/model-compare/gallery/api/toggle-nsfw', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ path: encodedPath, nsfw: newValue })
+            });
+            
+            if (response.ok) {
+                await loadGrids();
+            }
+        } catch (e) {
+            console.error('Error toggling NSFW:', e);
+        }
+    }
+    
+    window.toggleNsfw = toggleNsfw;
+    
     function editGrid(relPath, encodedPath) {
-        // Open grid editor with the grid path
         window.location.href = '/grid-editor?path=' + encodeURIComponent(encodedPath);
     }
     
-    // Expose editGrid to global scope for onclick handlers
     window.editGrid = editGrid;
     
     // View grid
@@ -1205,6 +1597,18 @@ GALLERY_JS = '''
         
         viewerTitle.textContent = grid?.title || 'Grid';
         gridViewer.src = '/model-compare/view/' + encodeURIComponent(relPath);
+        
+        galleryView.classList.remove('active');
+        viewerView.classList.add('active');
+    }
+    
+    // View community grid
+    function viewCommunityGrid(username, gridId) {
+        const grid = communityGrids.find(g => g.username === username && g.id === gridId);
+        currentGridPath = null; // Not a local path
+        
+        viewerTitle.textContent = grid?.title || 'Community Grid';
+        gridViewer.src = `/model-compare/gallery/api/community-grid/${encodeURIComponent(username)}/${encodeURIComponent(gridId)}`;
         
         galleryView.classList.remove('active');
         viewerView.classList.add('active');
@@ -1510,6 +1914,17 @@ async def handle_api_settings_post(request):
         if "scan_paths" in data:
             settings["scan_paths"] = data["scan_paths"]
         
+        if "nsfw_filter" in data:
+            # Validate nsfw_filter value
+            if data["nsfw_filter"] in ["show", "blur", "hide"]:
+                settings["nsfw_filter"] = data["nsfw_filter"]
+        
+        if "community_grids" in data:
+            # Merge community_grids settings
+            if "community_grids" not in settings:
+                settings["community_grids"] = get_default_settings()["community_grids"]
+            settings["community_grids"].update(data["community_grids"])
+        
         if save_settings(settings):
             return web.json_response({"success": True})
         else:
@@ -1670,6 +2085,228 @@ async def handle_api_bulk_delete_grids(request):
             "errorCount": len(errors)
         })
         
+    except Exception as e:
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+async def handle_api_toggle_nsfw(request):
+    """API endpoint to toggle NSFW flag on a grid file.
+    
+    POST body: {"path": "encoded_path", "nsfw": true/false}
+    """
+    import base64
+    
+    try:
+        data = await request.json()
+        encoded_path = data.get("path", "")
+        nsfw_value = data.get("nsfw", False)
+        
+        if not encoded_path:
+            return web.json_response({"success": False, "error": "Missing path"}, status=400)
+        
+        # Decode path
+        try:
+            decoded_bytes = base64.urlsafe_b64decode(encoded_path)
+            full_path = decoded_bytes.decode('utf-8')
+        except Exception:
+            return web.json_response({"success": False, "error": "Invalid path encoding"}, status=400)
+        
+        full_path = os.path.abspath(full_path)
+        
+        # Security check
+        if not _is_path_allowed(full_path):
+            return web.json_response({"success": False, "error": "Path not allowed"}, status=403)
+        
+        if not os.path.exists(full_path):
+            return web.json_response({"success": False, "error": "File not found"}, status=404)
+        
+        # Read the file
+        with open(full_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+        
+        # Check for our signature
+        if GRID_SIGNATURE not in content:
+            return web.json_response({"success": False, "error": "Not a valid Model Compare grid"}, status=400)
+        
+        # Find and update metadata
+        meta_match = re.search(
+            rf'(<script[^>]*id="{GRID_META_ID}"[^>]*>)(.*?)(</script>)',
+            content, re.DOTALL
+        )
+        
+        if meta_match:
+            try:
+                metadata = json.loads(meta_match.group(2))
+                metadata["nsfw"] = bool(nsfw_value)
+                
+                # Rebuild the script tag with updated metadata
+                new_meta_content = json.dumps(metadata, indent=2)
+                content = content[:meta_match.start()] + \
+                          meta_match.group(1) + new_meta_content + meta_match.group(3) + \
+                          content[meta_match.end():]
+                
+                # Write back
+                with open(full_path, 'w', encoding='utf-8') as f:
+                    f.write(content)
+                
+                return web.json_response({"success": True, "nsfw": bool(nsfw_value)})
+            except json.JSONDecodeError:
+                return web.json_response({"success": False, "error": "Failed to parse grid metadata"}, status=500)
+        else:
+            return web.json_response({"success": False, "error": "No metadata found in grid"}, status=400)
+        
+    except Exception as e:
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+async def fetch_community_grids_index() -> Optional[List[Dict]]:
+    """Fetch community grids index from GitHub with caching."""
+    global _community_grids_cache
+    
+    settings = load_settings()
+    community_config = settings.get("community_grids", {})
+    
+    if not community_config.get("enabled", False):
+        return None
+    
+    cache_ttl = community_config.get("cache_ttl_seconds", 3600)
+    index_url = community_config.get("index_url", "")
+    
+    if not index_url:
+        return None
+    
+    # Check cache
+    now = time.time()
+    if _community_grids_cache["data"] is not None and (now - _community_grids_cache["last_fetch"]) < cache_ttl:
+        return _community_grids_cache["data"]
+    
+    # Fetch from GitHub
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(index_url, timeout=aiohttp.ClientTimeout(total=30)) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    grids = data.get("grids", [])
+                    _community_grids_cache["data"] = grids
+                    _community_grids_cache["last_fetch"] = now
+                    print(f"[ModelCompare Gallery] Fetched {len(grids)} community grids from index")
+                    return grids
+                elif response.status == 404:
+                    print(f"[ModelCompare Gallery] Community grids index not found at {index_url}")
+                    return []
+                else:
+                    print(f"[ModelCompare Gallery] Failed to fetch community grids: HTTP {response.status}")
+                    return _community_grids_cache["data"]  # Return stale cache if available
+    except Exception as e:
+        print(f"[ModelCompare Gallery] Error fetching community grids: {e}")
+        return _community_grids_cache["data"]  # Return stale cache if available
+
+
+async def handle_api_community_grids(request):
+    """API endpoint to list community grids from GitHub."""
+    try:
+        grids = await fetch_community_grids_index()
+        
+        if grids is None:
+            return web.json_response({
+                "success": False,
+                "error": "Community grids not enabled",
+                "grids": []
+            })
+        
+        # Apply NSFW filter based on settings
+        settings = load_settings()
+        nsfw_filter = settings.get("nsfw_filter", "blur")
+        
+        # Filter out hidden NSFW grids
+        if nsfw_filter == "hide":
+            grids = [g for g in grids if not g.get("nsfw", False)]
+        
+        return web.json_response({
+            "success": True,
+            "grids": grids,
+            "nsfw_filter": nsfw_filter
+        })
+    except Exception as e:
+        return web.json_response({
+            "success": False,
+            "error": str(e),
+            "grids": []
+        }, status=500)
+
+
+async def handle_api_community_grid_proxy(request):
+    """Proxy a community grid HTML from GitHub.
+    
+    This fetches the grid HTML from the community repo and serves it,
+    preventing CORS issues and allowing embedded viewing.
+    """
+    try:
+        username = request.match_info.get('username', '')
+        grid_id = request.match_info.get('grid_id', '')
+        
+        if not username or not grid_id:
+            return web.Response(text="Missing username or grid_id", status=400)
+        
+        # Sanitize inputs
+        username = re.sub(r'[^a-zA-Z0-9_-]', '', username)
+        grid_id = re.sub(r'[^a-zA-Z0-9_-]', '', grid_id)
+        
+        settings = load_settings()
+        community_config = settings.get("community_grids", {})
+        
+        if not community_config.get("enabled", False):
+            return web.Response(text="Community grids not enabled", status=403)
+        
+        repo_owner = community_config.get("repo_owner", "tlennon-ie")
+        repo_name = community_config.get("repo_name", "comfyui-model-compare-community-grids")
+        
+        # Construct the raw GitHub URL for the grid
+        grid_url = f"https://raw.githubusercontent.com/{repo_owner}/{repo_name}/main/grids/{username}/{grid_id}/grid.html"
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.get(grid_url, timeout=aiohttp.ClientTimeout(total=60)) as response:
+                if response.status == 200:
+                    content = await response.text()
+                    
+                    # Basic HTML sanitization - remove any script tags except our metadata
+                    # (Community grids should be pre-validated in the repo via GitHub Actions)
+                    
+                    return web.Response(text=content, content_type='text/html')
+                elif response.status == 404:
+                    return web.Response(text="Community grid not found", status=404)
+                else:
+                    return web.Response(text=f"Failed to fetch grid: HTTP {response.status}", status=502)
+    except Exception as e:
+        return web.Response(text=f"Error fetching community grid: {e}", status=500)
+
+
+async def handle_api_share_info(request):
+    """Get information for sharing a grid to the community repo.
+    
+    Returns the GitHub PR creation URL and instructions.
+    """
+    try:
+        settings = load_settings()
+        community_config = settings.get("community_grids", {})
+        
+        repo_owner = community_config.get("repo_owner", "tlennon-ie")
+        repo_name = community_config.get("repo_name", "comfyui-model-compare-community-grids")
+        
+        return web.json_response({
+            "success": True,
+            "repo_url": f"https://github.com/{repo_owner}/{repo_name}",
+            "fork_url": f"https://github.com/{repo_owner}/{repo_name}/fork",
+            "contributing_url": f"https://github.com/{repo_owner}/{repo_name}/blob/main/CONTRIBUTING.md",
+            "instructions": [
+                f"1. Fork the repository at https://github.com/{repo_owner}/{repo_name}",
+                "2. Create a new folder: grids/your-username/grid-name/",
+                "3. Add your grid.html file to that folder",
+                "4. Create a metadata.json with title, description, thumbnail, and nsfw flag",
+                "5. Submit a Pull Request",
+                "6. GitHub Actions will validate your submission"
+            ]
+        })
     except Exception as e:
         return web.json_response({"success": False, "error": str(e)}, status=500)
 
@@ -1865,6 +2502,12 @@ def setup_gallery_routes():
         app.router.add_post('/model-compare/gallery/api/rename', handle_api_rename_grid)
         app.router.add_delete('/model-compare/gallery/api/delete', handle_api_delete_grid)
         app.router.add_post('/model-compare/gallery/api/bulk-delete', handle_api_bulk_delete_grids)
+        app.router.add_post('/model-compare/gallery/api/toggle-nsfw', handle_api_toggle_nsfw)
+        
+        # Community grids endpoints
+        app.router.add_get('/model-compare/gallery/api/community-grids', handle_api_community_grids)
+        app.router.add_get('/model-compare/gallery/api/community-grid/{username}/{grid_id}', handle_api_community_grid_proxy)
+        app.router.add_get('/model-compare/gallery/api/share-info', handle_api_share_info)
         
         # Grid editor page
         app.router.add_get('/grid-editor', handle_grid_editor)

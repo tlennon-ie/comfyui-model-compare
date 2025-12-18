@@ -2022,6 +2022,12 @@ def generate_html_grid(
                 </svg>
                 Edit Grid
             </button>
+            <button id="shareGridBtn" class="btn-share" style="padding: 8px 16px; background: var(--bg-card); color: var(--text-primary); border: 1px solid var(--border); border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 600; display: flex; align-items: center; gap: 6px;" title="Share to community">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+                    <path d="M18,16.08C17.24,16.08 16.56,16.38 16.04,16.85L8.91,12.7C8.96,12.47 9,12.24 9,12C9,11.76 8.96,11.53 8.91,11.3L15.96,7.19C16.5,7.69 17.21,8 18,8A3,3 0 0,0 21,5A3,3 0 0,0 18,2A3,3 0 0,0 15,5C15,5.24 15.04,5.47 15.09,5.7L8.04,9.81C7.5,9.31 6.79,9 6,9A3,3 0 0,0 3,12A3,3 0 0,0 6,15C6.79,15 7.5,14.69 8.04,14.19L15.16,18.34C15.11,18.55 15.08,18.77 15.08,19C15.08,20.61 16.39,21.91 18,21.91C19.61,21.91 20.92,20.61 20.92,19C20.92,17.39 19.61,16.08 18,16.08Z"/>
+                </svg>
+                Share
+            </button>
             <button id="exportGridBtn" class="btn-export" style="padding: 8px 16px; background: var(--bg-card); color: var(--text-primary); border: 1px solid var(--border); border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 600; display: flex; align-items: center; gap: 6px;">
                 <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
                     <path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20M12,19L8,15H10.5V12H13.5V15H16L12,19Z"/>
@@ -2173,6 +2179,55 @@ def generate_html_grid(
             document.body.removeChild(link);
         }}
     }}
+    
+    // Share Grid Button Handler
+    document.getElementById('shareGridBtn')?.addEventListener('click', async function() {{
+        try {{
+            // Fetch share info from API
+            const response = await fetch('/model-compare/gallery/api/share-info');
+            const data = await response.json();
+            
+            if (!data.success) {{
+                alert('Error getting share info: ' + (data.error || 'Unknown error'));
+                return;
+            }}
+            
+            // Show sharing instructions modal
+            const modal = document.createElement('div');
+            modal.id = 'shareModal';
+            modal.style.cssText = 'position: fixed; inset: 0; background: rgba(0,0,0,0.7); display: flex; align-items: center; justify-content: center; z-index: 10000;';
+            modal.innerHTML = `
+                <div style="background: var(--bg-card); border-radius: 12px; padding: 24px; max-width: 500px; width: 90%; max-height: 90vh; overflow-y: auto; box-shadow: 0 4px 20px rgba(0,0,0,0.3);">
+                    <h2 style="margin: 0 0 16px; font-size: 1.4rem; color: var(--text-primary);">🌐 Share to Community</h2>
+                    <p style="color: var(--text-secondary); margin-bottom: 16px;">Share this comparison grid with the Model Compare community! Your grid will be reviewed and added to the community gallery.</p>
+                    
+                    <div style="background: var(--bg-secondary); padding: 16px; border-radius: 8px; margin-bottom: 16px;">
+                        <h3 style="margin: 0 0 12px; font-size: 1rem; color: var(--accent);">📋 Instructions</h3>
+                        <ol style="margin: 0; padding-left: 20px; color: var(--text-primary); line-height: 1.8;">
+                            ${{data.instructions.map(i => '<li>' + i.substring(3) + '</li>').join('')}}
+                        </ol>
+                    </div>
+                    
+                    <div style="display: flex; gap: 10px; justify-content: flex-end;">
+                        <button onclick="document.getElementById('shareModal').remove()" style="padding: 10px 20px; background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 6px; cursor: pointer; color: var(--text-primary);">Cancel</button>
+                        <a href="${{data.fork_url}}" target="_blank" style="padding: 10px 20px; background: var(--accent); color: white; border-radius: 6px; text-decoration: none; display: inline-flex; align-items: center; gap: 6px;">
+                            <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M6,2A3,3 0 0,1 9,5C9,6.28 8.19,7.38 7.06,7.81C7.15,8.27 7.39,8.83 8,9.63C9,10.92 11,12.83 12,14.17C13,12.83 15,10.92 16,9.63C16.61,8.83 16.85,8.27 16.94,7.81C15.81,7.38 15,6.28 15,5A3,3 0 0,1 18,2A3,3 0 0,1 21,5C21,6.32 20.14,7.45 18.95,7.85C18.87,8.37 18.64,9 18,9.83C17,11.17 15,13.08 14,14.38C13.39,15.17 13.15,15.73 13.06,16.19C14.19,16.62 15,17.72 15,19A3,3 0 0,1 12,22A3,3 0 0,1 9,19C9,17.72 9.81,16.62 10.94,16.19C10.85,15.73 10.61,15.17 10,14.38C9,13.08 7,11.17 6,9.83C5.36,9 5.13,8.37 5.05,7.85C3.86,7.45 3,6.32 3,5A3,3 0 0,1 6,2M6,4A1,1 0 0,0 5,5A1,1 0 0,0 6,6A1,1 0 0,0 7,5A1,1 0 0,0 6,4M18,4A1,1 0 0,0 17,5A1,1 0 0,0 18,6A1,1 0 0,0 19,5A1,1 0 0,0 18,4M12,18A1,1 0 0,0 11,19A1,1 0 0,0 12,20A1,1 0 0,0 13,19A1,1 0 0,0 12,18Z"/></svg>
+                            Fork Repository
+                        </a>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(modal);
+            
+            // Close on background click
+            modal.addEventListener('click', function(e) {{
+                if (e.target === modal) modal.remove();
+            }});
+        }} catch (e) {{
+            console.error('Error showing share dialog:', e);
+            alert('Failed to get sharing information. Please check your connection.');
+        }}
+    }});
     
     // Sync both theme toggle buttons
     const toggle1 = document.getElementById('themeToggle');
