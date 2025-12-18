@@ -1983,7 +1983,9 @@ class SamplerCompareAdvanced:
                             # Use first LoRA as the piFlow adapter
                             first_lora = loras[0]
                             adapter_path = folder_paths.get_full_path("loras", first_lora.get("name", ""))
-                            adapter_strength = first_lora.get("model_strength", 1.0)
+                            # Get strength from "strengths" list (first value) or default to 1.0
+                            strengths = first_lora.get("strengths", [1.0])
+                            adapter_strength = strengths[0] if strengths else 1.0
                             if adapter_path:
                                 piflow_adapter = {
                                     "adapter_path": adapter_path,
@@ -2536,7 +2538,8 @@ class SamplerCompareAdvanced:
                 )
             
             shift = kwargs.get('piflow_shift', 3.2)
-            m = model.clone()
+            # NOTE: Don't clone here - model was already cloned in sample_all_combinations
+            # Double cloning causes patch accumulation (63 patches vs 10 in native)
             
             # Get existing multiplier and patch_size from model config if available
             multiplier = 1.0
@@ -2554,8 +2557,7 @@ class SamplerCompareAdvanced:
             
             model_sampling = ModelSamplingAdvanced(model.model.model_config if hasattr(model, 'model') else None)
             model_sampling.set_parameters(shift=shift, multiplier=multiplier, patch_size=patch_size)
-            m.add_object_patch("model_sampling", model_sampling)
-            model = m
+            model.add_object_patch("model_sampling", model_sampling)
             print(f"[SamplerCompareAdvanced] Applied piFlow shift={shift}, multiplier={multiplier}")
         
         return model
