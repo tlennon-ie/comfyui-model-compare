@@ -2365,7 +2365,18 @@ async def handle_api_community_grid_proxy(request):
     2. Fetch from GitHub if not cached
     3. Cache fetched content locally
     4. Fall back to cached version if network fails
+    
+    Content patching:
+    - Patches deprecated function references for backward compatibility
     """
+    
+    def patch_html_content(content):
+        """Patch HTML content to fix deprecated/renamed function references."""
+        # Fix deprecated toggleCompareMode references (renamed to toggleCompareSelection)
+        # This handles both window.toggleCompareMode assignments and direct calls
+        content = content.replace('toggleCompareMode', 'toggleCompareSelection')
+        return content
+    
     try:
         username = request.match_info.get('username', '')
         grid_id = request.match_info.get('grid_id', '')
@@ -2398,7 +2409,10 @@ async def handle_api_community_grid_proxy(request):
                     if response.status == 200:
                         content = await response.text()
                         
-                        # Cache the content locally
+                        # Patch content for backward compatibility
+                        content = patch_html_content(content)
+                        
+                        # Cache the patched content locally
                         save_cached_grid(username, grid_id, content)
                         
                         return web.Response(text=content, content_type='text/html')
@@ -2406,19 +2420,19 @@ async def handle_api_community_grid_proxy(request):
                         # Try cached version if available
                         if cached_content:
                             print(f"[ModelCompare Gallery] Grid not found on GitHub, using cached: {username}/{grid_id}")
-                            return web.Response(text=cached_content, content_type='text/html')
+                            return web.Response(text=patch_html_content(cached_content), content_type='text/html')
                         return web.Response(text="Community grid not found", status=404)
                     else:
                         # Try cached version if available
                         if cached_content:
                             print(f"[ModelCompare Gallery] GitHub error {response.status}, using cached: {username}/{grid_id}")
-                            return web.Response(text=cached_content, content_type='text/html')
+                            return web.Response(text=patch_html_content(cached_content), content_type='text/html')
                         return web.Response(text=f"Failed to fetch grid: HTTP {response.status}", status=502)
         except Exception as network_error:
             # Network failure - try cached version
             if cached_content:
                 print(f"[ModelCompare Gallery] Network error, using cached grid: {username}/{grid_id}")
-                return web.Response(text=cached_content, content_type='text/html')
+                return web.Response(text=patch_html_content(cached_content), content_type='text/html')
             raise network_error
             
     except Exception as e:
