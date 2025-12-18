@@ -47,6 +47,9 @@ output/
 temp/
 *.tmp
 
+# Local caches
+cache/
+
 # Node modules (if web components added later)
 node_modules/
 package-lock.json

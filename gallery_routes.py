@@ -30,11 +30,92 @@ GRID_META_ID = "model-compare-metadata"
 # Settings file location
 SETTINGS_FILE = os.path.join(os.path.dirname(__file__), "gallery_settings.json")
 
-# Community grids cache
+# Community grids cache (in-memory)
 _community_grids_cache = {
     "data": None,
     "last_fetch": 0
 }
+
+# Local cache directory for community grids
+CACHE_DIR = os.path.join(os.path.dirname(__file__), "cache", "community-grids")
+
+
+def ensure_cache_dir():
+    """Ensure the cache directory exists."""
+    os.makedirs(CACHE_DIR, exist_ok=True)
+    return CACHE_DIR
+
+
+def get_cache_index_path() -> str:
+    """Get the path to the cached index.json file."""
+    ensure_cache_dir()
+    return os.path.join(CACHE_DIR, "index.json")
+
+
+def get_cached_grid_path(username: str, grid_id: str) -> str:
+    """Get the path to a cached grid HTML file."""
+    ensure_cache_dir()
+    grid_dir = os.path.join(CACHE_DIR, "grids", username, grid_id)
+    os.makedirs(grid_dir, exist_ok=True)
+    return os.path.join(grid_dir, "grid.html")
+
+
+def load_cached_index() -> Optional[Dict]:
+    """Load the cached index.json if it exists and is not too old."""
+    cache_path = get_cache_index_path()
+    if os.path.exists(cache_path):
+        try:
+            # Check file age
+            file_age = time.time() - os.path.getmtime(cache_path)
+            settings = load_settings()
+            cache_ttl = settings.get("community_grids", {}).get("cache_ttl_seconds", 3600)
+            
+            with open(cache_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            
+            # Return with freshness indicator
+            return {
+                "data": data,
+                "fresh": file_age < cache_ttl,
+                "age": file_age
+            }
+        except Exception as e:
+            print(f"[ModelCompare Gallery] Error loading cached index: {e}")
+    return None
+
+
+def save_cached_index(data: Dict):
+    """Save index data to local cache."""
+    try:
+        cache_path = get_cache_index_path()
+        with open(cache_path, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=2)
+        print(f"[ModelCompare Gallery] Saved community grids index to cache")
+    except Exception as e:
+        print(f"[ModelCompare Gallery] Error saving cached index: {e}")
+
+
+def load_cached_grid(username: str, grid_id: str) -> Optional[str]:
+    """Load a cached grid HTML file if it exists."""
+    cache_path = get_cached_grid_path(username, grid_id)
+    if os.path.exists(cache_path):
+        try:
+            with open(cache_path, 'r', encoding='utf-8') as f:
+                return f.read()
+        except Exception as e:
+            print(f"[ModelCompare Gallery] Error loading cached grid: {e}")
+    return None
+
+
+def save_cached_grid(username: str, grid_id: str, content: str):
+    """Save a grid HTML file to local cache."""
+    try:
+        cache_path = get_cached_grid_path(username, grid_id)
+        with open(cache_path, 'w', encoding='utf-8') as f:
+            f.write(content)
+        print(f"[ModelCompare Gallery] Cached grid: {username}/{grid_id}")
+    except Exception as e:
+        print(f"[ModelCompare Gallery] Error saving cached grid: {e}")
 
 def normalize_path(path: str) -> str:
     """Convert path to absolute, handling relative paths and forward/backslashes"""
@@ -2160,7 +2241,14 @@ async def handle_api_toggle_nsfw(request):
 
 
 async def fetch_community_grids_index() -> Optional[List[Dict]]:
-    """Fetch community grids index from GitHub with caching."""
+    """Fetch community grids index from GitHub with local file caching.
+    
+    Caching strategy:
+    1. Check in-memory cache first (fastest)
+    2. Check local file cache (offline support)
+    3. Fetch from GitHub if cache is stale or missing
+    4. Fall back to stale cache if network fails
+    """
     global _community_grids_cache
     
     settings = load_settings()
@@ -2175,31 +2263,62 @@ async def fetch_community_grids_index() -> Optional[List[Dict]]:
     if not index_url:
         return None
     
-    # Check cache
     now = time.time()
+    
+    # 1. Check in-memory cache
     if _community_grids_cache["data"] is not None and (now - _community_grids_cache["last_fetch"]) < cache_ttl:
         return _community_grids_cache["data"]
     
-    # Fetch from GitHub
+    # 2. Check local file cache
+    local_cache = load_cached_index()
+    if local_cache and local_cache["fresh"]:
+        # Local cache is fresh, use it
+        grids = local_cache["data"].get("grids", [])
+        _community_grids_cache["data"] = grids
+        _community_grids_cache["last_fetch"] = now - local_cache["age"]
+        print(f"[ModelCompare Gallery] Using fresh local cache: {len(grids)} community grids")
+        return grids
+    
+    # 3. Fetch from GitHub
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(index_url, timeout=aiohttp.ClientTimeout(total=30)) as response:
                 if response.status == 200:
                     data = await response.json()
                     grids = data.get("grids", [])
+                    
+                    # Update both caches
                     _community_grids_cache["data"] = grids
                     _community_grids_cache["last_fetch"] = now
-                    print(f"[ModelCompare Gallery] Fetched {len(grids)} community grids from index")
+                    save_cached_index(data)  # Save to local file cache
+                    
+                    print(f"[ModelCompare Gallery] Fetched {len(grids)} community grids from GitHub")
                     return grids
                 elif response.status == 404:
                     print(f"[ModelCompare Gallery] Community grids index not found at {index_url}")
+                    # Fall back to local cache if available
+                    if local_cache:
+                        grids = local_cache["data"].get("grids", [])
+                        _community_grids_cache["data"] = grids
+                        return grids
                     return []
                 else:
                     print(f"[ModelCompare Gallery] Failed to fetch community grids: HTTP {response.status}")
-                    return _community_grids_cache["data"]  # Return stale cache if available
+                    # Fall back to stale cache
+                    if local_cache:
+                        grids = local_cache["data"].get("grids", [])
+                        _community_grids_cache["data"] = grids
+                        return grids
+                    return _community_grids_cache["data"]
     except Exception as e:
         print(f"[ModelCompare Gallery] Error fetching community grids: {e}")
-        return _community_grids_cache["data"]  # Return stale cache if available
+        # Fall back to local cache or in-memory cache
+        if local_cache:
+            grids = local_cache["data"].get("grids", [])
+            _community_grids_cache["data"] = grids
+            print(f"[ModelCompare Gallery] Using stale local cache: {len(grids)} community grids")
+            return grids
+        return _community_grids_cache["data"]
 
 
 async def handle_api_community_grids(request):
@@ -2236,10 +2355,16 @@ async def handle_api_community_grids(request):
 
 
 async def handle_api_community_grid_proxy(request):
-    """Proxy a community grid HTML from GitHub.
+    """Proxy a community grid HTML from GitHub with local caching.
     
     This fetches the grid HTML from the community repo and serves it,
     preventing CORS issues and allowing embedded viewing.
+    
+    Caching strategy:
+    1. Check local cache first (offline support)
+    2. Fetch from GitHub if not cached
+    3. Cache fetched content locally
+    4. Fall back to cached version if network fails
     """
     try:
         username = request.match_info.get('username', '')
@@ -2261,22 +2386,41 @@ async def handle_api_community_grid_proxy(request):
         repo_owner = community_config.get("repo_owner", "tlennon-ie")
         repo_name = community_config.get("repo_name", "comfyui-model-compare-community-grids")
         
+        # Check local cache first
+        cached_content = load_cached_grid(username, grid_id)
+        
         # Construct the raw GitHub URL for the grid
         grid_url = f"https://raw.githubusercontent.com/{repo_owner}/{repo_name}/main/grids/{username}/{grid_id}/grid.html"
         
-        async with aiohttp.ClientSession() as session:
-            async with session.get(grid_url, timeout=aiohttp.ClientTimeout(total=60)) as response:
-                if response.status == 200:
-                    content = await response.text()
-                    
-                    # Basic HTML sanitization - remove any script tags except our metadata
-                    # (Community grids should be pre-validated in the repo via GitHub Actions)
-                    
-                    return web.Response(text=content, content_type='text/html')
-                elif response.status == 404:
-                    return web.Response(text="Community grid not found", status=404)
-                else:
-                    return web.Response(text=f"Failed to fetch grid: HTTP {response.status}", status=502)
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(grid_url, timeout=aiohttp.ClientTimeout(total=60)) as response:
+                    if response.status == 200:
+                        content = await response.text()
+                        
+                        # Cache the content locally
+                        save_cached_grid(username, grid_id, content)
+                        
+                        return web.Response(text=content, content_type='text/html')
+                    elif response.status == 404:
+                        # Try cached version if available
+                        if cached_content:
+                            print(f"[ModelCompare Gallery] Grid not found on GitHub, using cached: {username}/{grid_id}")
+                            return web.Response(text=cached_content, content_type='text/html')
+                        return web.Response(text="Community grid not found", status=404)
+                    else:
+                        # Try cached version if available
+                        if cached_content:
+                            print(f"[ModelCompare Gallery] GitHub error {response.status}, using cached: {username}/{grid_id}")
+                            return web.Response(text=cached_content, content_type='text/html')
+                        return web.Response(text=f"Failed to fetch grid: HTTP {response.status}", status=502)
+        except Exception as network_error:
+            # Network failure - try cached version
+            if cached_content:
+                print(f"[ModelCompare Gallery] Network error, using cached grid: {username}/{grid_id}")
+                return web.Response(text=cached_content, content_type='text/html')
+            raise network_error
+            
     except Exception as e:
         return web.Response(text=f"Error fetching community grid: {e}", status=500)
 
@@ -2309,6 +2453,39 @@ async def handle_api_share_info(request):
         })
     except Exception as e:
         return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+async def handle_api_clear_community_cache(request):
+    """API endpoint to clear the community grids local cache.
+    
+    Clears both the index cache and all cached grid HTML files.
+    """
+    global _community_grids_cache
+    
+    try:
+        import shutil
+        
+        # Clear in-memory cache
+        _community_grids_cache["data"] = None
+        _community_grids_cache["last_fetch"] = 0
+        
+        # Clear local file cache
+        if os.path.exists(CACHE_DIR):
+            shutil.rmtree(CACHE_DIR)
+            print(f"[ModelCompare Gallery] Cleared community grids cache: {CACHE_DIR}")
+        
+        # Recreate empty cache dir
+        ensure_cache_dir()
+        
+        return web.json_response({
+            "success": True,
+            "message": "Community grids cache cleared"
+        })
+    except Exception as e:
+        return web.json_response({
+            "success": False,
+            "error": str(e)
+        }, status=500)
 
 
 def _is_path_allowed(full_path: str) -> bool:
@@ -2508,6 +2685,7 @@ def setup_gallery_routes():
         app.router.add_get('/model-compare/gallery/api/community-grids', handle_api_community_grids)
         app.router.add_get('/model-compare/gallery/api/community-grid/{username}/{grid_id}', handle_api_community_grid_proxy)
         app.router.add_get('/model-compare/gallery/api/share-info', handle_api_share_info)
+        app.router.add_post('/model-compare/gallery/api/clear-community-cache', handle_api_clear_community_cache)
         
         # Grid editor page
         app.router.add_get('/grid-editor', handle_grid_editor)
