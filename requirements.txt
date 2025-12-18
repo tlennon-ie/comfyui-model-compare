@@ -4,3 +4,11 @@
 
 Pillow>=9.0.0
 numpy>=1.21.0
+
+# Optional: For PNG/JPEG/PDF export from Grid Builder
+# Image rendering (HTML to PNG/JPEG)
+playwright>=1.40.0  # For rendering HTML grids to images
+# After installing, run: playwright install chromium
+
+# PDF generation
+reportlab>=4.0.0  # For PDF export with embedded images

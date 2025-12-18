@@ -316,29 +316,172 @@ class GridBuilderAPI:
                     }
                 })
             
-            elif export_format in ['png', 'jpeg']:
-                # Export as image (requires rendering HTML to image - placeholder for now)
-                return web.json_response({
-                    'error': 'Image export requires browser rendering. Use HTML export and screenshot the page.',
-                    'suggestion': 'Export as HTML and use browser\'s built-in screenshot feature'
-                }, status=501)
+            if export_format in ['png', 'jpeg']:
+                # Export as image using Playwright renderer
+                from .grid_renderer import is_rendering_available, render_grid_sync
+                
+                if not is_rendering_available():
+                    return web.json_response({
+                        'error': 'Image rendering not available. Playwright not installed.',
+                        'suggestion': 'Install with: pip install playwright && playwright install chromium',
+                        'fallback': 'You can export as HTML and use browser screenshot instead'
+                    }, status=501)
+                
+                try:
+                    # First generate the HTML
+                    temp_html_path = self.base_output_dir / f"{output_name}_temp.html"
+                    
+                    html_content = generate_nested_html_grid(
+                        images=config.images,
+                        row_hierarchy=row_hierarchy,
+                        col_hierarchy=col_hierarchy,
+                        title=title,
+                        styling=config.styling,
+                    )
+                    
+                    temp_html_path.write_text(html_content, encoding='utf-8')
+                    
+                    # Render HTML to image
+                    image_ext = 'png' if export_format == 'png' else 'jpg'
+                    output_path = str(self.base_output_dir / f"{output_name}.{image_ext}")
+                    
+                    print(f"[GridBuilder] Rendering {export_format.upper()} image: {output_path}")
+                    render_grid_sync(
+                        str(temp_html_path),
+                        output_path,
+                        format=export_format,
+                        quality=95,
+                        viewport_width=1920,
+                    )
+                    
+                    # Clean up temp HTML
+                    try:
+                        temp_html_path.unlink()
+                    except:
+                        pass
+                    
+                    file_size = Path(output_path).stat().st_size
+                    print(f"[GridBuilder] ✓ Image exported: {file_size:,} bytes")
+                    
+                    return web.json_response({
+                        'status': 'ok',
+                        'export': {
+                            'format': export_format,
+                            'path': output_path,
+                            'rel_path': str(Path(output_path).relative_to(self.base_output_dir)),
+                            'size_bytes': file_size,
+                            'size_mb': round(file_size / (1024 * 1024), 2),
+                        }
+                    })
+                    
+                except Exception as e:
+                    import traceback
+                    print(f"[GridBuilder] Error rendering image: {e}")
+                    traceback.print_exc()
+                    return web.json_response({
+                        'error': f'Image rendering failed: {str(e)}',
+                        'fallback': 'Try exporting as HTML instead'
+                    }, status=500)
             
             elif export_format == 'pdf':
-                # Export as PDF - requires rendering grid to image first
-                return web.json_response({
-                    'error': 'PDF export requires grid image rendering. Use HTML export for now.',
-                    'suggestion': 'Export as HTML and use browser print-to-PDF feature'
-                }, status=501)
+                # Export as PDF with embedded grid image
+                from .grid_renderer import is_rendering_available, render_grid_sync
+                from PIL import Image
                 
-                return web.json_response({
-                    'status': 'ok',
-                    'export': {
-                        'format': 'pdf',
-                        'path': result_path,
-                        'rel_path': Path(result_path).relative_to(self.base_output_dir).as_posix(),
-                        'size_bytes': Path(result_path).stat().st_size,
+                if not is_rendering_available():
+                    return web.json_response({
+                        'error': 'PDF export requires Playwright for image rendering.',
+                        'suggestion': 'Install with: pip install playwright && playwright install chromium',
+                        'fallback': 'You can export as HTML and use browser print-to-PDF instead'
+                    }, status=501)
+                
+                try:
+                    # First generate HTML
+                    temp_html_path = self.base_output_dir / f"{output_name}_temp.html"
+                    html_content = generate_nested_html_grid(
+                        images=config.images,
+                        row_hierarchy=row_hierarchy,
+                        col_hierarchy=col_hierarchy,
+                        title=title,
+                        styling=config.styling,
+                    )
+                    temp_html_path.write_text(html_content, encoding='utf-8')
+                    
+                    # Render to temporary PNG
+                    temp_png_path = str(self.base_output_dir / f"{output_name}_temp.png")
+                    print(f"[GridBuilder] Rendering grid to image for PDF...")
+                    render_grid_sync(
+                        str(temp_html_path),
+                        temp_png_path,
+                        format='png',
+                        viewport_width=1920,
+                    )
+                    
+                    # Load rendered image
+                    grid_image = Image.open(temp_png_path)
+                    
+                    # Create PDF
+                    output_path = str(self.base_output_dir / f"{output_name}.pdf")
+                    
+                    metadata = {
+                        'title': title,
+                        'created': config.metadata.created if hasattr(config, 'metadata') else '',
+                        'image_count': len(config.images),
+                        'row_hierarchy': ', '.join(row_hierarchy),
+                        'col_hierarchy': ', '.join(col_hierarchy),
                     }
-                })
+                    
+                    statistics = {
+                        'image_count': len(config.images),
+                        'total_cells': len(config.images),
+                        'cells_with_images': len(config.images),
+                        'sparsity_ratio': 0.0,
+                        'grid_width': grid_image.width,
+                        'grid_height': grid_image.height,
+                    }
+                    
+                    result_path = export_service.export_as_pdf(
+                        grid_image=grid_image,
+                        metadata=metadata,
+                        statistics=statistics,
+                        output_path=output_path,
+                    )
+                    
+                    # Clean up temp files
+                    try:
+                        temp_html_path.unlink()
+                        Path(temp_png_path).unlink()
+                    except:
+                        pass
+                    
+                    if result_path:
+                        file_size = Path(result_path).stat().st_size
+                        print(f"[GridBuilder] ✓ PDF exported: {file_size:,} bytes")
+                        
+                        return web.json_response({
+                            'status': 'ok',
+                            'export': {
+                                'format': 'pdf',
+                                'path': result_path,
+                                'rel_path': Path(result_path).relative_to(self.base_output_dir).as_posix(),
+                                'size_bytes': file_size,
+                                'size_mb': round(file_size / (1024 * 1024), 2),
+                            }
+                        })
+                    else:
+                        return web.json_response({
+                            'error': 'PDF export failed. ReportLab may not be installed.',
+                            'suggestion': 'Install with: pip install reportlab'
+                        }, status=500)
+                        
+                except Exception as e:
+                    import traceback
+                    print(f"[GridBuilder] Error exporting PDF: {e}")
+                    traceback.print_exc()
+                    return web.json_response({
+                        'error': f'PDF export failed: {str(e)}',
+                        'fallback': 'Try exporting as HTML or PNG instead'
+                    }, status=500)
             
             elif export_format == 'csv':
                 # Export as CSV

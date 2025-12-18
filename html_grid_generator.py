@@ -2079,16 +2079,34 @@ def generate_html_grid(
     </div>
     
     <!-- Export Dropdown Menu -->
-    <div id="exportMenu" class="export-menu" style="display: none; position: fixed; top: 60px; right: 100px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 4px 12px var(--shadow); z-index: 1000; min-width: 200px;">
+    <div id="exportMenu" class="export-menu" style="display: none; position: fixed; top: 60px; right: 100px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 4px 12px var(--shadow); z-index: 1000; min-width: 220px;">
         <div class="export-item" onclick="exportGrid('html')" style="padding: 12px 16px; cursor: pointer; display: flex; align-items: center; gap: 10px; border-bottom: 1px solid var(--border);">
             <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
-                <path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20M10,19L12,15H9V10H15V15L13,19H10Z"/>
+                <path d="M12,17.56L16.07,16.43L16.62,10.33H9.38L9.2,8.3H16.8L17,6.31H7L7.56,12.32H14.45L14.22,14.9L12,15.5L9.78,14.9L9.64,13.24H7.64L7.93,16.43L12,17.56M4.07,3H19.93L18.5,19.2L12,21L5.5,19.2L4.07,3Z"/>
             </svg>
             <span>Export as HTML</span>
         </div>
-        <div class="export-item" onclick="exportGrid('csv')" style="padding: 12px 16px; cursor: pointer; display: flex; align-items: center; gap: 10px; border-bottom: 1px solid var(--border);">
+        <div class="export-item" onclick="exportGrid('png')" style="padding: 12px 16px; cursor: pointer; display: flex; align-items: center; gap: 10px; border-bottom: 1px solid var(--border);">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+                <path d="M8.5,13.5L11,16.5L14.5,12L19,18H5M21,19V5C21,3.89 20.1,3 19,3H5A2,2 0 0,0 3,5V19A2,2 0 0,0 5,21H19A2,2 0 0,0 21,19Z"/>
+            </svg>
+            <span>Export as PNG (Megagrid)</span>
+        </div>
+        <div class="export-item" onclick="exportGrid('jpeg')" style="padding: 12px 16px; cursor: pointer; display: flex; align-items: center; gap: 10px; border-bottom: 1px solid var(--border);">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+                <path d="M8.5,13.5L11,16.5L14.5,12L19,18H5M21,19V5C21,3.89 20.1,3 19,3H5A2,2 0 0,0 3,5V19A2,2 0 0,0 5,21H19A2,2 0 0,0 21,19Z"/>
+            </svg>
+            <span>Export as JPEG</span>
+        </div>
+        <div class="export-item" onclick="exportGrid('pdf')" style="padding: 12px 16px; cursor: pointer; display: flex; align-items: center; gap: 10px; border-bottom: 1px solid var(--border);">
             <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
                 <path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20Z"/>
+            </svg>
+            <span>Export as PDF</span>
+        </div>
+        <div class="export-item" onclick="exportGrid('csv')" style="padding: 12px 16px; cursor: pointer; display: flex; align-items: center; gap: 10px; border-bottom: 1px solid var(--border);">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+                <path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20M10,19H12V18H10V19M10,15H12V14H10V15M10,11H12V10H10V11Z"/>
             </svg>
             <span>Export as CSV</span>
         </div>

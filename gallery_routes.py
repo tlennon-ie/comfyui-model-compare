@@ -28,6 +28,47 @@ GRID_META_ID = "model-compare-metadata"
 SETTINGS_FILE = os.path.join(os.path.dirname(__file__), "gallery_settings.json")
 
 
+def normalize_path(path: str) -> str:
+    """Convert path to absolute, handling relative paths and forward/backslashes"""
+    from pathlib import Path
+    
+    if not path:
+        return folder_paths.get_output_directory()
+    
+    # Convert to Path object and normalize slashes
+    p = Path(path.replace('\\', '/'))
+    
+    # If already absolute, just normalize and return
+    if p.is_absolute():
+        resolved = p.resolve()
+        print(f"[ModelCompare Gallery] Path is absolute: {path} -> {resolved}")
+        return str(resolved)
+    
+    # Get ComfyUI base directory (3 levels up from this file)
+    comfyui_base = Path(__file__).parent.parent.parent
+    print(f"[ModelCompare Gallery] ComfyUI base directory: {comfyui_base}")
+    
+    # Try resolving relative to ComfyUI base
+    potential_path = (comfyui_base / p).resolve()
+    print(f"[ModelCompare Gallery] Trying relative to ComfyUI base: {potential_path}")
+    if potential_path.exists():
+        print(f"[ModelCompare Gallery] ✓ Path exists: {potential_path}")
+        return str(potential_path)
+    
+    # Try resolving relative to output directory
+    output_dir = folder_paths.get_output_directory()
+    potential_path = (Path(output_dir) / p).resolve()
+    print(f"[ModelCompare Gallery] Trying relative to output dir: {potential_path}")
+    if potential_path.exists():
+        print(f"[ModelCompare Gallery] ✓ Path exists: {potential_path}")
+        return str(potential_path)
+    
+    # Default: resolve relative to ComfyUI base (even if doesn't exist yet)
+    default_path = (comfyui_base / p).resolve()
+    print(f"[ModelCompare Gallery] Using default (may not exist yet): {default_path}")
+    return str(default_path)
+
+
 def get_default_settings() -> Dict:
     """Get default gallery settings."""
     output_dir = folder_paths.get_output_directory()
@@ -44,15 +85,35 @@ def load_settings() -> Dict:
         try:
             with open(SETTINGS_FILE, 'r', encoding='utf-8') as f:
                 settings = json.load(f)
-                # Merge with defaults for any missing keys
-                defaults = get_default_settings()
-                for key, value in defaults.items():
-                    if key not in settings:
-                        settings[key] = value
-                return settings
+                
+            # Normalize all scan paths
+            if 'scan_paths' in settings:
+                normalized_paths = []
+                for path in settings['scan_paths']:
+                    print(f"[ModelCompare Gallery] Processing path: '{path}'")
+                    normalized = normalize_path(path)
+                    normalized_paths.append(normalized)
+                    if not os.path.exists(normalized):
+                        print(f"[ModelCompare Gallery] WARNING: Path does not exist: {normalized}")
+                    else:
+                        print(f"[ModelCompare Gallery] ✓ Path verified: {normalized}")
+                settings['scan_paths'] = normalized_paths
+            
+            # Merge with defaults for any missing keys
+            defaults = get_default_settings()
+            for key, value in defaults.items():
+                if key not in settings:
+                    settings[key] = value
+            return settings
         except Exception as e:
             print(f"[ModelCompare Gallery] Error loading settings: {e}")
-    return get_default_settings()
+            import traceback
+            traceback.print_exc()
+    
+    # Return defaults if file doesn't exist
+    default_settings = get_default_settings()
+    print(f"[ModelCompare Gallery] Using default scan path: {default_settings['scan_paths']}")
+    return default_settings
 
 
 def save_settings(settings: Dict) -> bool:
