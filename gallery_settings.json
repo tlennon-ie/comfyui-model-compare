@@ -2,5 +2,13 @@
   "scan_paths": [
     "E:\\AI\\Comf\\ComfyUI\\output\\model-compare"
   ],
-  "thumbnail_size": 300
+  "thumbnail_size": 300,
+  "nsfw_filter": "blur",
+  "community_grids": {
+    "enabled": true,
+    "repo_owner": "tlennon-ie",
+    "repo_name": "comfyui-model-compare-community-grids",
+    "cache_ttl_seconds": 3600,
+    "index_url": "https://raw.githubusercontent.com/tlennon-ie/comfyui-model-compare-community-grids/main/index.json"
+  }
 }
