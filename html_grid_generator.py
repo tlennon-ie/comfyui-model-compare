@@ -1834,9 +1834,10 @@ JS_TEMPLATE = """
         }
     });
     
-    // Make closeCompareModal available globally
+    // Make functions available globally
     window.closeCompareModal = closeCompareModal;
-    window.toggleCompareMode = toggleCompareMode;
+    window.toggleCompareSelection = toggleCompareSelection;
+    window.openCompareModal = openCompareModal;
 })();
 """
 

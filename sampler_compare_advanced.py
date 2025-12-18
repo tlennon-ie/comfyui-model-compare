@@ -26,27 +26,69 @@ from comfy_extras.nodes_model_advanced import ModelSamplingSD3, ModelSamplingAur
 
 # Try to import piFlow sampler module (optional dependency)
 PIFLOW_AVAILABLE = False
-try:
-    from custom_nodes import ComfyUI_piFlow
-    # Import piFlow sampler function
-    from custom_nodes.ComfyUI_piFlow.modules.sampler import sample as piflow_sample
-    from custom_nodes.ComfyUI_piFlow.modules.model_base import ModelSamplingPiFlow
-    PIFLOW_AVAILABLE = True
-except ImportError:
+piflow_sample = None
+ModelSamplingPiFlow = None
+load_piflow_model = None
+
+def _try_import_piflow():
+    """Try to import piFlow from various possible paths."""
+    global PIFLOW_AVAILABLE, piflow_sample, ModelSamplingPiFlow, load_piflow_model
+    
+    # Try standard import (ComfyUI-piFlow installed as package)
     try:
-        # Try alternate import path
+        from custom_nodes.ComfyUI_piFlow.modules.sampler import sample as _piflow_sample
+        from custom_nodes.ComfyUI_piFlow.modules.model_base import ModelSamplingPiFlow as _ModelSamplingPiFlow
+        from custom_nodes.ComfyUI_piFlow.piflow_loader import load_piflow_model as _load_piflow_model
+        piflow_sample = _piflow_sample
+        ModelSamplingPiFlow = _ModelSamplingPiFlow
+        load_piflow_model = _load_piflow_model
+        PIFLOW_AVAILABLE = True
+        return True
+    except ImportError:
+        pass
+    
+    # Try alternate path with hyphen (ComfyUI-piFlow folder name)
+    try:
         import sys
         import os
         piflow_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "ComfyUI-piFlow")
-        if os.path.exists(piflow_path) and piflow_path not in sys.path:
-            sys.path.insert(0, piflow_path)
-        from modules.sampler import sample as piflow_sample
-        from modules.model_base import ModelSamplingPiFlow
-        PIFLOW_AVAILABLE = True
+        if os.path.exists(piflow_path):
+            if piflow_path not in sys.path:
+                sys.path.insert(0, piflow_path)
+            from modules.sampler import sample as _piflow_sample
+            from modules.model_base import ModelSamplingPiFlow as _ModelSamplingPiFlow
+            from piflow_loader import load_piflow_model as _load_piflow_model
+            piflow_sample = _piflow_sample
+            ModelSamplingPiFlow = _ModelSamplingPiFlow
+            load_piflow_model = _load_piflow_model
+            PIFLOW_AVAILABLE = True
+            return True
     except ImportError:
-        piflow_sample = None
-        ModelSamplingPiFlow = None
-        print("[SamplerCompareAdvanced] INFO: ComfyUI-piFlow not found. PIFLOW sampling mode unavailable.")
+        pass
+    
+    # Try alternate path with underscore (in case renamed)
+    try:
+        import sys
+        import os
+        piflow_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "ComfyUI_piFlow")
+        if os.path.exists(piflow_path):
+            if piflow_path not in sys.path:
+                sys.path.insert(0, piflow_path)
+            from modules.sampler import sample as _piflow_sample
+            from modules.model_base import ModelSamplingPiFlow as _ModelSamplingPiFlow
+            from piflow_loader import load_piflow_model as _load_piflow_model
+            piflow_sample = _piflow_sample
+            ModelSamplingPiFlow = _ModelSamplingPiFlow
+            load_piflow_model = _load_piflow_model
+            PIFLOW_AVAILABLE = True
+            return True
+    except ImportError:
+        pass
+    
+    print("[SamplerCompareAdvanced] INFO: ComfyUI-piFlow not found. PIFLOW sampling mode unavailable.")
+    return False
+
+_try_import_piflow()
 
 # Import variation expander for multi-value support
 try:
@@ -444,10 +486,15 @@ class SamplerCompareAdvanced:
         """Clear all cached results."""
         cls._combination_cache.clear()
     
-    def _load_model(self, model_entry: Dict) -> Tuple[Any, Any]:
+    def _load_model(self, model_entry: Dict, config_type: str = None, piflow_adapter: Dict = None) -> Tuple[Any, Any]:
         """
         Lazy load a model from stored path.
         Returns (model_obj, model_low_obj) tuple.
+        
+        Args:
+            model_entry: Dict with model_path, model_type, etc.
+            config_type: Optional sampling config type (e.g., "PIFLOW") to use specialized loaders
+            piflow_adapter: Optional dict with adapter_path and adapter_strength for piFlow loading
         """
         import sys
         model_obj = None
@@ -463,7 +510,31 @@ class SamplerCompareAdvanced:
         sys.stdout.flush()
         
         try:
-            if model_type == "checkpoint":
+            # Check if this is a piFlow model
+            if config_type == "PIFLOW" and PIFLOW_AVAILABLE and load_piflow_model is not None:
+                # Use piFlow's specialized loader
+                adapter_path = None
+                adapter_strength = 1.0
+                if piflow_adapter:
+                    adapter_path = piflow_adapter.get("adapter_path")
+                    adapter_strength = piflow_adapter.get("adapter_strength", 1.0)
+                
+                print(f"[SamplerCompareAdvanced] Loading piFlow model: {model_path}")
+                if adapter_path:
+                    print(f"[SamplerCompareAdvanced] With piFlow adapter: {adapter_path} (strength={adapter_strength})")
+                
+                model_obj = load_piflow_model(
+                    model_path, 
+                    adapter_path,
+                    model_options={},
+                    adapter_strength=adapter_strength
+                )
+                # Mark model as loaded via piFlow (skip model_sampling patching later)
+                model_obj._piflow_loaded = True
+                # piFlow models don't have a low noise variant
+                model_low_obj = None
+                
+            elif model_type == "checkpoint":
                 out = comfy.sd.load_checkpoint_guess_config(
                     model_path, 
                     output_vae=True, 
@@ -478,10 +549,11 @@ class SamplerCompareAdvanced:
             elif model_type == "diffusion":
                 model_obj = comfy.sd.load_diffusion_model(model_path, model_options={})
             
-            # Load low noise model if WAN 2.2
-            model_low_path = model_entry.get("model_low_path")
-            if model_low_path:
-                model_low_obj = comfy.sd.load_diffusion_model(model_low_path, model_options={})
+            # Load low noise model if WAN 2.2 (not for piFlow)
+            if config_type != "PIFLOW":
+                model_low_path = model_entry.get("model_low_path")
+                if model_low_path:
+                    model_low_obj = comfy.sd.load_diffusion_model(model_low_path, model_options={})
         except Exception as e:
             print(f"[SamplerCompareAdvanced] ERROR loading model: {e}", flush=True)
             import traceback
@@ -1779,8 +1851,39 @@ class SamplerCompareAdvanced:
                 model_idx = combo.get("model_index", 0)
                 current_model_entry = config["model_variations"][model_idx]
                 
-                # LAZY LOAD: Model
-                current_model, current_model_low = self._load_model(current_model_entry)
+                # Check if this model uses piFlow loading (get config_type from chain)
+                sampling_configs = config.get("sampling_configs", {})
+                chain_config = sampling_configs.get(base_model_idx, {})
+                chain_config_type = chain_config.get("config_type")
+                
+                # Prepare piFlow adapter info if using piFlow preset
+                piflow_adapter = None
+                piflow_lora_handled = False
+                if chain_config_type == "PIFLOW" and PIFLOW_AVAILABLE:
+                    # Get LoRA config for piFlow adapter
+                    lora_config = self._get_chain_lora_config(config, base_model_idx, combo)
+                    if lora_config and lora_config.get("loras"):
+                        loras = lora_config.get("loras", [])
+                        if loras:
+                            # Use first LoRA as the piFlow adapter
+                            first_lora = loras[0]
+                            adapter_path = folder_paths.get_full_path("loras", first_lora.get("name", ""))
+                            adapter_strength = first_lora.get("model_strength", 1.0)
+                            if adapter_path:
+                                piflow_adapter = {
+                                    "adapter_path": adapter_path,
+                                    "adapter_strength": adapter_strength
+                                }
+                                piflow_lora_handled = True  # Mark that piFlow handled the LoRA
+                                if len(loras) > 1:
+                                    print(f"[SamplerCompareAdvanced] WARNING: piFlow only supports one adapter, ignoring {len(loras)-1} additional LoRA(s)")
+                
+                # LAZY LOAD: Model (with piFlow support)
+                current_model, current_model_low = self._load_model(
+                    current_model_entry, 
+                    config_type=chain_config_type,
+                    piflow_adapter=piflow_adapter
+                )
                 if current_model is None:
                     print(f"[SamplerCompareAdvanced] ERROR: Failed to load model")
                     continue
@@ -1796,14 +1899,16 @@ class SamplerCompareAdvanced:
                 current_clip = self._load_clip(clip_var, config, current_model_entry)
                 
                 # APPLY LoRAs from chain config (or fallback to combo)
-                lora_config = self._get_chain_lora_config(config, base_model_idx, combo)
-                if lora_config and lora_config.get("loras"):
-                    # Get model type first for LoRA application
-                    clip_type_str = clip_var.get("clip_type", "") if clip_var else ""
-                    temp_model_type = clip_type_str if clip_type_str else "sd"
-                    current_model, _, current_clip = self._apply_loras(
-                        current_model, current_clip, lora_config, temp_model_type
-                    )
+                # Skip if piFlow already handled the adapter loading
+                if not piflow_lora_handled:
+                    lora_config = self._get_chain_lora_config(config, base_model_idx, combo)
+                    if lora_config and lora_config.get("loras"):
+                        # Get model type first for LoRA application
+                        clip_type_str = clip_var.get("clip_type", "") if clip_var else ""
+                        temp_model_type = clip_type_str if clip_type_str else "sd"
+                        current_model, _, current_clip = self._apply_loras(
+                            current_model, current_clip, lora_config, temp_model_type
+                        )
                 
                 current_key = new_key
             else:
@@ -2275,33 +2380,39 @@ class SamplerCompareAdvanced:
         
         elif model_type == 'piflow':
             # pi-Flow models use custom ModelSamplingPiFlow from ComfyUI-piFlow
-            if not PIFLOW_AVAILABLE:
-                raise RuntimeError(
-                    "[SamplerCompareAdvanced] PIFLOW sampling requires ComfyUI-piFlow custom node. "
-                    "Please install it from: https://github.com/Lakonik/ComfyUI-piFlow"
-                )
-            
-            shift = kwargs.get('piflow_shift', 3.2)
-            m = model.clone()
-            
-            # Get existing multiplier and patch_size from model config if available
-            multiplier = 1.0
-            patch_size = None
-            if hasattr(model, 'model') and hasattr(model.model, 'model_config'):
-                sampling_settings = getattr(model.model.model_config, 'sampling_settings', {})
-                multiplier = sampling_settings.get("multiplier", 1.0)
-                patch_size = sampling_settings.get("patch_size", None)
-            
-            # Create piFlow model sampling
-            import comfy.model_sampling
-            
-            class ModelSamplingAdvanced(ModelSamplingPiFlow, comfy.model_sampling.CONST):
+            # If the model was loaded via piFlow loader, skip patching (already set up correctly)
+            if getattr(model, '_piflow_loaded', False):
+                # Model was loaded via load_piflow_model, already has correct model_sampling
                 pass
-            
-            model_sampling = ModelSamplingAdvanced(model.model.model_config if hasattr(model, 'model') else None)
-            model_sampling.set_parameters(shift=shift, multiplier=multiplier, patch_size=patch_size)
-            m.add_object_patch("model_sampling", model_sampling)
-            model = m
+            else:
+                # Manual patching for models not loaded via piFlow loader
+                if not PIFLOW_AVAILABLE:
+                    raise RuntimeError(
+                        "[SamplerCompareAdvanced] PIFLOW sampling requires ComfyUI-piFlow custom node. "
+                        "Please install it from: https://github.com/Lakonik/ComfyUI-piFlow"
+                    )
+                
+                shift = kwargs.get('piflow_shift', 3.2)
+                m = model.clone()
+                
+                # Get existing multiplier and patch_size from model config if available
+                multiplier = 1.0
+                patch_size = None
+                if hasattr(model, 'model') and hasattr(model.model, 'model_config'):
+                    sampling_settings = getattr(model.model.model_config, 'sampling_settings', {})
+                    multiplier = sampling_settings.get("multiplier", 1.0)
+                    patch_size = sampling_settings.get("patch_size", None)
+                
+                # Create piFlow model sampling
+                import comfy.model_sampling
+                
+                class ModelSamplingAdvanced(ModelSamplingPiFlow, comfy.model_sampling.CONST):
+                    pass
+                
+                model_sampling = ModelSamplingAdvanced(model.model.model_config if hasattr(model, 'model') else None)
+                model_sampling.set_parameters(shift=shift, multiplier=multiplier, patch_size=patch_size)
+                m.add_object_patch("model_sampling", model_sampling)
+                model = m
         
         return model
     
