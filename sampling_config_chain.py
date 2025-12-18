@@ -254,7 +254,7 @@ class SamplingConfigChain:
                     "max": 10000,
                     "tooltip": "[PIFLOW] Number of policy sub-steps used in the denoising process (typically 128)",
                 }),
-                "piflow_final_step_scale": ("FLOAT", {
+                "piflow_final_step_size_scale": ("FLOAT", {
                     "default": 0.5,
                     "min": 0.0,
                     "max": 1.0,
@@ -272,7 +272,7 @@ class SamplingConfigChain:
                     "default": "auto",
                     "tooltip": "[PIFLOW] GMFlow temperature mode (auto=based on steps, manual=use manual value)",
                 }),
-                "piflow_manual_temperature": ("FLOAT", {
+                "piflow_manual_gm_temperature": ("FLOAT", {
                     "default": 1.0,
                     "min": 0.0,
                     "max": 1.0,
@@ -348,10 +348,10 @@ class SamplingConfigChain:
         clip_vision=None,
         # PIFLOW parameters (optional)
         piflow_substeps: int = 128,
-        piflow_final_step_scale: float = 0.5,
+        piflow_final_step_size_scale: float = 0.5,
         piflow_diffusion_coefficient: float = 0.0,
         piflow_gm_temperature: str = "auto",
-        piflow_manual_temperature: float = 1.0,
+        piflow_manual_gm_temperature: float = 1.0,
         piflow_shift: str = "3.2",
         unique_id=None,
     ):
@@ -528,14 +528,18 @@ class SamplingConfigChain:
         elif config_type == "PIFLOW":
             # PIFLOW uses custom pi-Flow sampling from ComfyUI-piFlow
             # Requires: ComfyUI-piFlow custom node to be installed
+            # PIFLOW is FLUX-based, so it also uses flux_guidance
             sampling_config.update({
                 "piflow_shift": piflow_shift_list[0],
                 "piflow_shift_list": piflow_shift_list,
                 "piflow_substeps": piflow_substeps,
-                "piflow_final_step_scale": piflow_final_step_scale,
+                "piflow_final_step_size_scale": piflow_final_step_size_scale,
                 "piflow_diffusion_coefficient": piflow_diffusion_coefficient,
                 "piflow_gm_temperature": piflow_gm_temperature,
-                "piflow_manual_temperature": piflow_manual_temperature,
+                "piflow_manual_gm_temperature": piflow_manual_gm_temperature,
+                # PIFLOW is FLUX-based, include flux_guidance (default 4.0 for piFlow)
+                "flux_guidance": flux_guidance_list[0] if flux_guidance_list[0] != 3.5 else 4.0,
+                "flux_guidance_list": flux_guidance_list,
             })
             variation_count *= len(piflow_shift_list)
             # PIFLOW can have reference images (for Flux2 variant)

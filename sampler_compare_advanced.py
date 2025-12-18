@@ -1917,14 +1917,22 @@ class SamplerCompareAdvanced:
                 cache_hits += 1
                 
                 # Update running seed even on cache hit (to stay consistent with control mode)
-                if running_seed is not None:
-                    if seed_control_mode == "increment":
-                        running_seed += 1
-                    elif seed_control_mode == "decrement":
-                        running_seed = max(0, running_seed - 1)
-                    elif seed_control_mode == "randomize":
-                        import random
-                        running_seed = random.randint(0, 0xffffffffffffffff)
+                # Get seed_control from early_sampling_cfg which was already computed
+                cache_seed_control = early_sampling_cfg.get("seed_control", global_seed_control_mode)
+                cache_base_seed = early_sampling_cfg.get("seed", 0)
+                
+                # Initialize running_seed if not yet set
+                if running_seed is None:
+                    running_seed = cache_base_seed
+                
+                if cache_seed_control == "increment":
+                    running_seed = running_seed + 1
+                elif cache_seed_control == "decrement":
+                    running_seed = max(0, running_seed - 1)
+                elif cache_seed_control == "randomize":
+                    import random
+                    running_seed = random.randint(0, 0xffffffffffffffff)
+                # "fixed" mode: running_seed stays the same
                 
                 # Complete timing for cache hit
                 complete_iteration(idx)
@@ -2097,12 +2105,37 @@ class SamplerCompareAdvanced:
             # Seed control can come from config chain or global config
             # Per-variation seed_control takes priority over global
             variation_seed_control = sampling_cfg.get("seed_control")
-            if variation_seed_control and variation_seed_control != global_seed_control_mode:
+            if variation_seed_control:
                 seed_control_mode = variation_seed_control
             else:
-                seed_control_mode = global_seed_control_mode  # Reset to global default
+                seed_control_mode = global_seed_control_mode  # Use global default
             
-            use_seed = sampling_cfg.get("seed", 0)
+            # Get base seed from config (chain or global)
+            base_seed = sampling_cfg.get("seed", 0)
+            
+            # Apply seed_control mode to determine actual seed for this combination
+            # running_seed tracks the evolving seed for increment/decrement modes
+            if running_seed is None:
+                # Initialize running_seed from first combo's base_seed
+                running_seed = base_seed
+            
+            if seed_control_mode == "fixed":
+                # Fixed mode: always use the base seed from config
+                use_seed = base_seed
+            elif seed_control_mode == "randomize":
+                # Randomize mode: generate a new random seed each time
+                import random
+                use_seed = random.randint(0, 0xffffffffffffffff)
+                running_seed = use_seed  # Update running_seed for consistency
+            elif seed_control_mode == "increment":
+                # Increment mode: use running_seed (starts from base, increments each combo)
+                use_seed = running_seed
+            elif seed_control_mode == "decrement":
+                # Decrement mode: use running_seed (starts from base, decrements each combo)
+                use_seed = max(0, running_seed)
+            else:
+                # Unknown mode, default to fixed
+                use_seed = base_seed
             
             use_steps = sampling_cfg.get("steps", 20)
             use_cfg = sampling_cfg.get("cfg", 7.0)
@@ -2223,6 +2256,14 @@ class SamplerCompareAdvanced:
                         else:
                             tokens = current_clip.tokenize("")
                         current_negative = current_clip.encode_from_tokens_scheduled(tokens)
+                    elif model_type == 'piflow':
+                        # piFlow is FLUX-based, uses guidance in encode
+                        # Get piFlow-specific flux_guidance (defaults to 4.0 for piFlow)
+                        piflow_guidance = sampling_cfg.get("flux_guidance", 4.0)
+                        tokens = current_clip.tokenize(pos_text)
+                        current_positive = current_clip.encode_from_tokens_scheduled(tokens, add_dict={"guidance": piflow_guidance})
+                        tokens = current_clip.tokenize(neg_text)
+                        current_negative = current_clip.encode_from_tokens_scheduled(tokens, add_dict={"guidance": piflow_guidance})
                     else:
                         # Standard tokenization for other models
                         tokens = current_clip.tokenize(pos_text)
@@ -2272,18 +2313,18 @@ class SamplerCompareAdvanced:
                 elif model_type == 'piflow':
                     # pi-Flow sampling using ComfyUI-piFlow sampler
                     piflow_substeps = sampling_cfg.get("piflow_substeps", 128)
-                    piflow_final_step_scale = sampling_cfg.get("piflow_final_step_scale", 0.5)
+                    piflow_final_step_size_scale = sampling_cfg.get("piflow_final_step_size_scale", 0.5)
                     piflow_diffusion_coefficient = sampling_cfg.get("piflow_diffusion_coefficient", 0.0)
                     piflow_gm_temperature = sampling_cfg.get("piflow_gm_temperature", "auto")
-                    piflow_manual_temperature = sampling_cfg.get("piflow_manual_temperature", 1.0)
+                    piflow_manual_gm_temperature = sampling_cfg.get("piflow_manual_gm_temperature", 1.0)
                     
                     sampled_latent = self._sample_piflow(
                         working_model, use_seed, use_steps, current_positive, current_latent,
                         substeps=piflow_substeps,
-                        final_step_scale=piflow_final_step_scale,
+                        final_step_size_scale=piflow_final_step_size_scale,
                         diffusion_coefficient=piflow_diffusion_coefficient,
                         gm_temperature=piflow_gm_temperature,
-                        manual_temperature=piflow_manual_temperature,
+                        manual_gm_temperature=piflow_manual_gm_temperature,
                         denoise=use_denoise
                     )
                 else:
@@ -2347,15 +2388,13 @@ class SamplerCompareAdvanced:
             complete_iteration(idx)
             
             # Update running seed based on control mode (for next iteration)
-            if running_seed is not None:
-                if seed_control_mode == "increment":
-                    running_seed += 1
-                elif seed_control_mode == "decrement":
-                    running_seed = max(0, running_seed - 1)
-                elif seed_control_mode == "randomize":
-                    import random
-                    running_seed = random.randint(0, 0xffffffffffffffff)
-                # "fixed" mode: running_seed stays the same
+            # Note: For "randomize" mode, use_seed was already randomized above,
+            # so we don't need to randomize again here (running_seed was updated above)
+            if seed_control_mode == "increment":
+                running_seed = use_seed + 1  # Next seed is current + 1
+            elif seed_control_mode == "decrement":
+                running_seed = max(0, use_seed - 1)  # Next seed is current - 1
+            # For "fixed" and "randomize" modes: running_seed is handled above
             
             # Per-iteration cleanup - clear intermediate tensors to help GC
             # Note: 'image' is moved to CPU and stored in all_images, 
@@ -2616,8 +2655,8 @@ class SamplerCompareAdvanced:
         return samples_2
     
     def _sample_piflow(self, model, seed, steps, conditioning, latent,
-                       substeps=128, final_step_scale=0.5, diffusion_coefficient=0.0,
-                       gm_temperature="auto", manual_temperature=1.0, denoise=1.0):
+                       substeps=128, final_step_size_scale=0.5, diffusion_coefficient=0.0,
+                       gm_temperature="auto", manual_gm_temperature=1.0, denoise=1.0):
         """Sample using pi-Flow sampling method from ComfyUI-piFlow.
         
         Uses the piflow_sample function which implements:
@@ -2632,10 +2671,10 @@ class SamplerCompareAdvanced:
             conditioning: Positive conditioning from CLIP
             latent: Latent dict with "samples" key
             substeps: Policy rollout sub-steps (typically 128)
-            final_step_scale: Final step size relative to others (0.0-1.0)
+            final_step_size_scale: Final step size relative to others (0.0-1.0)
             diffusion_coefficient: Stochasticity (0=deterministic, 1=DDPM)
             gm_temperature: "auto" or "manual"
-            manual_temperature: Manual temperature value when gm_temperature="manual"
+            manual_gm_temperature: Manual temperature value when gm_temperature="manual"
             denoise: Denoising strength
         
         Returns:
@@ -2661,9 +2700,10 @@ class SamplerCompareAdvanced:
         disable_pbar = not comfy.utils.PROGRESS_BAR_ENABLED
         
         # Call piflow_sample from ComfyUI-piFlow
+        # Parameter names match piFlow API: final_step_size_scale, manual_gm_temperature
         samples = piflow_sample(
-            model, noise, steps, substeps, final_step_scale, diffusion_coefficient,
-            gm_temperature, manual_temperature,
+            model, noise, steps, substeps, final_step_size_scale, diffusion_coefficient,
+            gm_temperature, manual_gm_temperature,
             conditioning, latent_image, denoise=denoise,
             noise_mask=noise_mask, callback=callback, disable_pbar=disable_pbar, seed=seed
         )
