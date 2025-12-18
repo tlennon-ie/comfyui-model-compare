@@ -1836,6 +1836,8 @@ class SamplerCompareAdvanced:
         # Priority: global (if explicitly set) > chain config > default "fixed"
         global_seed_control_mode = global_config.get("seed_control")  # None if not set by user
         
+        last_current_seed = use_seed
+        
         for idx, combo in enumerate(combinations):
             # Check for user interrupt at start of each iteration
             comfy.model_management.throw_exception_if_processing_interrupted()
@@ -2122,6 +2124,19 @@ class SamplerCompareAdvanced:
             if idx == 0:
                 print(f"[SamplerCompareAdvanced] Using seed={use_seed} for all {len(combinations)} combinations (mode={seed_control_mode} applies after run)")
             
+            # Apply seed control mode
+            current_seed = use_seed
+            if seed_control_mode == 'increment':
+                current_seed = use_seed + idx
+            elif seed_control_mode == 'randomize':
+                current_seed = random.randint(0, 2**32 - 1)
+            elif seed_control_mode == 'randomize_each':
+                current_seed = random.randint(0, 2**32 - 1)
+            else:  # fixed
+                current_seed = use_seed
+            
+            last_current_seed = current_seed
+            
             use_steps = sampling_cfg.get("steps", 20)
             use_cfg = sampling_cfg.get("cfg", 7.0)
             use_sampler = sampling_cfg.get("sampler_name", "euler")
@@ -2143,12 +2158,8 @@ class SamplerCompareAdvanced:
             use_piflow_shift = sampling_cfg.get("piflow_shift", 3.2)  # Added: PIFLOW shift
             
             # Clone and patch model
-            # NOTE: Don't clone piFlow models - load_piflow_model() already returns a fully
-            # configured model with LoRA/adapter applied. Cloning copies all patches and
-            # causes patch accumulation (63 lowvram patches vs ~10 in native piFlow).
-            working_model = current_model
-            if model_type != 'piflow' and hasattr(working_model, 'clone'):
-                working_model = working_model.clone()
+            # NOTE: Always clone to ensure LoRA is applied to a fresh copy for each combination
+            working_model = current_model.clone() if hasattr(current_model, 'clone') else current_model
             
             working_model = self._apply_model_patches(
                 working_model, model_type,
@@ -2294,7 +2305,7 @@ class SamplerCompareAdvanced:
                     wan22_shift = sampling_cfg.get("wan22_shift", 8.0)
                     sampled_latent = self._sample_wan22(
                         working_model, current_model_low,
-                        use_seed, use_steps, use_cfg, use_sampler, use_scheduler,
+                        current_seed, use_steps, use_cfg, use_sampler, use_scheduler,
                         current_positive, current_negative, current_latent,
                         use_denoise, use_wan22_high_end, use_wan22_low_end, wan_shift=wan22_shift
                     )
@@ -2307,7 +2318,7 @@ class SamplerCompareAdvanced:
                     piflow_manual_gm_temperature = sampling_cfg.get("piflow_manual_gm_temperature", 1.0)
                     
                     sampled_latent = self._sample_piflow(
-                        working_model, use_seed, use_steps, current_positive, current_latent,
+                        working_model, current_seed, use_steps, current_positive, current_latent,
                         substeps=piflow_substeps,
                         final_step_size_scale=piflow_final_step_size_scale,
                         diffusion_coefficient=piflow_diffusion_coefficient,
@@ -2319,7 +2330,7 @@ class SamplerCompareAdvanced:
                     # Standard sampling for all other models
                     (latent_out,) = common_ksampler(
                         model=working_model,
-                        seed=use_seed,
+                        seed=current_seed,
                         steps=use_steps,
                         cfg=use_cfg,
                         sampler_name=use_sampler,
@@ -2443,7 +2454,16 @@ class SamplerCompareAdvanced:
         config = dict(config) if config else {}
         config["combinations"] = combinations  # Now includes _sampling_override for each combo
         
-        return (images_tensor, config)
+        ui = {}
+        if global_seed_control_mode:
+            if global_seed_control_mode == 'increment':
+                ui['global_value_seed_1'] = use_seed + len(combinations)
+            elif global_seed_control_mode == 'randomize':
+                ui['global_value_seed_1'] = last_current_seed
+            else:
+                ui['global_value_seed_1'] = use_seed
+        
+        return (images_tensor, config), ui
     
     def _apply_model_patches(self, model, model_type: str, **kwargs):
         """Apply model-specific patches based on detected type."""

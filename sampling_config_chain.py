@@ -592,8 +592,19 @@ class SamplingConfigChain:
             # Store the config_type on the model entry too for reference
             model_variations[idx]["sampling_config_type"] = config_type
         
+        ui = {}
+        if seed_control == 'increment':
+            ui['seed'] = seed + 1
+        elif seed_control == 'decrement':
+            ui['seed'] = seed - 1
+        elif seed_control == 'randomize':
+            import random
+            ui['seed'] = random.randint(0, 2**32 - 1)
+        else:
+            ui['seed'] = seed
+        
         # Return only config
-        return (new_config,)
+        return (new_config,), ui
     
     @classmethod
     def IS_CHANGED(cls, config, variation_index, config_type, **kwargs):
