@@ -97,12 +97,12 @@ class SamplingConfigChain:
                     "default": 0, 
                     "min": 0, 
                     "max": 0xffffffffffffffff,
-                    "control_after_generate": False,  # Disable auto-randomize - we have explicit seed_control
-                    "tooltip": "Random seed for this variation. Use seed_control to set behavior.",
+                    "control_after_generate": True,  # Enable frontend seed control (increment/decrement/randomize)
+                    "tooltip": "Random seed for this variation. Use seed_control dropdown to set behavior.",
                 }),
                 "seed_control": (["fixed", "randomize", "increment", "decrement"], {
                     "default": "fixed",
-                    "tooltip": "Seed behavior: fixed=exact value, randomize=new random each run, increment=+1 each combo, decrement=-1 each combo",
+                    "tooltip": "Seed behavior after run: fixed=no change, randomize=new random, increment=+1, decrement=-1",
                 }),
                 "steps": ("STRING", {
                     "default": "20",

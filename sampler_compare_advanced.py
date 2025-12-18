@@ -311,10 +311,13 @@ class SamplerCompareAdvanced:
                 "tooltip": f"Global {i+1}: Select which parameter to set globally"
             })
             
-            # Seed value - STRING to support comma-separated multi-values
-            inputs["optional"][f"global_value_seed_{i}"] = ("STRING", {
-                "default": "0",
-                "tooltip": f"Global {i+1}: Seed value(s) - comma-separated for variations (e.g., '123, 456, 789')"
+            # Seed value - INT with control_after_generate for proper frontend seed control
+            inputs["optional"][f"global_value_seed_{i}"] = ("INT", {
+                "default": 0,
+                "min": 0,
+                "max": 0xffffffffffffffff,
+                "control_after_generate": True,  # Enable frontend seed control (increment/decrement/randomize)
+                "tooltip": f"Global {i+1}: Seed value for all variations"
             })
             
             # Steps value - STRING to support comma-separated multi-values
@@ -379,8 +382,9 @@ class SamplerCompareAdvanced:
                 continue
             
             # Store raw string values - parsing/expansion happens later
+            # Exception: seed is now INT (not string) for control_after_generate support
             if param_type == "seed":
-                config["seed"] = kwargs.get(f"global_value_seed_{i}", "0")
+                config["seed"] = kwargs.get(f"global_value_seed_{i}", 0)  # INT, not string
                 config["seed_control"] = kwargs.get(f"global_seed_control_{i}", "fixed")
             elif param_type == "steps":
                 config["steps"] = kwargs.get(f"global_value_steps_{i}", "20")
@@ -1384,9 +1388,9 @@ class SamplerCompareAdvanced:
                 parsed["cfg"] = parse_cfg(value)
             elif key == "denoise" and isinstance(value, str):
                 parsed["denoise"] = parse_denoise(value)
-            elif key == "seed" and isinstance(value, str):
-                # Parse seeds as integers
-                parsed["seed"] = parse_numeric_list(value, int, 0, min_val=0)
+            elif key == "seed":
+                # Seed is now INT (not string), wrap in list for consistency
+                parsed["seed"] = [int(value)] if value is not None else [0]
             else:
                 # Non-expandable field, keep as single value
                 parsed[key] = [value]
