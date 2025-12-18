@@ -73,7 +73,8 @@ class SamplingConfigChain:
                     "WAN2.1", "WAN2.2", 
                     "HUNYUAN_VIDEO", "HUNYUAN_VIDEO_15", 
                     "FLUX", "FLUX2", "FLUX_KONTEXT",
-                    "Z_IMAGE"
+                    "Z_IMAGE",
+                    "PIFLOW"
                 ], {
                     "default": "STANDARD",
                     "tooltip": "Model type - determines which parameters are shown. QWEN_EDIT for image editing, FLUX_KONTEXT for reference-based generation."
@@ -245,6 +246,43 @@ class SamplingConfigChain:
                 "clip_vision": ("CLIP_VISION", {
                     "tooltip": "[Hunyuan I2V] CLIP Vision model for image encoding",
                 }),
+                
+                # === PIFLOW Parameters ===
+                "piflow_substeps": ("INT", {
+                    "default": 128,
+                    "min": 1,
+                    "max": 10000,
+                    "tooltip": "[PIFLOW] Number of policy sub-steps used in the denoising process (typically 128)",
+                }),
+                "piflow_final_step_scale": ("FLOAT", {
+                    "default": 0.5,
+                    "min": 0.0,
+                    "max": 1.0,
+                    "step": 0.01,
+                    "tooltip": "[PIFLOW] Size of the final step relative to other steps (0.0-1.0)",
+                }),
+                "piflow_diffusion_coefficient": ("FLOAT", {
+                    "default": 0.0,
+                    "min": 0.0,
+                    "max": 1000000.0,
+                    "step": 0.01,
+                    "tooltip": "[PIFLOW] Stochasticity coefficient (0.0=deterministic, 1.0=DDPM stochasticity)",
+                }),
+                "piflow_gm_temperature": (["auto", "manual"], {
+                    "default": "auto",
+                    "tooltip": "[PIFLOW] GMFlow temperature mode (auto=based on steps, manual=use manual value)",
+                }),
+                "piflow_manual_temperature": ("FLOAT", {
+                    "default": 1.0,
+                    "min": 0.0,
+                    "max": 1.0,
+                    "step": 0.01,
+                    "tooltip": "[PIFLOW] Manual GMFlow temperature value when gm_temperature is 'manual'",
+                }),
+                "piflow_shift": ("STRING", {
+                    "default": "3.2",
+                    "tooltip": "[PIFLOW] Shift parameter. Comma-separated for variations (e.g., '2.5, 3.2, 4.0')",
+                }),
             },
             "hidden": {
                 "unique_id": "UNIQUE_ID",
@@ -308,6 +346,13 @@ class SamplingConfigChain:
         end_frame=None,
         # CLIP Vision (optional)
         clip_vision=None,
+        # PIFLOW parameters (optional)
+        piflow_substeps: int = 128,
+        piflow_final_step_scale: float = 0.5,
+        piflow_diffusion_coefficient: float = 0.0,
+        piflow_gm_temperature: str = "auto",
+        piflow_manual_temperature: float = 1.0,
+        piflow_shift: str = "3.2",
         unique_id=None,
     ):
         """
@@ -342,6 +387,7 @@ class SamplingConfigChain:
             hunyuan_shift_list = parse_shift(hunyuan_shift, 7.0)
             lumina_shift_list = parse_shift(lumina_shift, 3.0)
             flux_guidance_list = parse_numeric_list(flux_guidance, float, 3.5, 0.0, 100.0)
+            piflow_shift_list = parse_shift(piflow_shift, 3.2)
         else:
             # Fallback: single values
             samplers_list = [sampler_name]
@@ -356,6 +402,7 @@ class SamplingConfigChain:
             hunyuan_shift_list = [float(hunyuan_shift) if isinstance(hunyuan_shift, str) else hunyuan_shift]
             lumina_shift_list = [float(lumina_shift) if isinstance(lumina_shift, str) else lumina_shift]
             flux_guidance_list = [float(flux_guidance) if isinstance(flux_guidance, str) else flux_guidance]
+            piflow_shift_list = [float(piflow_shift) if isinstance(piflow_shift, str) else piflow_shift]
         
         # Build the sampling config for this variation
         # Store BOTH single values (first item, for backward compat) AND full lists
@@ -478,6 +525,29 @@ class SamplingConfigChain:
                 "lumina_shift_list": lumina_shift_list,
             })
             variation_count *= len(lumina_shift_list)
+        elif config_type == "PIFLOW":
+            # PIFLOW uses custom pi-Flow sampling from ComfyUI-piFlow
+            # Requires: ComfyUI-piFlow custom node to be installed
+            sampling_config.update({
+                "piflow_shift": piflow_shift_list[0],
+                "piflow_shift_list": piflow_shift_list,
+                "piflow_substeps": piflow_substeps,
+                "piflow_final_step_scale": piflow_final_step_scale,
+                "piflow_diffusion_coefficient": piflow_diffusion_coefficient,
+                "piflow_gm_temperature": piflow_gm_temperature,
+                "piflow_manual_temperature": piflow_manual_temperature,
+            })
+            variation_count *= len(piflow_shift_list)
+            # PIFLOW can have reference images (for Flux2 variant)
+            ref_images = []
+            if reference_image_1 is not None:
+                ref_images.append(reference_image_1)
+            if reference_image_2 is not None:
+                ref_images.append(reference_image_2)
+            if reference_image_3 is not None:
+                ref_images.append(reference_image_3)
+            if ref_images:
+                sampling_config["reference_images"] = ref_images
         
         # Update final variation count
         sampling_config["_variation_count"] = variation_count

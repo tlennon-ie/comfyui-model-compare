@@ -4,8 +4,9 @@ A comprehensive custom node package for ComfyUI that enables side-by-side compar
 
 ## Features
 
-- 🔄 **Multi-Model Comparison**: Compare FLUX, FLUX2, SDXL, WAN 2.1/2.2, Hunyuan 1.0/1.5, QWEN, Lumina2 models side-by-side
+- 🔄 **Multi-Model Comparison**: Compare FLUX, FLUX2, SDXL, WAN 2.1/2.2, Hunyuan 1.0/1.5, QWEN, Lumina2, pi-Flow models side-by-side
 - ⚡ **Lazy Loading**: Models load on-demand per combination, minimizing VRAM usage
+- 🚀 **pi-Flow Support**: Few-step inference with pi-Flow sampling (requires [ComfyUI-piFlow](https://github.com/Lakonik/ComfyUI-piFlow))
 - 📊 **LoRA Testing**: Test multiple LoRAs at different strength values with AND/OR logic
 - 🎨 **VAE/CLIP Variations**: Compare different VAE and CLIP configurations per model
 - 📝 **Prompt Comparison**: Test multiple prompts with cross-product or paired modes
@@ -564,6 +565,44 @@ WAN 2.2 uses two-phase sampling (high noise + low noise models):
 **Optional:**
 - `imageio`, `imageio-ffmpeg` (video support)
 - `reportlab` (PDF export)
+
+**For pi-Flow Sampling (PIFLOW preset):**
+- [ComfyUI-piFlow](https://github.com/Lakonik/ComfyUI-piFlow) custom node
+
+---
+
+## Optional Dependencies
+
+### pi-Flow Support
+
+The **PIFLOW** preset enables sampling with pi-Flow models using few-step inference (typically 4 steps). This requires the [ComfyUI-piFlow](https://github.com/Lakonik/ComfyUI-piFlow) custom node to be installed.
+
+**Install via ComfyUI Manager:**
+1. Open ComfyUI Manager
+2. Search for "piFlow"
+3. Install "ComfyUI-piFlow"
+
+**Manual Install:**
+```bash
+cd ComfyUI/custom_nodes/
+git clone https://github.com/Lakonik/ComfyUI-piFlow.git
+```
+
+**Configuration Parameters (PIFLOW preset):**
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `piflow_shift` | 3.2 | Shift parameter (supports comma-separated variations) |
+| `piflow_substeps` | 128 | Policy rollout sub-steps |
+| `piflow_final_step_scale` | 0.5 | Final step size relative to others |
+| `piflow_diffusion_coefficient` | 0.0 | Stochasticity (0=deterministic, 1=DDPM) |
+| `piflow_gm_temperature` | auto | GMFlow temperature mode |
+| `piflow_manual_temperature` | 1.0 | Manual temperature (when mode is manual) |
+
+**Usage:**
+1. Set `preset` to `PIFLOW` in Model Compare Loaders
+2. Load a pi-Flow trained model (FLUX-based)
+3. Use `steps: 4` (typical for pi-Flow)
+4. Configure CLIP as you would for FLUX models
 
 ---
 

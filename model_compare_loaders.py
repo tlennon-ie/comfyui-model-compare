@@ -37,9 +37,9 @@ class ModelCompareLoaders:
 
         inputs = {
             "required": {
-                "preset": (["STANDARD", "SDXL", "PONY", "WAN2.1", "WAN2.2", "HUNYUAN_VIDEO", "HUNYUAN_VIDEO_15", "QWEN", "QWEN_EDIT", "FLUX", "FLUX2", "FLUX_KONTEXT", "Z_IMAGE"], {
+                "preset": (["STANDARD", "SDXL", "PONY", "WAN2.1", "WAN2.2", "HUNYUAN_VIDEO", "HUNYUAN_VIDEO_15", "QWEN", "QWEN_EDIT", "FLUX", "FLUX2", "FLUX_KONTEXT", "Z_IMAGE", "PIFLOW"], {
                     "default": "STANDARD",
-                    "tooltip": "Model preset - determines available configuration options and sampling behavior"
+                    "tooltip": "Model preset - determines available configuration options and sampling behavior. PIFLOW requires ComfyUI-piFlow custom node."
                 }),
                 "model_pairing_mode": (["SINGLE", "AUTO_PAIR"], {
                     "default": "SINGLE",

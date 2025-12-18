@@ -24,6 +24,30 @@ import comfy.model_management
 from typing import List, Dict, Tuple, Any, Optional
 from comfy_extras.nodes_model_advanced import ModelSamplingSD3, ModelSamplingAuraFlow, RescaleCFG, ModelSamplingFlux
 
+# Try to import piFlow sampler module (optional dependency)
+PIFLOW_AVAILABLE = False
+try:
+    from custom_nodes import ComfyUI_piFlow
+    # Import piFlow sampler function
+    from custom_nodes.ComfyUI_piFlow.modules.sampler import sample as piflow_sample
+    from custom_nodes.ComfyUI_piFlow.modules.model_base import ModelSamplingPiFlow
+    PIFLOW_AVAILABLE = True
+except ImportError:
+    try:
+        # Try alternate import path
+        import sys
+        import os
+        piflow_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "ComfyUI-piFlow")
+        if os.path.exists(piflow_path) and piflow_path not in sys.path:
+            sys.path.insert(0, piflow_path)
+        from modules.sampler import sample as piflow_sample
+        from modules.model_base import ModelSamplingPiFlow
+        PIFLOW_AVAILABLE = True
+    except ImportError:
+        piflow_sample = None
+        ModelSamplingPiFlow = None
+        print("[SamplerCompareAdvanced] INFO: ComfyUI-piFlow not found. PIFLOW sampling mode unavailable.")
+
 # Import variation expander for multi-value support
 try:
     from .variation_expander import (
@@ -282,6 +306,7 @@ class SamplerCompareAdvanced:
             "flux": getattr(comfy.sd.CLIPType, "FLUX", comfy.sd.CLIPType.STABLE_DIFFUSION),
             "flux2": getattr(comfy.sd.CLIPType, "FLUX2", comfy.sd.CLIPType.STABLE_DIFFUSION),
             "flux_kontext": getattr(comfy.sd.CLIPType, "FLUX2", comfy.sd.CLIPType.STABLE_DIFFUSION),  # FLUX_KONTEXT uses FLUX2 CLIP type
+            "piflow": getattr(comfy.sd.CLIPType, "FLUX", comfy.sd.CLIPType.STABLE_DIFFUSION),  # PIFLOW uses FLUX CLIP type
             "wan": getattr(comfy.sd.CLIPType, "WAN", getattr(comfy.sd.CLIPType, "FLUX", comfy.sd.CLIPType.STABLE_DIFFUSION)),
             "wan22": getattr(comfy.sd.CLIPType, "WAN", getattr(comfy.sd.CLIPType, "FLUX", comfy.sd.CLIPType.STABLE_DIFFUSION)),
             "hunyuan_video": getattr(comfy.sd.CLIPType, "HUNYUAN_VIDEO", comfy.sd.CLIPType.STABLE_DIFFUSION),
@@ -334,8 +359,9 @@ class SamplerCompareAdvanced:
                 [batch_size, channels, latent_h // 2, latent_w // 2],
                 device=device
             )
-        elif model_type in ['flux', 'qwen', 'qwen_edit', 'lumina2', 'z_image']:
-            # FLUX, QWEN, Lumina2, Z_IMAGE use 16 channels
+        elif model_type in ['flux', 'qwen', 'qwen_edit', 'lumina2', 'z_image', 'piflow']:
+            # FLUX, QWEN, Lumina2, Z_IMAGE, PIFLOW use 16 channels
+            # Note: piFlow models are FLUX-based, using 16 channels
             channels = 16
             latent = torch.zeros(
                 [batch_size, channels, latent_h, latent_w],
@@ -1113,6 +1139,7 @@ class SamplerCompareAdvanced:
             "FLUX2": "flux2",
             "FLUX_KONTEXT": "flux_kontext",
             "Z_IMAGE": "z_image",  # Z_IMAGE has its own tokenizer, not same as Lumina2
+            "PIFLOW": "piflow",  # pi-Flow sampling (requires ComfyUI-piFlow)
         }
         
         # Start with node defaults
@@ -1671,6 +1698,7 @@ class SamplerCompareAdvanced:
                 "qwen": "qwen", "qwen_edit": "qwen_edit",
                 "sdxl": "sdxl", "sd": "sd", "sd3": "sd3",
                 "lumina2": "lumina2",
+                "piflow": "piflow",
             }
             early_model_type = clip_type_to_model_type.get(clip_type_str, "sd")
             
@@ -1792,6 +1820,7 @@ class SamplerCompareAdvanced:
                 "qwen": "qwen", "qwen_edit": "qwen_edit",
                 "sdxl": "sdxl", "sd": "sd", "sd3": "sd3",
                 "lumina2": "lumina2",
+                "piflow": "piflow",
             }
             
             if clip_type_str and clip_type_str in clip_type_to_model_type:
@@ -1879,6 +1908,7 @@ class SamplerCompareAdvanced:
             use_wan22_low_end = sampling_cfg.get("wan22_low_end", 20)
             use_hunyuan_shift = sampling_cfg.get("hunyuan_shift", 7.0)
             use_lumina_shift = sampling_cfg.get("lumina_shift", 3.0)  # Added: Z_IMAGE/Lumina2 shift
+            use_piflow_shift = sampling_cfg.get("piflow_shift", 3.2)  # Added: PIFLOW shift
             
             # Clone and patch model
             working_model = current_model
@@ -1892,6 +1922,7 @@ class SamplerCompareAdvanced:
                 wan22_shift=use_wan22_shift,
                 hunyuan_shift=use_hunyuan_shift,
                 lumina_shift=use_lumina_shift,
+                piflow_shift=use_piflow_shift,
                 cfg_norm=use_cfg_norm, 
                 cfg_norm_multiplier=use_cfg_norm_mult,
                 latent_width=latent_width, 
@@ -2023,6 +2054,23 @@ class SamplerCompareAdvanced:
                         use_seed, use_steps, use_cfg, use_sampler, use_scheduler,
                         current_positive, current_negative, current_latent,
                         use_denoise, use_wan22_high_end, use_wan22_low_end, wan_shift=wan22_shift
+                    )
+                elif model_type == 'piflow':
+                    # pi-Flow sampling using ComfyUI-piFlow sampler
+                    piflow_substeps = sampling_cfg.get("piflow_substeps", 128)
+                    piflow_final_step_scale = sampling_cfg.get("piflow_final_step_scale", 0.5)
+                    piflow_diffusion_coefficient = sampling_cfg.get("piflow_diffusion_coefficient", 0.0)
+                    piflow_gm_temperature = sampling_cfg.get("piflow_gm_temperature", "auto")
+                    piflow_manual_temperature = sampling_cfg.get("piflow_manual_temperature", 1.0)
+                    
+                    sampled_latent = self._sample_piflow(
+                        working_model, use_seed, use_steps, current_positive, current_latent,
+                        substeps=piflow_substeps,
+                        final_step_scale=piflow_final_step_scale,
+                        diffusion_coefficient=piflow_diffusion_coefficient,
+                        gm_temperature=piflow_gm_temperature,
+                        manual_temperature=piflow_manual_temperature,
+                        denoise=use_denoise
                     )
                 else:
                     # Standard sampling for all other models
@@ -2225,6 +2273,36 @@ class SamplerCompareAdvanced:
             model = ModelSamplingFlux().patch(model, max_shift=1.15, base_shift=0.5, 
                                               width=latent_width, height=latent_height)[0]
         
+        elif model_type == 'piflow':
+            # pi-Flow models use custom ModelSamplingPiFlow from ComfyUI-piFlow
+            if not PIFLOW_AVAILABLE:
+                raise RuntimeError(
+                    "[SamplerCompareAdvanced] PIFLOW sampling requires ComfyUI-piFlow custom node. "
+                    "Please install it from: https://github.com/Lakonik/ComfyUI-piFlow"
+                )
+            
+            shift = kwargs.get('piflow_shift', 3.2)
+            m = model.clone()
+            
+            # Get existing multiplier and patch_size from model config if available
+            multiplier = 1.0
+            patch_size = None
+            if hasattr(model, 'model') and hasattr(model.model, 'model_config'):
+                sampling_settings = getattr(model.model.model_config, 'sampling_settings', {})
+                multiplier = sampling_settings.get("multiplier", 1.0)
+                patch_size = sampling_settings.get("patch_size", None)
+            
+            # Create piFlow model sampling
+            import comfy.model_sampling
+            
+            class ModelSamplingAdvanced(ModelSamplingPiFlow, comfy.model_sampling.CONST):
+                pass
+            
+            model_sampling = ModelSamplingAdvanced(model.model.model_config if hasattr(model, 'model') else None)
+            model_sampling.set_parameters(shift=shift, multiplier=multiplier, patch_size=patch_size)
+            m.add_object_patch("model_sampling", model_sampling)
+            model = m
+        
         return model
     
     def _sample_wan22(self, model_high, model_low, seed, steps, cfg, sampler_name, scheduler,
@@ -2316,6 +2394,63 @@ class SamplerCompareAdvanced:
             torch.cuda.empty_cache()
         
         return samples_2
+    
+    def _sample_piflow(self, model, seed, steps, conditioning, latent,
+                       substeps=128, final_step_scale=0.5, diffusion_coefficient=0.0,
+                       gm_temperature="auto", manual_temperature=1.0, denoise=1.0):
+        """Sample using pi-Flow sampling method from ComfyUI-piFlow.
+        
+        Uses the piflow_sample function which implements:
+        - Policy-based flow sampling with sub-steps
+        - GMFlow temperature control
+        - Stochasticity via diffusion_coefficient
+        
+        Args:
+            model: The model patcher (must have piFlow model_sampling applied)
+            seed: Random seed
+            steps: Number of network evaluation steps (NFE), typically 4
+            conditioning: Positive conditioning from CLIP
+            latent: Latent dict with "samples" key
+            substeps: Policy rollout sub-steps (typically 128)
+            final_step_scale: Final step size relative to others (0.0-1.0)
+            diffusion_coefficient: Stochasticity (0=deterministic, 1=DDPM)
+            gm_temperature: "auto" or "manual"
+            manual_temperature: Manual temperature value when gm_temperature="manual"
+            denoise: Denoising strength
+        
+        Returns:
+            Latent dict with denoised samples
+        """
+        if not PIFLOW_AVAILABLE:
+            raise RuntimeError(
+                "[SamplerCompareAdvanced] PIFLOW sampling requires ComfyUI-piFlow custom node. "
+                "Please install it from: https://github.com/Lakonik/ComfyUI-piFlow"
+            )
+        
+        import latent_preview
+        
+        latent_image = latent["samples"]
+        latent_image = comfy.sample.fix_empty_latent_channels(model, latent_image)
+        
+        batch_inds = latent.get("batch_index")
+        noise = comfy.sample.prepare_noise(latent_image, seed, batch_inds)
+        
+        noise_mask = latent.get("noise_mask")
+        
+        callback = latent_preview.prepare_callback(model, steps)
+        disable_pbar = not comfy.utils.PROGRESS_BAR_ENABLED
+        
+        # Call piflow_sample from ComfyUI-piFlow
+        samples = piflow_sample(
+            model, noise, steps, substeps, final_step_scale, diffusion_coefficient,
+            gm_temperature, manual_temperature,
+            conditioning, latent_image, denoise=denoise,
+            noise_mask=noise_mask, callback=callback, disable_pbar=disable_pbar, seed=seed
+        )
+        
+        out = latent.copy()
+        out["samples"] = samples
+        return out
     
     @staticmethod
     def _apply_loras_legacy(model, lora_names: List[str], strengths: Tuple[float, ...]):
