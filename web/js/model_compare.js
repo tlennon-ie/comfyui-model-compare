@@ -1552,6 +1552,7 @@ function registerExtension(app) {
                             const isWAN22 = configType === "WAN2.2";
                             const isHUNYUAN = configType === "HUNYUAN_VIDEO" || configType === "HUNYUAN_VIDEO_15";
                             const isFLUX = configType === "FLUX" || configType === "FLUX2" || configType === "FLUX_KONTEXT";
+                            const isPIFLOW = configType === "PIFLOW";
                             const isVideo = isWAN21 || isWAN22 || isHUNYUAN;
 
                             // Common fields always shown
@@ -1595,9 +1596,13 @@ function registerExtension(app) {
                                 else if (widget.name === "hunyuan_shift") {
                                     shouldShow = isHUNYUAN;
                                 }
-                                // FLUX fields
+                                // FLUX fields (also shown for PIFLOW since it's FLUX-based)
                                 else if (widget.name === "flux_guidance") {
-                                    shouldShow = isFLUX;
+                                    shouldShow = isFLUX || isPIFLOW;
+                                }
+                                // PIFLOW-specific fields
+                                else if (widget.name.startsWith("piflow_")) {
+                                    shouldShow = isPIFLOW;
                                 }
                                 // FPS for video models
                                 else if (widget.name === "fps") {
