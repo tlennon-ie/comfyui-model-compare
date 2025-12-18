@@ -364,7 +364,7 @@ class SamplingConfigChain:
         import copy
         
         # Deep copy to avoid mutating the original
-        new_config = copy.deepcopy(config) if config else {}
+        new_config = copy.deepcopy(config) if isinstance(config, dict) else {}
         
         # Initialize sampling_configs if not present
         if "sampling_configs" not in new_config:
