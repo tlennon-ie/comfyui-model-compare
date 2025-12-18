@@ -35,23 +35,10 @@ def _try_import_piflow():
     global PIFLOW_AVAILABLE, piflow_sample, ModelSamplingPiFlow, load_piflow_model
     import sys
     import os
-    import importlib.util
     
     custom_nodes_dir = os.path.dirname(os.path.dirname(__file__))
     
-    # Helper to load module from specific path
-    def load_module_from_path(module_name, module_path):
-        if not os.path.exists(module_path):
-            return None
-        spec = importlib.util.spec_from_file_location(module_name, module_path)
-        if spec is None or spec.loader is None:
-            return None
-        module = importlib.util.module_from_spec(spec)
-        sys.modules[module_name] = module
-        spec.loader.exec_module(module)
-        return module
-    
-    # Try to find ComfyUI-piFlow folder (with hyphen)
+    # Try to find ComfyUI-piFlow folder (with hyphen or underscore)
     piflow_paths = [
         os.path.join(custom_nodes_dir, "ComfyUI-piFlow"),
         os.path.join(custom_nodes_dir, "ComfyUI_piFlow"),
@@ -62,39 +49,36 @@ def _try_import_piflow():
             continue
             
         try:
-            # Add piFlow to path for its internal imports
+            # Add piFlow to path for imports
             if piflow_path not in sys.path:
                 sys.path.insert(0, piflow_path)
             
-            # Load piflow_loader module
-            loader_path = os.path.join(piflow_path, "piflow_loader.py")
-            loader_module = load_module_from_path("_piflow_loader", loader_path)
-            if loader_module is None:
-                continue
-                
-            # Load modules/sampler.py
-            sampler_path = os.path.join(piflow_path, "modules", "sampler.py")
-            sampler_module = load_module_from_path("_piflow_modules_sampler", sampler_path)
-            if sampler_module is None:
-                continue
-                
-            # Load modules/model_base.py
-            model_base_path = os.path.join(piflow_path, "modules", "model_base.py")
-            model_base_module = load_module_from_path("_piflow_modules_model_base", model_base_path)
-            if model_base_module is None:
-                continue
+            # Now try regular imports - piFlow's internal imports should work
+            # because comfy is already in sys.path when ComfyUI runs
+            from piflow_loader import load_piflow_model as _load_piflow_model
+            from modules.sampler import sample as _piflow_sample
+            from modules.model_base import ModelSamplingPiFlow as _ModelSamplingPiFlow
             
-            # Extract what we need
-            load_piflow_model = getattr(loader_module, 'load_piflow_model', None)
-            piflow_sample = getattr(sampler_module, 'sample', None)
-            ModelSamplingPiFlow = getattr(model_base_module, 'ModelSamplingPiFlow', None)
+            # Assign to globals
+            load_piflow_model = _load_piflow_model
+            piflow_sample = _piflow_sample
+            ModelSamplingPiFlow = _ModelSamplingPiFlow
+            PIFLOW_AVAILABLE = True
+            print(f"[SamplerCompareAdvanced] ✓ piFlow support enabled from: {piflow_path}")
+            return True
             
-            if load_piflow_model and piflow_sample and ModelSamplingPiFlow:
-                PIFLOW_AVAILABLE = True
-                print(f"[SamplerCompareAdvanced] ✓ piFlow support enabled from: {piflow_path}")
-                return True
+        except ImportError as e:
+            print(f"[SamplerCompareAdvanced] piFlow import from {piflow_path} failed: {e}")
+            # Remove from path if import failed to avoid conflicts
+            if piflow_path in sys.path:
+                sys.path.remove(piflow_path)
+            continue
         except Exception as e:
-            print(f"[SamplerCompareAdvanced] piFlow import attempt from {piflow_path} failed: {e}")
+            print(f"[SamplerCompareAdvanced] piFlow import error from {piflow_path}: {e}")
+            import traceback
+            traceback.print_exc()
+            if piflow_path in sys.path:
+                sys.path.remove(piflow_path)
             continue
     
     print("[SamplerCompareAdvanced] INFO: ComfyUI-piFlow not found. PIFLOW sampling mode unavailable.")
