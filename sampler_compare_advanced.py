@@ -1836,6 +1836,8 @@ class SamplerCompareAdvanced:
         running_seed = initial_seed  # Will be updated after each combination based on control mode
         
         for idx, combo in enumerate(combinations):
+            # Check for user interrupt at start of each iteration
+            comfy.model_management.throw_exception_if_processing_interrupted()
             
             # Get model entry early for progress tracking and cache hash
             model_idx = combo.get("model_index", 0)
@@ -1997,6 +1999,9 @@ class SamplerCompareAdvanced:
                                 if len(loras) > 1:
                                     print(f"[SamplerCompareAdvanced] WARNING: piFlow only supports one adapter, ignoring {len(loras)-1} additional LoRA(s)")
                 
+                # Check for interrupt before model loading
+                comfy.model_management.throw_exception_if_processing_interrupted()
+                
                 # LAZY LOAD: Model (with piFlow support)
                 current_model, current_model_low = self._load_model(
                     current_model_entry, 
@@ -2149,6 +2154,10 @@ class SamplerCompareAdvanced:
             # Ensure use_seed is always an integer (defensive check)
             use_seed = int(use_seed) if isinstance(use_seed, str) else use_seed
             
+            # Log seed for this combination (widget auto-update requires INT type, incompatible with multi-value STRING)
+            if idx == 0 or seed_control_mode != "fixed":
+                print(f"[SamplerCompareAdvanced] Combo {idx+1}/{len(combinations)}: seed={use_seed}, mode={seed_control_mode}")
+            
             use_steps = sampling_cfg.get("steps", 20)
             use_cfg = sampling_cfg.get("cfg", 7.0)
             use_sampler = sampling_cfg.get("sampler_name", "euler")
@@ -2170,8 +2179,11 @@ class SamplerCompareAdvanced:
             use_piflow_shift = sampling_cfg.get("piflow_shift", 3.2)  # Added: PIFLOW shift
             
             # Clone and patch model
+            # NOTE: Don't clone piFlow models - load_piflow_model() already returns a fully
+            # configured model with LoRA/adapter applied. Cloning copies all patches and
+            # causes patch accumulation (63 lowvram patches vs ~10 in native piFlow).
             working_model = current_model
-            if hasattr(working_model, 'clone'):
+            if model_type != 'piflow' and hasattr(working_model, 'clone'):
                 working_model = working_model.clone()
             
             working_model = self._apply_model_patches(
