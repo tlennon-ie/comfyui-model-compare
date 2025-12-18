@@ -364,7 +364,7 @@ class SamplerCompareAdvanced:
         """
         config = {
             "seed": None,
-            "seed_control": "fixed",
+            "seed_control": None,  # Only set if user adds a seed global param
             "steps": None,
             "cfg": None,
             "denoise": None,
@@ -1473,9 +1473,10 @@ class SamplerCompareAdvanced:
         global_expansions, global_labels = self._expand_global_config(global_config)
         
         # Determine which fields are controlled globally (have values)
+        # seed_control is included so it can override chain config when set
         global_fields = set()
         for gc in global_expansions:
-            global_fields.update(k for k, v in gc.items() if v is not None and k != "seed_control")
+            global_fields.update(k for k, v in gc.items() if v is not None)
         
         expanded_combos = []
         
@@ -1828,9 +1829,9 @@ class SamplerCompareAdvanced:
         
         # Seed control: track running seed and control mode
         # Note: seed_control can also come from per-variation config chains,
-        # so we check global first, then override per-variation in the loop if needed
-        global_seed_control_mode = global_config.get("seed_control", "fixed")
-        seed_control_mode = global_seed_control_mode  # Will be updated per-variation if config chain specifies
+        # Priority: global (if explicitly set) > chain config > default "fixed"
+        global_seed_control_mode = global_config.get("seed_control")  # None if not set by user
+        seed_control_mode = global_seed_control_mode or "fixed"  # Default to fixed if not set
         initial_seed = global_config.get("seed")
         running_seed = initial_seed  # Will be updated after each combination based on control mode
         
@@ -2103,12 +2104,17 @@ class SamplerCompareAdvanced:
             
             # Extract sampling parameters (already merged by _get_sampling_config_for_type)
             # Seed control can come from config chain or global config
-            # Per-variation seed_control takes priority over global
+            # Priority: global (if explicitly set) > chain config > default "fixed"
             variation_seed_control = sampling_cfg.get("seed_control")
-            if variation_seed_control:
+            if global_seed_control_mode is not None:
+                # User explicitly set global seed_control - use it (highest priority)
+                seed_control_mode = global_seed_control_mode
+            elif variation_seed_control:
+                # Chain config has seed_control - use it
                 seed_control_mode = variation_seed_control
             else:
-                seed_control_mode = global_seed_control_mode  # Use global default
+                # No seed_control set anywhere - default to fixed
+                seed_control_mode = "fixed"
             
             # Get base seed from config (chain or global)
             base_seed = sampling_cfg.get("seed", 0)
