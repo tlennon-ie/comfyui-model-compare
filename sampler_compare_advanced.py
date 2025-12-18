@@ -1827,13 +1827,10 @@ class SamplerCompareAdvanced:
         if len(combinations) > WARNING_THRESHOLD:
             add_tracker_warning(f"⚠️ High combination count: {len(combinations)} combinations")
         
-        # Seed control: track running seed and control mode
-        # Note: seed_control can also come from per-variation config chains,
+        # Seed control: determines how seed changes AFTER the run completes (for next submission)
+        # All combinations within a single run use the SAME seed
         # Priority: global (if explicitly set) > chain config > default "fixed"
         global_seed_control_mode = global_config.get("seed_control")  # None if not set by user
-        seed_control_mode = global_seed_control_mode or "fixed"  # Default to fixed if not set
-        initial_seed = global_config.get("seed")
-        running_seed = initial_seed  # Will be updated after each combination based on control mode
         
         for idx, combo in enumerate(combinations):
             # Check for user interrupt at start of each iteration
@@ -1865,10 +1862,6 @@ class SamplerCompareAdvanced:
                 current_label=combo.get("_variation_label", ""),
                 status="sampling",
             )
-            
-            # Update global_config with running seed (for seed control modes)
-            if running_seed is not None:
-                global_config["seed"] = running_seed
             
             # Get model type early for cache hash (from chain CLIP config or fallback)
             early_clip_var = self._get_chain_clip_config(config, base_combo_idx, combo)
@@ -1916,25 +1909,6 @@ class SamplerCompareAdvanced:
                 all_images.append(image)
                 combo["output_frame_count"] = frame_count
                 cache_hits += 1
-                
-                # Update running seed even on cache hit (to stay consistent with control mode)
-                # Get seed_control from early_sampling_cfg which was already computed
-                cache_seed_control = early_sampling_cfg.get("seed_control", global_seed_control_mode)
-                cache_base_seed_raw = early_sampling_cfg.get("seed", 0)
-                cache_base_seed = int(cache_base_seed_raw) if cache_base_seed_raw is not None else 0
-                
-                # Initialize running_seed if not yet set
-                if running_seed is None:
-                    running_seed = cache_base_seed
-                
-                if cache_seed_control == "increment":
-                    running_seed = running_seed + 1
-                elif cache_seed_control == "decrement":
-                    running_seed = max(0, running_seed - 1)
-                elif cache_seed_control == "randomize":
-                    import random
-                    running_seed = random.randint(0, 0xffffffffffffffff)
-                # "fixed" mode: running_seed stays the same
                 
                 # Complete timing for cache hit
                 complete_iteration(idx)
@@ -2124,39 +2098,25 @@ class SamplerCompareAdvanced:
             
             # Get base seed from config (chain or global)
             # Ensure it's an integer (global_config stores strings)
+            # ALL combinations within a single run use the SAME seed
             base_seed_raw = sampling_cfg.get("seed", 0)
-            base_seed = int(base_seed_raw) if base_seed_raw is not None else 0
-            
-            # Apply seed_control mode to determine actual seed for this combination
-            # running_seed tracks the evolving seed for increment/decrement modes
-            if running_seed is None:
-                # Initialize running_seed from first combo's base_seed
-                running_seed = base_seed
-            
-            if seed_control_mode == "fixed":
-                # Fixed mode: always use the base seed from config
-                use_seed = base_seed
-            elif seed_control_mode == "randomize":
-                # Randomize mode: generate a new random seed each time
-                import random
-                use_seed = random.randint(0, 0xffffffffffffffff)
-                running_seed = use_seed  # Update running_seed for consistency
-            elif seed_control_mode == "increment":
-                # Increment mode: use running_seed (starts from base, increments each combo)
-                use_seed = running_seed
-            elif seed_control_mode == "decrement":
-                # Decrement mode: use running_seed (starts from base, decrements each combo)
-                use_seed = max(0, running_seed)
-            else:
-                # Unknown mode, default to fixed
-                use_seed = base_seed
+            use_seed = int(base_seed_raw) if base_seed_raw is not None else 0
             
             # Ensure use_seed is always an integer (defensive check)
             use_seed = int(use_seed) if isinstance(use_seed, str) else use_seed
             
-            # Log seed for this combination (widget auto-update requires INT type, incompatible with multi-value STRING)
-            if idx == 0 or seed_control_mode != "fixed":
-                print(f"[SamplerCompareAdvanced] Combo {idx+1}/{len(combinations)}: seed={use_seed}, mode={seed_control_mode}")
+            # Get seed_control mode (for logging what next seed would be)
+            variation_seed_control = sampling_cfg.get("seed_control")
+            if global_seed_control_mode is not None:
+                seed_control_mode = global_seed_control_mode
+            elif variation_seed_control:
+                seed_control_mode = variation_seed_control
+            else:
+                seed_control_mode = "fixed"
+            
+            # Log seed for first combination only (all combos use same seed within a run)
+            if idx == 0:
+                print(f"[SamplerCompareAdvanced] Using seed={use_seed} for all {len(combinations)} combinations (mode={seed_control_mode} applies after run)")
             
             use_steps = sampling_cfg.get("steps", 20)
             use_cfg = sampling_cfg.get("cfg", 7.0)
@@ -2410,15 +2370,6 @@ class SamplerCompareAdvanced:
             
             # Mark iteration complete for timing stats
             complete_iteration(idx)
-            
-            # Update running seed based on control mode (for next iteration)
-            # Note: For "randomize" mode, use_seed was already randomized above,
-            # so we don't need to randomize again here (running_seed was updated above)
-            if seed_control_mode == "increment":
-                running_seed = use_seed + 1  # Next seed is current + 1
-            elif seed_control_mode == "decrement":
-                running_seed = max(0, use_seed - 1)  # Next seed is current - 1
-            # For "fixed" and "randomize" modes: running_seed is handled above
             
             # Per-iteration cleanup - clear intermediate tensors to help GC
             # Note: 'image' is moved to CPU and stored in all_images, 
