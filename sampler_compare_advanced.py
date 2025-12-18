@@ -638,8 +638,6 @@ class SamplerCompareAdvanced:
                     model_options={},
                     adapter_strength=adapter_strength
                 )
-                # Mark model as loaded via piFlow (skip model_sampling patching later)
-                model_obj._piflow_loaded = True
                 # piFlow models don't have a low noise variant
                 model_low_obj = None
                 
@@ -2528,39 +2526,37 @@ class SamplerCompareAdvanced:
         
         elif model_type == 'piflow':
             # pi-Flow models use custom ModelSamplingPiFlow from ComfyUI-piFlow
-            # If the model was loaded via piFlow loader, skip patching (already set up correctly)
-            if getattr(model, '_piflow_loaded', False):
-                # Model was loaded via load_piflow_model, already has correct model_sampling
+            # CRITICAL: Always apply shift patching, even when loaded via load_piflow_model
+            # The native piFlow workflow applies ModelSamplingPiFlow AFTER Load pi-Flow Model
+            # The loader does NOT set the shift - only ModelSamplingPiFlow does this!
+            if not PIFLOW_AVAILABLE:
+                raise RuntimeError(
+                    "[SamplerCompareAdvanced] PIFLOW sampling requires ComfyUI-piFlow custom node. "
+                    "Please install it from: https://github.com/Lakonik/ComfyUI-piFlow"
+                )
+            
+            shift = kwargs.get('piflow_shift', 3.2)
+            m = model.clone()
+            
+            # Get existing multiplier and patch_size from model config if available
+            multiplier = 1.0
+            patch_size = None
+            if hasattr(model, 'model') and hasattr(model.model, 'model_config'):
+                sampling_settings = getattr(model.model.model_config, 'sampling_settings', {})
+                multiplier = sampling_settings.get("multiplier", 1.0)
+                patch_size = sampling_settings.get("patch_size", None)
+            
+            # Create piFlow model sampling (matching native ModelSamplingPiFlow node)
+            import comfy.model_sampling
+            
+            class ModelSamplingAdvanced(ModelSamplingPiFlow, comfy.model_sampling.CONST):
                 pass
-            else:
-                # Manual patching for models not loaded via piFlow loader
-                if not PIFLOW_AVAILABLE:
-                    raise RuntimeError(
-                        "[SamplerCompareAdvanced] PIFLOW sampling requires ComfyUI-piFlow custom node. "
-                        "Please install it from: https://github.com/Lakonik/ComfyUI-piFlow"
-                    )
-                
-                shift = kwargs.get('piflow_shift', 3.2)
-                m = model.clone()
-                
-                # Get existing multiplier and patch_size from model config if available
-                multiplier = 1.0
-                patch_size = None
-                if hasattr(model, 'model') and hasattr(model.model, 'model_config'):
-                    sampling_settings = getattr(model.model.model_config, 'sampling_settings', {})
-                    multiplier = sampling_settings.get("multiplier", 1.0)
-                    patch_size = sampling_settings.get("patch_size", None)
-                
-                # Create piFlow model sampling
-                import comfy.model_sampling
-                
-                class ModelSamplingAdvanced(ModelSamplingPiFlow, comfy.model_sampling.CONST):
-                    pass
-                
-                model_sampling = ModelSamplingAdvanced(model.model.model_config if hasattr(model, 'model') else None)
-                model_sampling.set_parameters(shift=shift, multiplier=multiplier, patch_size=patch_size)
-                m.add_object_patch("model_sampling", model_sampling)
-                model = m
+            
+            model_sampling = ModelSamplingAdvanced(model.model.model_config if hasattr(model, 'model') else None)
+            model_sampling.set_parameters(shift=shift, multiplier=multiplier, patch_size=patch_size)
+            m.add_object_patch("model_sampling", model_sampling)
+            model = m
+            print(f"[SamplerCompareAdvanced] Applied piFlow shift={shift}, multiplier={multiplier}")
         
         return model
     
