@@ -56,6 +56,56 @@ Model Compare Loaders → Sampler Compare Advanced → Grid Compare
 
 **Result:** A labeled comparison grid showing both models' outputs side-by-side.
 
+## 📚 Learning Path
+
+New to Model Compare? Follow this progression:
+
+### 👶 Beginner (15 min)
+**[QUICKSTART_BEGINNER.md](examples/QUICKSTART_BEGINNER.md)** - Your first comparison
+- Compare 3 different models with same prompt
+- See immediate results
+- Understand the basic workflow
+
+**When done:** You've generated your first comparison grid! 🎉
+
+### 🚀 Intermediate (30 min)
+**[INTERMEDIATE_TUNING.md](examples/INTERMEDIATE_TUNING.md)** - Find optimal parameters
+- Test different step counts and CFG values on ONE model
+- Learn what parameters do
+- Discover your model's "sweet spot"
+
+**When done:** You know your model's best settings
+
+### 🧠 Advanced (45 min)
+**[ADVANCED_LORA_TESTING.md](examples/ADVANCED_LORA_TESTING.md)** - Multi-model + LoRA
+- Compare multiple models while testing LoRA strengths
+- Determine best model+LoRA combination
+- Create reusable configuration documentation
+
+**When done:** You have a tested, documented pipeline
+
+### 🎬 Expert (60+ min)
+**[EXPERT_VIDEO.md](examples/EXPERT_VIDEO.md)** - Video generation mastery
+- Compare WAN 2.1 vs WAN 2.2 video quality
+- Test I2V (Image-to-Video) workflows
+- Understand video-specific parameters
+
+**When done:** You can generate and compare videos
+
+### 🆘 Stuck?
+**[TROUBLESHOOTING.md](TROUBLESHOOTING.md)** - Common issues & solutions
+- "No images generated"
+- "Out of memory"
+- "Seed control not working"
+- Performance baseline expectations
+
+**Also see:** Detailed analysis docs (all issues documented, all model types covered)
+- [PRODUCT_ANALYSIS.md](PRODUCT_ANALYSIS.md) - Feature matrix & roadmap
+- [TECHNICAL_ASSESSMENT.md](TECHNICAL_ASSESSMENT.md) - Architecture reference
+- [UX_ANALYSIS.md](UX_ANALYSIS.md) - Widget guide & usability patterns
+
+---
+
 ## Core Concepts
 
 ### Configuration Passing (Not Model Loading)

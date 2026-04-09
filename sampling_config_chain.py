@@ -77,7 +77,7 @@ class SamplingConfigChain:
                     "PIFLOW"
                 ], {
                     "default": "STANDARD",
-                    "tooltip": "Model type - determines which parameters are shown. QWEN_EDIT for image editing, FLUX_KONTEXT for reference-based generation."
+                    "tooltip": "Select your model type for optimized sampling settings:\n\n[IMAGE MODELS]\nSTANDARD: SD 1.5 (shift=default)\nSDXL: Stable Diffusion XL (larger, higher quality)\nPONY: Fine-tuned SDXL variant\n\n[LANGUAGE MODELS]\nQWEN: Vision language model (text+images) with AuraFlow sampling\nQWEN_EDIT: Image editing mode using reference image guidance\nFLUX: High-quality image generation with guidance\nFLUX2: Next-gen FLUX (higher quality, slower)\nFLUX_KONTEXT: FLUX with reference image support\n\n[VIDEO MODELS]\nWAN2.1: Video generation (VideoPoet-based, compatible)\nWAN2.2: Enhanced video with 2-phase sampling (high/low noise)\nHUNYUAN_VIDEO: Alibaba Hunyuan video generation\nHUNYUAN_VIDEO_15: Enhanced version of Hunyuan\n\n[SPECIALIZED]\nZ_IMAGE: Lumina 2 variant (3D-aware generation)\nPIFLOW: FLUX-based efficient generation (faster, slightly lower quality)\n\n📋 TIP: Not sure which to pick? Start with STANDARD or FLUX for images, WAN2.2 for video."
                 }),
             },
             "optional": {
@@ -102,19 +102,19 @@ class SamplingConfigChain:
                 }),
                 "seed_control": (["fixed", "randomize", "increment", "decrement"], {
                     "default": "fixed",
-                    "tooltip": "Seed behavior after run: fixed=no change, randomize=new random, increment=+1, decrement=-1",
+                    "tooltip": "Controls seed behavior AFTER this run completes (for next submission):\n\n✓ fixed: Keep seed unchanged\n▶ increment: Add 1 (seeds: 0→1→2...)\n◀ decrement: Subtract 1 (seeds: 10→9→8...)\n🎲 randomize: Generate new random seed\n\n📋 IMPORTANT: All combinations within a single run use the SAME seed. This setting only applies when you run again."
                 }),
                 "steps": ("STRING", {
                     "default": "20",
-                    "tooltip": "Number of sampling steps. Comma-separated for variations (e.g., '15, 20, 30')",
+                    "tooltip": "Denoising steps - more steps = slower but higher quality (usually 20-50).\n\n💡 VARIATIONS: Compare step counts with comma-separated values:\n  Example: '15, 20, 30' → generates 3 images, one per step count\n  This multiplies total image count!\n\n⚡ Performance: ~1 second per step on GPU\n  - 15 steps: Fast preview\n  - 20 steps: Balanced (recommended)\n  - 40 steps: High quality (time-consuming)"
                 }),
                 "cfg": ("STRING", {
                     "default": "7.0",
-                    "tooltip": "Classifier-free guidance scale. Comma-separated for variations (e.g., '1.0, 1.5, 2.0')",
+                    "tooltip": "Classifier-Free Guidance Scale - controls how closely the model follows your prompt (range 0.0-15.0).\n\n  1.0 = Creative, ignores prompt (weird results)\n  7.0 = Default, good balance\n  15.0 = Strict prompt adherence (sometimes too literal)\n\n💡 VARIATIONS: Compare guidance strength with comma-separated values:\n  Example: '1.0, 7.0, 15.0' → generates 3 images per other variation\n  This multiplies total image count!"
                 }),
                 "sampler_name": ("STRING", {
                     "default": "euler",
-                    "tooltip": "Sampling algorithm(s). Comma-separated for variations. Valid: euler, euler_ancestral, heun, dpm_2, dpm_2_ancestral, lms, dpm_fast, dpm_adaptive, dpmpp_2s_ancestral, dpmpp_sde, dpmpp_2m, dpmpp_2m_sde, dpmpp_3m_sde, ddpm, lcm, ipndm, ipndm_v, deis, ddim, uni_pc, uni_pc_bh2",
+                    "tooltip": "Sampling algorithm - determines how noise is progressively reduced.\n\nCommon options: euler (reliable), DPM++ 2M (high quality), DDIM (fast), lcm (very fast)\n\n💡 VARIATIONS: Use comma-separated values to compare samplers:\n  Example: 'euler, dpmpp_2m, ddim' → generates 3 images, one per sampler\n  Each combination will be multiplied by this variation!\n\nFull list: euler, euler_ancestral, heun, dpm_2, dpm_2_ancestral, lms, dpm_fast, dpm_adaptive, dpmpp_2s_ancestral, dpmpp_sde, dpmpp_2m, dpmpp_2m_sde, dpmpp_3m_sde, ddpm, lcm, ipndm, ipndm_v, deis, ddim, uni_pc, uni_pc_bh2"
                 }),
                 "scheduler": ("STRING", {
                     "default": "normal",

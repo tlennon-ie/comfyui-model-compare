@@ -1723,6 +1723,9 @@ class SamplerCompareAdvanced:
         """
         from nodes import common_ksampler
         
+        # Ensure config is a dict (handle tuple input)
+        if isinstance(config, tuple):
+            config = config[0]
         combinations = config.get("combinations", []) if config else []
         if not combinations:
             return (torch.zeros(1, 1, 1, 3), config, "No combinations")
@@ -1835,9 +1838,11 @@ class SamplerCompareAdvanced:
         # All combinations within a single run use the SAME seed
         # Priority: global (if explicitly set) > chain config > default "fixed"
         global_seed_control_mode = global_config.get("seed_control")  # None if not set by user
-        
-        last_current_seed = use_seed
-        
+
+        # Defensive: initialize use_seed and last_current_seed for UI update logic
+        use_seed = 0
+        last_current_seed = 0
+
         for idx, combo in enumerate(combinations):
             # Check for user interrupt at start of each iteration
             comfy.model_management.throw_exception_if_processing_interrupted()
